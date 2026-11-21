@@ -321,6 +321,30 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn failed_rename_removes_the_temp_file_and_keeps_the_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target-dir");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("inside"), "kept").unwrap();
+
+        // The temp file is created and written, then the rename onto a non-empty directory fails.
+        let result = write_atomic(&target, b"new");
+
+        assert!(result.is_err());
+        assert!(
+            target.join("inside").exists(),
+            "the directory was disturbed"
+        );
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().ends_with(".relaxkit-tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp file left behind: {leftovers:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn safe_write_writes_through_a_symlink() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = test_ctx(dir.path());
