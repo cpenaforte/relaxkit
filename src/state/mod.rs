@@ -297,6 +297,14 @@ mod tests {
         let file = locked.join("settings.json");
         fs::write(&file, "old").unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        // Root and other users who ignore permissions can still write to a 0555 directory.
+        let probe = locked.join("probe");
+        if fs::File::create(&probe).is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+            println!("skipped: running as a user who ignores permissions");
+            return;
+        }
 
         let result = safe_write(&ctx, &RunId::new(), &file, "new");
 
