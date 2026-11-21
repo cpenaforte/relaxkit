@@ -14,7 +14,7 @@ use crate::platform::KitDirs;
 
 /// Identifies one relaxkit run. Sortable: a zero-padded timestamp comes first.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(try_from = "String")]
 pub struct RunId(String);
 
 impl RunId {
@@ -50,6 +50,15 @@ impl FromStr for RunId {
         } else {
             Err(anyhow!("invalid run id `{s}`"))
         }
+    }
+}
+
+/// Deserialization goes through `FromStr`, so a journal line cannot carry an unsafe id.
+impl TryFrom<String> for RunId {
+    type Error = anyhow::Error;
+
+    fn try_from(s: String) -> Result<Self> {
+        s.parse()
     }
 }
 
@@ -135,6 +144,17 @@ mod tests {
         let first = RunId::new();
         let second = RunId::new();
         assert!(first < second);
+    }
+
+    #[test]
+    fn journal_line_with_a_path_like_run_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(dir.path());
+        fs::create_dir_all(&dirs.data).unwrap();
+        let line = r#"{"run":"../x","file":"/h/settings.json","backup":null,"created":true}"#;
+        fs::write(journal_path(&dirs), format!("{line}\n")).unwrap();
+
+        assert!(read(&dirs).is_err());
     }
 
     #[test]
