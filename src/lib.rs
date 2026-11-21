@@ -1,5 +1,10 @@
 pub mod brand;
 pub mod cli;
+pub mod ctx;
+pub mod exec;
+pub mod host;
+pub mod net;
+pub mod platform;
 
 use anyhow::{Result, anyhow};
 
