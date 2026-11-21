@@ -124,7 +124,67 @@ pub fn npm_latest(net: &dyn Net, package: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
     use super::*;
+
+    /// Serves one HTTP 200 response with `body` on 127.0.0.1. The thread returns the raw request.
+    fn serve_once(body: &str) -> (String, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/file", listener.local_addr().unwrap());
+        let body = body.to_string();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let read = stream.read(&mut buf).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..read]);
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            String::from_utf8_lossy(&request).into_owned()
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn http_requests_identify_only_by_relaxkit_user_agent() {
+        let (url, server) = serve_once("{}");
+        let net = HttpNet::new().unwrap();
+
+        net.get_text(&url).unwrap();
+
+        let request = server.join().unwrap();
+        let headers: Vec<(String, String)> = request
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.is_empty())
+            .filter_map(|line| line.split_once(':'))
+            .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
+            .collect();
+        let user_agent = headers
+            .iter()
+            .find(|(name, _)| name == "user-agent")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(user_agent, Some("relaxkit/0.1.0"), "request:\n{request}");
+        let allowed = ["host", "user-agent", "accept", "accept-encoding"];
+        for (name, _) in &headers {
+            assert!(
+                allowed.contains(&name.as_str()),
+                "unexpected header {name} in request:\n{request}"
+            );
+        }
+    }
 
     #[test]
     fn github_latest_tag_parses_tag_name() {
