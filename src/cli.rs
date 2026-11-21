@@ -32,10 +32,10 @@ pub enum Command {
     /// Update relaxkit itself, then each tool, and update the lockfile
     Update {
         /// Update only relaxkit itself
-        #[arg(long = "self", conflicts_with = "tools_only")]
+        #[arg(long = "self", conflicts_with_all = ["tools_only", "tool"])]
         self_only: bool,
         /// Update only the tools
-        #[arg(long = "tools")]
+        #[arg(long = "tools", conflicts_with = "tool")]
         tools_only: bool,
         /// Report available updates without installing them
         #[arg(long)]
@@ -44,10 +44,8 @@ pub enum Command {
         tool: Option<String>,
     },
     /// Show, set or unset roles, tiers and other preferences
-    Config {
-        #[command(subcommand)]
-        action: ConfigCmd,
-    },
+    #[command(subcommand)]
+    Config(ConfigCmd),
     /// Apply a preset
     Preset {
         /// Preset name
@@ -72,9 +70,9 @@ pub enum Command {
     },
     /// Remove relaxkit and what it installed
     Uninstall,
-    /// Run the usage tool with the given arguments
+    /// Run the usage tool. Tool flags must come after `--` or after the first argument.
     Usage {
-        /// Arguments passed through unchanged
+        /// Arguments for the usage tool; flags before the first argument are read by relaxkit
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },

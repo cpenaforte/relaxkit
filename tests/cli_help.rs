@@ -43,7 +43,26 @@ fn unknown_subcommand_fails() {
         .unwrap()
         .arg("no-such-command")
         .assert()
-        .failure();
+        .code(2)
+        .stderr(predicate::str::contains("unrecognized subcommand"));
+}
+
+#[test]
+fn update_self_conflicts_with_a_tool_name() {
+    Command::cargo_bin("relaxkit")
+        .unwrap()
+        .args(["update", "--self", "some-tool"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn update_tools_conflicts_with_a_tool_name() {
+    Command::cargo_bin("relaxkit")
+        .unwrap()
+        .args(["update", "--tools", "some-tool"])
+        .assert()
+        .code(2);
 }
 
 #[test]
@@ -72,4 +91,16 @@ fn rlx_symlink_runs_the_same_binary() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&version.stdout).contains(env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
+fn config_show_parses_to_the_config_variant() {
+    use clap::Parser;
+    use relaxkit::cli::{Cli, Command, ConfigCmd};
+
+    let cli = Cli::try_parse_from(["relaxkit", "config", "show"]).expect("config show parses");
+    assert!(matches!(
+        cli.command,
+        Command::Config(ConfigCmd::Show { key: None })
+    ));
 }

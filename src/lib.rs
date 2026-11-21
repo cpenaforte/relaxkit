@@ -12,7 +12,7 @@ pub fn run(cli: Cli) -> Result<()> {
         | Command::Status
         | Command::Doctor
         | Command::Update { .. }
-        | Command::Config { .. }
+        | Command::Config(_)
         | Command::Preset { .. }
         | Command::Privacy { .. }
         | Command::Login { .. }
