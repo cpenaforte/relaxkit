@@ -78,6 +78,8 @@ pub struct EditRecord {
 }
 
 /// All records in order, oldest first. A missing journal is empty.
+/// A last line that does not parse and has no trailing newline is a torn append from an
+/// interrupted write. It is skipped. Any other unparseable line is an error.
 pub fn read(dirs: &KitDirs) -> Result<Vec<EditRecord>> {
     let path = journal_path(dirs);
     let text = match fs::read_to_string(&path) {
@@ -85,19 +87,28 @@ pub fn read(dirs: &KitDirs) -> Result<Vec<EditRecord>> {
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(err).with_context(|| format!("cannot read {}", path.display())),
     };
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(number, line)| {
-            serde_json::from_str(line).with_context(|| {
-                format!(
-                    "{}: line {} is not a journal record",
-                    path.display(),
-                    number + 1
-                )
-            })
-        })
-        .collect()
+    let lines: Vec<&str> = text.lines().collect();
+    let torn_tail = !text.ends_with('\n');
+    let mut records = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str(line) {
+            Ok(record) => records.push(record),
+            Err(_) if torn_tail && index + 1 == lines.len() => break,
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "{}: line {} is not a journal record",
+                        path.display(),
+                        index + 1
+                    )
+                });
+            }
+        }
+    }
+    Ok(records)
 }
 
 fn journal_path(dirs: &KitDirs) -> PathBuf {
@@ -109,9 +120,22 @@ fn ensure_dir(dirs: &KitDirs) -> Result<()> {
     fs::create_dir_all(&dirs.data).with_context(|| format!("cannot create {}", dirs.data.display()))
 }
 
-/// Appends one record.
+/// True when the journal ends in a partial line, which an interrupted append leaves behind.
+fn has_torn_tail(dirs: &KitDirs) -> Result<bool> {
+    let path = journal_path(dirs);
+    match fs::read(&path) {
+        Ok(bytes) => Ok(!bytes.is_empty() && bytes.last() != Some(&b'\n')),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("cannot read {}", path.display())),
+    }
+}
+
+/// Appends one record. A torn last line is dropped first, so it never ends up mid-file.
 pub fn append(dirs: &KitDirs, record: &EditRecord) -> Result<()> {
     ensure_dir(dirs)?;
+    if has_torn_tail(dirs)? {
+        rewrite(dirs, &read(dirs)?)?;
+    }
     let path = journal_path(dirs);
     let mut file = OpenOptions::new()
         .create(true)
@@ -144,6 +168,55 @@ mod tests {
         let first = RunId::new();
         let second = RunId::new();
         assert!(first < second);
+    }
+
+    fn sample_record(run: &str, file: &str) -> EditRecord {
+        EditRecord {
+            run: run.parse().unwrap(),
+            file: PathBuf::from(file),
+            backup: None,
+            created: true,
+        }
+    }
+
+    fn journal_in(root: &std::path::Path, text: &str) -> KitDirs {
+        let dirs = KitDirs::rooted(root);
+        fs::create_dir_all(&dirs.data).unwrap();
+        fs::write(journal_path(&dirs), text).unwrap();
+        dirs
+    }
+
+    #[test]
+    fn read_skips_a_torn_last_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = serde_json::to_string(&sample_record("1-1", "/h/a.json")).unwrap();
+        let dirs = journal_in(dir.path(), &format!("{good}\n{{\"run\":\"17"));
+
+        let records = read(&dirs).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].run.as_str(), "1-1");
+    }
+
+    #[test]
+    fn read_still_errors_on_a_bad_line_in_the_middle() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = serde_json::to_string(&sample_record("1-1", "/h/a.json")).unwrap();
+        let dirs = journal_in(dir.path(), &format!("{good}\nnot json\n{good}\n"));
+
+        assert!(read(&dirs).is_err());
+    }
+
+    #[test]
+    fn append_after_a_torn_line_keeps_the_journal_readable() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = serde_json::to_string(&sample_record("1-1", "/h/a.json")).unwrap();
+        let dirs = journal_in(dir.path(), &format!("{good}\n{{\"run\":\"17"));
+
+        append(&dirs, &sample_record("2-2", "/h/b.json")).unwrap();
+
+        let records = read(&dirs).unwrap();
+        let runs: Vec<&str> = records.iter().map(|r| r.run.as_str()).collect();
+        assert_eq!(runs, vec!["1-1", "2-2"]);
     }
 
     #[test]
