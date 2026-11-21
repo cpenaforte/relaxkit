@@ -55,12 +55,14 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
     write_atomic(&target, text.as_bytes())
 }
 
-/// A symlink is followed, so the link itself survives the write.
+/// A symlink is followed, so the link itself survives the write. The result is absolute,
+/// so a journaled path means the same file when undo runs from another directory.
 fn resolve(path: &Path) -> Result<PathBuf> {
     if path.is_symlink() {
         fs::canonicalize(path).with_context(|| format!("cannot follow the link {}", path.display()))
     } else {
-        Ok(path.to_path_buf())
+        std::path::absolute(path)
+            .with_context(|| format!("cannot make {} absolute", path.display()))
     }
 }
 
@@ -300,6 +302,17 @@ mod tests {
 
         assert!(link.is_symlink(), "the link was replaced by a regular file");
         assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+    }
+
+    #[test]
+    fn a_relative_path_is_journaled_as_absolute() {
+        let resolved = resolve(Path::new("some/relative/settings.json")).unwrap();
+        assert!(
+            resolved.is_absolute(),
+            "journaled as {}",
+            resolved.display()
+        );
+        assert!(resolved.ends_with("some/relative/settings.json"));
     }
 
     #[test]
