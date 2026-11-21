@@ -40,7 +40,7 @@ pub fn json_remove(text: &str, path: &[&str]) -> Result<String> {
 /// Removes `key` from the object reached through `parents`. False when the path is absent.
 fn remove_at(object: &mut Map<String, Value>, parents: &[&str], key: &str) -> bool {
     match parents.split_first() {
-        None => object.remove(key).is_some(),
+        None => object.shift_remove(key).is_some(),
         Some((first, rest)) => match object.get_mut(*first).and_then(Value::as_object_mut) {
             Some(child) => remove_at(child, rest, key),
             None => false,
@@ -108,6 +108,14 @@ mod tests {
         assert!(permissions < model);
         assert_eq!(json_get(&out, &["hooks"]).unwrap(), None);
         assert_eq!(json_remove(SETTINGS, &["nope"]).unwrap(), SETTINGS);
+    }
+
+    #[test]
+    fn json_remove_first_key_keeps_the_order_of_the_rest() {
+        let out = json_remove("{\"a\":1,\"b\":2,\"c\":3}", &["a"]).unwrap();
+        let parsed: Map<String, Value> = serde_json::from_str(&out).unwrap();
+        let keys: Vec<&str> = parsed.keys().map(String::as_str).collect();
+        assert_eq!(keys, vec!["b", "c"]);
     }
 
     #[test]
