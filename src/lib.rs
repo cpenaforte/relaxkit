@@ -1,6 +1,7 @@
 pub mod brand;
 pub mod cli;
 pub mod ctx;
+pub mod edit;
 pub mod exec;
 pub mod host;
 pub mod net;
