@@ -143,7 +143,28 @@ pub fn undo(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
     Ok(touched)
 }
 
+/// Copies the current content of `file` to a fresh backup and reports it, so that undo
+/// never discards a hand edit. Does nothing when the file is absent.
+fn keep_current(ctx: &Ctx, file: &Path) -> Result<()> {
+    if !file.exists() {
+        return Ok(());
+    }
+    let backup = backup_path(ctx, &RunId::new(), file);
+    if let Some(parent) = backup.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
+    }
+    fs::copy(file, &backup).with_context(|| format!("cannot back up {}", file.display()))?;
+    ctx.out.info(&format!(
+        "kept the current {} as {}",
+        file.display(),
+        backup.display()
+    ));
+    Ok(())
+}
+
 /// Puts one journaled file back: the backup's bytes, or nothing if the file was new.
+/// The current content is kept in a backup first.
 fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
     match (&record.backup, record.created) {
         (Some(backup), _) => {
@@ -154,6 +175,7 @@ fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
             }
             let bytes = fs::read(backup)
                 .with_context(|| format!("cannot read backup {}", backup.display()))?;
+            keep_current(ctx, &record.file)?;
             write_atomic(&record.file, &bytes)
         }
         (None, true) => {
@@ -162,6 +184,7 @@ fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
                     .info(&format!("would remove {}", record.file.display()));
                 return Ok(());
             }
+            keep_current(ctx, &record.file)?;
             match fs::remove_file(&record.file) {
                 Ok(()) => Ok(()),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -302,6 +325,76 @@ mod tests {
 
         assert!(link.is_symlink(), "the link was replaced by a regular file");
         assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+    }
+
+    /// True when some file under `root` holds exactly `text`.
+    fn backup_holds(root: &Path, text: &str) -> bool {
+        fn walk(dir: &Path, text: &str) -> bool {
+            let Ok(entries) = fs::read_dir(dir) else {
+                return false;
+            };
+            entries.flatten().any(|entry| {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, text)
+                } else {
+                    fs::read_to_string(&path).is_ok_and(|content| content == text)
+                }
+            })
+        }
+        walk(root, text)
+    }
+
+    #[test]
+    fn undo_keeps_a_hand_edit_to_a_restored_file_in_a_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "orig").unwrap();
+        safe_write(&ctx, &RunId::new(), &file, "setup").unwrap();
+        fs::write(&file, "hand edit\n").unwrap();
+
+        undo(&ctx, None).unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "orig");
+        assert!(
+            backup_holds(&ctx.dirs.backups, "hand edit\n"),
+            "the hand edit was discarded without a backup"
+        );
+    }
+
+    #[test]
+    fn undo_keeps_a_hand_edit_to_a_created_file_before_removing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let file = dir.path().join("fresh").join("config.toml");
+        safe_write(&ctx, &RunId::new(), &file, "x = 1\n").unwrap();
+        fs::write(&file, "added by hand\n").unwrap();
+
+        undo(&ctx, None).unwrap();
+
+        assert!(!file.exists());
+        assert!(
+            backup_holds(&ctx.dirs.backups, "added by hand\n"),
+            "the hand edit was removed without a backup"
+        );
+    }
+
+    #[test]
+    fn dry_run_undo_writes_no_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = test_ctx(dir.path());
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "orig").unwrap();
+        safe_write(&ctx, &RunId::new(), &file, "setup").unwrap();
+        fs::write(&file, "hand edit\n").unwrap();
+        ctx.dry_run = true;
+
+        undo(&ctx, None).unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "hand edit\n");
+        assert!(!backup_holds(&ctx.dirs.backups, "hand edit\n"));
+        assert_eq!(journal::read(&ctx.dirs).unwrap().len(), 1);
     }
 
     #[test]
