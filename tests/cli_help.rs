@@ -104,3 +104,24 @@ fn config_show_parses_to_the_config_variant() {
         Command::Config(ConfigCmd::Show { key: None })
     ));
 }
+
+#[test]
+fn usage_help_flag_before_the_tool_is_relaxkit_help() {
+    Command::cargo_bin("relaxkit")
+        .unwrap()
+        .args(["usage", "--help", "cargo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: relaxkit"));
+}
+
+#[test]
+fn usage_help_flag_after_the_tool_reaches_the_handler() {
+    Command::cargo_bin("relaxkit")
+        .unwrap()
+        .args(["usage", "cargo", "--help"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Usage: relaxkit").not())
+        .stderr(predicate::str::contains("not implemented"));
+}

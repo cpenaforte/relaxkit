@@ -72,7 +72,7 @@ pub enum Command {
     Uninstall,
     /// Run the usage tool. Tool flags must come after `--` or after the first argument.
     Usage {
-        /// Arguments for the usage tool. Relaxkit's global flags (--dry-run, --project, --json) are read before the first argument; other flags pass through.
+        /// Arguments for the usage tool. Relaxkit's global flags (--dry-run, --project, --json) are read before the first argument, and -h and --help are relaxkit's own; other flags pass through.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
