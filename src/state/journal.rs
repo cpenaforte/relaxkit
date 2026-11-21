@@ -156,7 +156,7 @@ pub fn rewrite(dirs: &KitDirs, records: &[EditRecord]) -> Result<()> {
         text.push_str(&serde_json::to_string(record).context("cannot encode journal record")?);
         text.push('\n');
     }
-    super::write_atomic(&journal_path(dirs), text.as_bytes())
+    crate::fsx::write_atomic(&journal_path(dirs), text.as_bytes())
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, anyhow};
 
 use crate::brand;
+use crate::fsx::write_atomic;
 
 pub trait Net {
     /// Fetches a URL and returns its body as text. Non-success status is an error.
@@ -47,7 +48,7 @@ impl Net for HttpNet {
             .send()
             .with_context(|| format!("GET {url}"))?;
         let bytes = response.error_for_status()?.bytes()?;
-        std::fs::write(dest, &bytes).with_context(|| format!("cannot write {}", dest.display()))
+        write_atomic(dest, &bytes).with_context(|| format!("cannot write {}", dest.display()))
     }
 }
 
@@ -124,6 +125,7 @@ pub fn npm_latest(net: &dyn Net, package: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -184,6 +186,23 @@ mod tests {
                 "unexpected header {name} in request:\n{request}"
             );
         }
+    }
+
+    #[test]
+    fn a_failed_download_write_keeps_the_previous_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("tool.bin");
+        fs::write(&dest, "previous").unwrap();
+        // The atomic write needs this temp path. A directory there makes the write fail.
+        fs::create_dir(dir.path().join("tool.bin.relaxkit-tmp")).unwrap();
+        let (url, server) = serve_once("new body");
+        let net = HttpNet::new().unwrap();
+
+        let result = net.download(&url, &dest);
+
+        server.join().unwrap();
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&dest).unwrap(), "previous");
     }
 
     #[test]

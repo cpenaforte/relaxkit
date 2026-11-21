@@ -3,6 +3,7 @@ pub mod cli;
 pub mod ctx;
 pub mod edit;
 pub mod exec;
+pub mod fsx;
 pub mod host;
 pub mod net;
 pub mod platform;
