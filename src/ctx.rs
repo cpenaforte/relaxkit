@@ -1,5 +1,6 @@
 //! The context every command receives: directories, runner, network, output, and flags.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -47,10 +48,17 @@ impl Reporter {
     fn emit(&self, msg: &str, prefix: &str) {
         match &self.capture {
             Some(lines) => lines.lock().expect("reporter lock").push(msg.to_string()),
-            None if prefix == "warning: " => eprintln!("{prefix}{msg}"),
-            None => println!("{prefix}{msg}"),
+            None if prefix == "warning: " => {
+                write_line(&mut std::io::stderr().lock(), &format!("{prefix}{msg}"));
+            }
+            None => write_line(&mut std::io::stdout().lock(), &format!("{prefix}{msg}")),
         }
     }
+}
+
+/// Writes one line. A closed pipe or a full disk must not panic the process, so the error is ignored.
+fn write_line(out: &mut dyn Write, line: &str) {
+    let _ = writeln!(out, "{line}");
 }
 
 /// Everything a command may touch. Tests build one with `Ctx::for_test`.
@@ -91,7 +99,27 @@ impl Ctx {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{self, ErrorKind};
+
     use super::*;
+
+    /// A writer whose far end has closed, as after `relaxkit ... | head`.
+    struct ClosedPipe;
+
+    impl io::Write for ClosedPipe {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(ErrorKind::BrokenPipe))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::from(ErrorKind::BrokenPipe))
+        }
+    }
+
+    #[test]
+    fn a_closed_pipe_does_not_panic_the_reporter() {
+        write_line(&mut ClosedPipe, "hello");
+    }
 
     #[test]
     fn capture_reporter_keeps_plain_messages() {
