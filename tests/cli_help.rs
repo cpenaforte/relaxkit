@@ -113,6 +113,12 @@ fn usage_help_flag_before_the_tool_is_relaxkit_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Usage: relaxkit"));
+    Command::cargo_bin("relaxkit")
+        .unwrap()
+        .args(["usage", "-h", "cargo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: relaxkit"));
 }
 
 #[test]
