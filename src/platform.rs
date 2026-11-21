@@ -101,7 +101,18 @@ mod tests {
 
     #[test]
     fn current_os_is_supported_here() {
-        assert!(current_os().is_ok());
-        assert!(current_arch().is_ok());
+        #[cfg(target_os = "macos")]
+        assert_eq!(current_os().unwrap(), Os::MacOs);
+        #[cfg(target_os = "linux")]
+        assert_eq!(current_os().unwrap(), Os::Linux);
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        assert!(current_os().is_err());
+
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(current_arch().unwrap(), Arch::X86_64);
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(current_arch().unwrap(), Arch::Aarch64);
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        assert!(current_arch().is_err());
     }
 }
