@@ -1,0 +1,22 @@
+[package]
+name = "relaxkit"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Sets up and manages a curated set of agent tools on Linux and macOS"
+
+[lib]
+name = "relaxkit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "relaxkit"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.9", features = ["derive"] }
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
