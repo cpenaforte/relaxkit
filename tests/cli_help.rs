@@ -130,4 +130,11 @@ fn usage_help_flag_after_the_tool_reaches_the_handler() {
         .code(1)
         .stdout(predicate::str::contains("Usage: relaxkit").not())
         .stderr(predicate::str::contains("not implemented"));
+    Command::cargo_bin("relaxkit")
+        .unwrap()
+        .args(["usage", "cargo", "-h"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Usage: relaxkit").not())
+        .stderr(predicate::str::contains("not implemented"));
 }
