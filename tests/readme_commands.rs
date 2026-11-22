@@ -1,4 +1,4 @@
-//! README checks (Task 27, part B). The slash-command section and its test are deferred (P-10).
+//! README checks (Task 27, part B, and Task 24, part B for the slash-command section).
 //!
 //! The subcommand list comes from the real `Cli`, so a subcommand added to the CLI and missing from the README fails
 //! here.
@@ -24,6 +24,32 @@ fn readme_mentions_every_subcommand() {
         assert!(
             readme.contains(&form),
             "README.md does not mention the subcommand `{form}`"
+        );
+    }
+}
+
+#[test]
+fn readme_documents_the_slash_commands() {
+    let readme = readme();
+    for form in [
+        "/relaxkit:config set implementer cheap",
+        "#high",
+        "--host",
+        "--project",
+    ] {
+        assert!(readme.contains(form), "README.md does not show `{form}`");
+    }
+    let names: Vec<String> = Cli::command()
+        .get_subcommands()
+        .map(|cmd| cmd.get_name().to_string())
+        .filter(|name| name != "help")
+        .collect();
+    assert!(!names.is_empty(), "the Cli has no subcommands");
+    for name in names {
+        let form = format!("/relaxkit:{name}");
+        assert!(
+            readme.contains(&form),
+            "README.md does not mention the slash command `{form}`"
         );
     }
 }

@@ -79,6 +79,24 @@ relaxkit config show
 
 Other keys include `voice` and `compact-at`, for example `relaxkit config set compact-at 256k`.
 
+## Slash commands
+
+In Claude Code, `relaxkit setup` installs the relaxkit plugin, which adds one slash command per subcommand under the plugin namespace, `/relaxkit:<subcommand>`:
+
+- `/relaxkit:setup`, `/relaxkit:status`, `/relaxkit:doctor`, `/relaxkit:update`, `/relaxkit:config`, `/relaxkit:preset`, `/relaxkit:privacy`, `/relaxkit:login`, `/relaxkit:undo`, `/relaxkit:uninstall` and `/relaxkit:usage`.
+
+The commands are thin wrappers around the binary. Each one runs `relaxkit <subcommand>` with the arguments you give after the name, and shows the output as printed. The commands that change the machine (`setup`, `update`, `config`, `preset`, `privacy`, `login`, `undo`, `uninstall` and `doctor`) run outside the sandbox, because they change the machine (`sandbox.excludedCommands`). `status` and `usage` stay sandboxed.
+
+```text
+/relaxkit:config set implementer cheap
+/relaxkit:config set planner anthropic/claude-sonnet-5-5#high
+/relaxkit:config set reviewer smarter --host claude
+```
+
+The pinning examples are the same as in the section above, in slash form: a tier, and an exact model in `provider/model#variant` form. The `--host claude|opencode` flag limits a `config` change to one host, and `--project` applies a change to the current project where the tool or host supports project scope.
+
+The slash form, `/relaxkit:<subcommand>`, is not yet confirmed in a live Claude Code session. The owner runs that check. Until it is confirmed, use `relaxkit <subcommand>` in a terminal.
+
 ## Privacy
 
 relaxkit has no telemetry of its own, and it has no background update checks: nothing runs on a timer. It uses the network only when you run one of these commands:
