@@ -33,8 +33,7 @@ pub const GH_ID: &str = "gh";
 const GH_ROUTE: &str = "release";
 
 /// Records the pack copy in the lock when relaxkit installed it (K84). A brew or system gh is never recorded, and a dry
-/// run writes nothing. An existing entry is kept. The version is the one `gh --version` reports, or `unversioned` when
-/// none is read.
+/// run writes nothing. The version is the one `gh --version` reports, or `unversioned` when none is read.
 pub fn record_pack_copy(ctx: &Ctx, run: &RunId, gh: &GhInstall) -> Result<()> {
     if ctx.dry_run || !gh.owned_by_pack || gh.path != ctx.dirs.bin.join("gh") {
         return Ok(());
@@ -43,12 +42,17 @@ pub fn record_pack_copy(ctx: &Ctx, run: &RunId, gh: &GhInstall) -> Result<()> {
     if is_link(&gh.path) {
         return Ok(());
     }
-    if let Some(lock) = Lockfile::load(ctx)?
-        && lock.tools.contains_key(GH_ID)
-    {
+    // The lock takes the version the copy reports, replacing an older entry (F7-3). A copy whose version cannot be read
+    // keeps the entry it has, so a failed probe does not turn a known version into unversioned.
+    let version = reported_version(ctx, &gh.path);
+    let existing = Lockfile::load(ctx)?
+        .and_then(|lock| lock.tools.get(GH_ID).map(|entry| entry.version.clone()));
+    if existing.as_deref() == Some(version.as_str()) {
         return Ok(());
     }
-    let version = reported_version(ctx, &gh.path);
+    if version == UNVERSIONED && existing.is_some() {
+        return Ok(());
+    }
     record_version(ctx, run, &version)
 }
 
@@ -424,6 +428,25 @@ mod tests {
             lock_in(&ctx).is_none(),
             "a link was recorded as the pack copy"
         );
+    }
+
+    #[test]
+    fn a_reinstalled_pack_copy_replaces_an_older_locked_version_with_the_one_it_reports() {
+        // The lock says 2.60.0 but the copy is missing: setup installs the release tagged 9.9.9, and the copy reports
+        // 9.9.8. The lock takes what the copy reports, not the tag (F7-3).
+        let root = tempfile::tempdir().unwrap();
+        let (bytes, checksums) = fixture(root.path(), None);
+        let bin = KitDirs::rooted(root.path()).bin.join("gh");
+        let runner =
+            Recorder::new(version_reply(&bin, "gh version 9.9.8 (2026-01-01)\n")).real("tar -xf");
+        let ctx = ctx_with(root.path(), &runner, net(bytes, &checksums));
+        let run = RunId::new();
+        record_version(&ctx, &run, "2.60.0").unwrap();
+
+        let gh = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap();
+        record_pack_copy(&ctx, &run, &gh).unwrap();
+
+        assert_eq!(lock_in(&ctx).unwrap().tools["gh"].version, "9.9.8");
     }
 
     /// The lock file, if one was written.
