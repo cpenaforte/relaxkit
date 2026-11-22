@@ -23,7 +23,7 @@ use crate::sandbox::{self, GhPath};
 use crate::state::lockfile::Lockfile;
 use crate::state::{RunId, with_run_lock};
 use crate::tools::{Engine, Outcome};
-use crate::ui::{Mark, Palette, Spinner};
+use crate::ui::{self, Mark, Palette, Spinner};
 
 /// The steps in the order they run (spec section 6, ruling K46).
 pub const STEPS: [&str; 7] = [
@@ -609,7 +609,7 @@ impl SetupReport {
 
 /// One detail line under a step: its mark, then its text.
 fn detail_line(palette: Palette, mark: Mark, text: &str) -> String {
-    format!("  {} {text}", palette.mark(mark))
+    ui::detail(palette, mark, text)
 }
 
 #[cfg(test)]

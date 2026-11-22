@@ -130,7 +130,7 @@ fn ensure_gh_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<GhInstall
     }
     if ctx.dry_run {
         ctx.out
-            .info(&format!("would install gh into {}", ctx.dirs.bin.display()));
+            .plan(&format!("would install gh into {}", ctx.dirs.bin.display()));
         return Ok(GhInstall {
             path: bin,
             owned_by_pack: true,

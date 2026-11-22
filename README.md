@@ -58,9 +58,11 @@ The global flags are:
 
 ### Reading the output
 
-Text output puts the verdict first and groups the rest. `relaxkit doctor` shows the failures and warnings by area, with the command to run for each; `relaxkit setup` shows one line per step, and the checks that did not pass under it.
+Every command marks its results the same way. Each result line starts with a mark: `✓` done, `!` done with something to check, `✗` failed, and `·` not done. In a dry run every line is a `·` plan, since nothing is changed. Without a UTF-8 locale the marks are `ok`, `!!`, `xx` and `..`.
 
-Each line starts with a mark: `✓` ok, `!` warning, `✗` failure, `·` skipped. Without a UTF-8 locale the marks are `ok`, `!!`, `xx` and `..`. Color appears only on a terminal, and `NO_COLOR` turns it off. A pipe or a file gets plain text, and `--json` is unchanged. On a terminal a long step shows a spinner until it ends.
+Text output puts the verdict first and groups the rest. `relaxkit doctor` shows the failures and warnings by area, with the command to run for each. `relaxkit setup` shows one line per step, and the checks that did not pass under it. `relaxkit update` lists the tools in a table.
+
+Color appears only on a terminal, and `NO_COLOR` turns it off. A pipe or a file gets plain text, and `--json` is unchanged. On a terminal a long step (`setup`, `update`, `uninstall`, `doctor`) shows a spinner until it ends.
 
 ## Pinning a model per role from the CLI
 

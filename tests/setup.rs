@@ -404,7 +404,7 @@ fn setup_exits_nonzero_when_a_check_fails() {
         .arg("setup")
         .assert()
         .code(1)
-        .stdout(predicate::str::contains("✗ claude.status_line"));
+        .stdout(predicate::str::contains("✗  claude.status_line"));
 }
 
 #[test]
@@ -422,7 +422,7 @@ fn setup_warns_on_anthropic_base_url_and_never_deletes_it() {
     let output = scratch.relaxkit().arg("setup").assert().code(0);
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
 
-    assert!(text.contains("! claude.anthropic_base_url"), "{text}");
+    assert!(text.contains("!  claude.anthropic_base_url"), "{text}");
     let after = fs::read_to_string(&settings).unwrap();
     assert!(
         after.contains("\"ANTHROPIC_BASE_URL\": \"https://example.invalid\""),
@@ -475,7 +475,7 @@ fn a_repair_that_still_fails_leaves_a_fail_and_setup_exits_1() {
 
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
     assert!(text.contains("repaired serena on claude"), "{text}");
-    assert!(text.contains("✗ tool.serena.claude"), "{text}");
+    assert!(text.contains("✗  tool.serena.claude"), "{text}");
     assert!(text.contains("run `relaxkit setup` again"), "{text}");
 }
 
@@ -519,7 +519,7 @@ fn a_failed_check_takes_precedence_over_a_pending_login() {
 
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned()
         + &String::from_utf8_lossy(&output.get_output().stderr);
-    assert!(text.contains("✗ claude.status_line"), "{text}");
+    assert!(text.contains("✗  claude.status_line"), "{text}");
     assert!(text.contains("gh auth login --web --clipboard"), "{text}");
 }
 

@@ -17,7 +17,7 @@ use crate::host::{Host, HostInfo, HostKind, InstalledPlugin, detect_hosts};
 use crate::presets::Voice;
 use crate::roles::{ModelSpec, Role, RoleSetting, resolve_claude, resolve_opencode};
 use crate::state::{RunId, with_run_lock};
-use crate::ui::{Cell, Palette, table};
+use crate::ui::{Cell, Mark, Palette, key_values, outcome, table};
 
 /// The two hosts, in the order their settings are written.
 const HOSTS: [HostKind; 2] = [HostKind::Claude, HostKind::Opencode];
@@ -55,6 +55,16 @@ fn parse_setting(value: &str) -> Result<RoleSetting> {
     RoleSetting::parse(value)
 }
 
+/// A change to the config, as its outcome: `text` starts with the verb, which reads the same as an outcome and as a plan.
+/// A dry run writes nothing, so its line is a plan.
+fn changed(ctx: &Ctx, text: &str) {
+    if ctx.dry_run {
+        ctx.out.plan(&format!("would {text}"));
+    } else {
+        ctx.out.outcome(Mark::Ok, text);
+    }
+}
+
 /// `relaxkit config set <key> <value> [--host]`.
 pub fn set(ctx: &Ctx, key: &str, value: &str, host: Option<HostKind>) -> Result<()> {
     match parse_key(key)? {
@@ -86,11 +96,14 @@ pub fn unset(ctx: &Ctx, key: &str, host: Option<HostKind>) -> Result<()> {
                 config.voice = None;
                 save_global(ctx, run, &config)?;
                 voice::apply(ctx, run, config.preset.voice(), ctx.project.is_some())?;
-                ctx.out.info(&format!(
-                    "voice back to the {} preset's {}",
-                    config.preset.as_str(),
-                    config.preset.voice().as_str()
-                ));
+                changed(
+                    ctx,
+                    &format!(
+                        "set voice back to the {} preset's {}",
+                        config.preset.as_str(),
+                        config.preset.voice().as_str()
+                    ),
+                );
                 Ok(())
             })
         }
@@ -109,21 +122,31 @@ pub fn show(ctx: &Ctx, key: Option<&str>) -> Result<Vec<String>> {
     let mut lines = Vec::new();
     match key.map(parse_key).transpose()? {
         None => {
-            lines.push(format!("preset: {}", view.config.preset.as_str()));
-            lines.push(format!("voice: {}", view.voice_label()));
-            lines.push(format!("compact-at: {}", view.compact_label()));
+            lines.extend(key_values(
+                &[
+                    ("preset", vec![view.config.preset.as_str().to_string()]),
+                    ("voice", vec![view.voice_label()]),
+                    ("compact-at", vec![view.compact_label()]),
+                ],
+                0,
+            ));
             lines.push(String::new());
             lines.extend(role_table(&view.rows(), palette));
         }
         Some(Key::Role(role)) => lines.extend(role_table(&[view.row(role)], palette)),
-        Some(Key::Voice) => lines.push(format!("voice: {}", view.voice_label())),
-        Some(Key::CompactAt) => lines.push(format!("compact-at: {}", view.compact_label())),
+        Some(Key::Voice) => {
+            lines.extend(key_values(&[("voice", vec![view.voice_label()])], 0));
+        }
+        Some(Key::CompactAt) => {
+            lines.extend(key_values(&[("compact-at", vec![view.compact_label()])], 0));
+        }
     }
     if !view.opencode_listed() && view.has_host(HostKind::Opencode) {
-        lines.push(
-            "note: OpenCode's model list could not be read, so OpenCode models show as inherited"
-                .to_string(),
-        );
+        lines.push(outcome(
+            palette,
+            Mark::Warn,
+            "OpenCode's model list could not be read, so OpenCode models show as inherited",
+        ));
     }
     Ok(lines)
 }
@@ -228,15 +251,20 @@ fn set_role(
     save_global(ctx, run, &config)?;
     apply_roles(ctx, run, &hosts, &config, host)?;
     let row = View::build(ctx, config).row(role);
-    for kind in targets {
-        ctx.out.info(&format!(
-            "{} on {}: {}",
-            role.key(),
-            kind.product_name(),
-            row.host(kind).note
-        ));
+    changed(
+        ctx,
+        &format!(
+            "set {} to {value}; takes effect in new sessions",
+            role.key()
+        ),
+    );
+    let hosts: Vec<(&str, Vec<String>)> = targets
+        .iter()
+        .map(|kind| (kind.product_name(), vec![row.host(*kind).note.clone()]))
+        .collect();
+    for line in key_values(&hosts, 3) {
+        ctx.out.info(&line);
     }
-    ctx.out.info("takes effect in new sessions");
     Ok(())
 }
 
@@ -249,11 +277,14 @@ fn unset_role(ctx: &Ctx, run: &RunId, role: Role, host: Option<HostKind>) -> Res
     save_global(ctx, run, &config)?;
     apply_roles(ctx, run, &hosts, &config, host)?;
     let view = View::build(ctx, config);
-    ctx.out.info(&format!(
-        "{} back to its preset tier: {}",
-        role.key(),
-        view.row(role).setting
-    ));
+    changed(
+        ctx,
+        &format!(
+            "set {} back to its preset tier: {}",
+            role.key(),
+            view.row(role).setting
+        ),
+    );
     Ok(())
 }
 
@@ -262,7 +293,7 @@ fn set_voice(ctx: &Ctx, run: &RunId, voice_word: Voice) -> Result<()> {
     config.voice = Some(voice_word);
     save_global(ctx, run, &config)?;
     voice::apply(ctx, run, voice_word, ctx.project.is_some())?;
-    ctx.out.info(&format!("voice: {}", voice_word.as_str()));
+    changed(ctx, &format!("set voice to {}", voice_word.as_str()));
     Ok(())
 }
 
@@ -293,7 +324,7 @@ fn set_compact(ctx: &Ctx, run: &RunId, tokens: u64) -> Result<()> {
             }
         }
     }
-    ctx.out.info(&format!("compact-at: {tokens} tokens"));
+    changed(ctx, &format!("set compact-at to {tokens} tokens"));
     Ok(())
 }
 
@@ -322,7 +353,7 @@ fn unset_compact(ctx: &Ctx, run: &RunId) -> Result<()> {
     }
     config.compact_at = None;
     save_global(ctx, run, &config)?;
-    ctx.out.info("compact-at: not set");
+    changed(ctx, "unset compact-at");
     Ok(())
 }
 

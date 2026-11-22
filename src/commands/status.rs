@@ -22,7 +22,7 @@ use crate::runtime::nvm::{NodeInstall, other_nodes};
 use crate::sandbox::health::{health_line, plugin_health};
 use crate::state::lockfile::Lockfile;
 use crate::tools::Engine;
-use crate::ui::{Cell, Mark, Palette, heading, table};
+use crate::ui::{Cell, Mark, Palette, detail, heading, outcome, table};
 
 /// How a locked tool stands on one host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,7 +182,7 @@ impl StatusReport {
                 &format!("relaxkit {} · preset {}", self.version, self.preset),
                 palette,
             ),
-            format!("{} {verdict}", palette.mark(verdict_mark)),
+            outcome(palette, verdict_mark, &verdict),
         ];
         if !self.hosts.is_empty() {
             out.push(String::new());
@@ -266,7 +266,7 @@ impl StatusReport {
             out.push(String::new());
             out.push(heading("Notes", palette));
             for note in &self.notes {
-                out.push(format!("  {} {}", palette.mark(note.mark), note.text));
+                out.push(detail(palette, note.mark, &note.text));
             }
         }
         out.push(String::new());
@@ -601,7 +601,7 @@ mod tests {
 
         let lines = report.lines();
 
-        assert_eq!(lines[1], "! no host found on the PATH", "{lines:?}");
+        assert_eq!(lines[1], "!  no host found on the PATH", "{lines:?}");
     }
 
     #[test]

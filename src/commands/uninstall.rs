@@ -21,6 +21,7 @@ use crate::recipe::{Step, load_all};
 use crate::sandbox;
 use crate::state::lockfile::Lockfile;
 use crate::state::{OriginalText, RunId, original_text, record_backup, record_link, with_run_lock};
+use crate::ui::{Mark, detail, heading, outcome};
 
 /// Removes the pack's entries and returns the report: what was removed, then what is left in place.
 pub fn run(ctx: &Ctx) -> Result<Vec<String>> {
@@ -38,7 +39,8 @@ pub fn run(ctx: &Ctx) -> Result<Vec<String>> {
             }
         }
         remove_bin_copies(ctx, run, &mut lines)?;
-        lines.push("left in place:".to_string());
+        lines.push(String::new());
+        lines.push(heading("Left in place", ctx.out.palette()));
         leftovers(ctx, &mut lines)?;
         Ok(lines)
     };
@@ -73,9 +75,11 @@ fn remove_mcp_entries(
     for name in names {
         if host.mcp_entry_present(ctx, name)? {
             host.mcp_remove(ctx, name)?;
-            lines.push(format!(
-                "removed MCP entry {name} from {}",
-                host.info().kind.product_name()
+            let product = host.info().kind.product_name();
+            lines.push(removal(
+                ctx,
+                &format!("removed MCP entry {name} from {product}"),
+                &format!("would remove MCP entry {name} from {product}"),
             ));
         }
     }
@@ -112,11 +116,19 @@ fn remove_claude(
     let old = read_or_empty(&instructions)?;
     let new = block_remove(&old, claude::ROLES_BLOCK);
     write_changed(ctx, run, &instructions, &old, &new)?;
-    lines.push(if settings_done {
-        "removed the Claude Code keys relaxkit wrote and its roles block".to_string()
+    if settings_done {
+        lines.push(removal(
+            ctx,
+            "removed the Claude Code keys relaxkit wrote and its roles block",
+            "would remove the Claude Code keys relaxkit wrote and its roles block",
+        ));
     } else {
-        "left the Claude Code settings alone: no earlier run journaled them, so there is nothing to revert; removed its roles block".to_string()
-    });
+        lines.push(outcome(
+            ctx.out.palette(),
+            Mark::Warn,
+            "left the Claude Code settings alone: no earlier run journaled them, so there is nothing to revert; removed its roles block",
+        ));
+    }
     Ok(())
 }
 
@@ -189,7 +201,11 @@ fn remove_opencode(
         &available,
     )?;
     // No compaction buffer is removed: relaxkit writes none on OpenCode (K114), so one present is the user's.
-    lines.push("removed the OpenCode agents and routing block relaxkit wrote".to_string());
+    lines.push(removal(
+        ctx,
+        "removed the OpenCode agents and routing block relaxkit wrote",
+        "would remove the OpenCode agents and routing block relaxkit wrote",
+    ));
     Ok(())
 }
 
@@ -263,10 +279,11 @@ fn remove_bin_copies_except(
 ) -> Result<()> {
     // F23-17: without the running path the binary cannot be told apart from a copy, so nothing is removed.
     let Some(running) = running else {
-        lines.push(
-            "kept the copies in dirs.bin: the running binary could not be identified, so nothing there is removed"
-                .to_string(),
-        );
+        lines.push(outcome(
+            ctx.out.palette(),
+            Mark::Skip,
+            "kept the copies in dirs.bin: the running binary could not be identified, so nothing there is removed",
+        ));
         return Ok(());
     };
     let Ok(entries) = fs::read_dir(&ctx.dirs.bin) else {
@@ -290,35 +307,66 @@ fn remove_bin_copies_except(
         if !ctx.dry_run {
             fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
         }
-        lines.push(format!("removed the pack copy {}", path.display()));
+        lines.push(removal(
+            ctx,
+            &format!("removed the pack copy {}", path.display()),
+            &format!("would remove the pack copy {}", path.display()),
+        ));
     }
     Ok(())
+}
+
+/// A removal this run made, or in a dry run the removal it would make, since a dry run removes nothing.
+fn removal(ctx: &Ctx, done: &str, planned: &str) -> String {
+    let palette = ctx.out.palette();
+    if ctx.dry_run {
+        outcome(palette, Mark::Skip, planned)
+    } else {
+        outcome(palette, Mark::Ok, done)
+    }
 }
 
 /// What stays: relaxkit's own binary, its config, lock and journal, the Node link, the pack's plugins, and any
 /// `DISABLE_TELEMETRY` the owner opted into.
 fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
+    let palette = ctx.out.palette();
     if let Ok(exe) = std::env::current_exe() {
-        lines.push(format!(
-            "  the relaxkit binary at {}: remove it with `brew uninstall relaxkit` if Homebrew owns it, else delete it",
-            exe.display()
+        lines.push(detail(
+            palette,
+            Mark::Skip,
+            &format!(
+                "the relaxkit binary at {}: remove it with `brew uninstall relaxkit` if Homebrew owns it, else delete it",
+                exe.display()
+            ),
         ));
     }
-    lines.push(format!(
-        "  relaxkit's config, lock and journal under {} and {}: kept so `relaxkit undo` still works",
-        ctx.dirs.config.display(),
-        ctx.dirs.data.display()
+    lines.push(detail(
+        palette,
+        Mark::Skip,
+        &format!(
+            "relaxkit's config, lock and journal under {} and {}: kept so `relaxkit undo` still works",
+            ctx.dirs.config.display(),
+            ctx.dirs.data.display()
+        ),
     ));
-    lines.push(format!(
-        "  the Node link {} and the Node 24 it points at (managed by nvm)",
-        ctx.dirs.data.join("node").display()
+    lines.push(detail(
+        palette,
+        Mark::Skip,
+        &format!(
+            "the Node link {} and the Node 24 it points at (managed by nvm)",
+            ctx.dirs.data.join("node").display()
+        ),
     ));
     if let Some(lock) = Lockfile::load(ctx)? {
         for (name, tool) in &lock.tools {
-            lines.push(format!(
-                "  plugin or tool {name} {} on {}: remove it with its host's own command",
-                tool.version,
-                tool.hosts.join(", ")
+            lines.push(detail(
+                palette,
+                Mark::Skip,
+                &format!(
+                    "plugin or tool {name} {} on {}: remove it with its host's own command",
+                    tool.version,
+                    tool.hosts.join(", ")
+                ),
             ));
         }
     }
@@ -326,7 +374,11 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
         if host.info().kind == HostKind::Claude {
             let text = read_or_empty(&host.config_file(ctx))?;
             if jsonc_get(&text, &["env", "DISABLE_TELEMETRY"])?.is_some() {
-                lines.push("  env.DISABLE_TELEMETRY in Claude Code's settings (set by privacy --claude-code): remove it by hand if you do not want it".to_string());
+                lines.push(detail(
+                    palette,
+                    Mark::Warn,
+                    "env.DISABLE_TELEMETRY in Claude Code's settings (set by privacy --claude-code): remove it by hand if you do not want it",
+                ));
             }
         }
     }

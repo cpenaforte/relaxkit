@@ -1063,7 +1063,7 @@ fn uninstall_removes_only_pack_managed_entries() {
         !bin.join("rtk").exists(),
         "the pack's binary copy is removed"
     );
-    assert!(stdout.contains("left in place"), "{stdout}");
+    assert!(stdout.contains("Left in place"), "{stdout}");
 }
 
 // ---- usage -----------------------------------------------------------------------------------------------------

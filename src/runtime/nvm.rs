@@ -148,7 +148,7 @@ pub fn ensure_nvm_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NvmIn
     }
     let target = install_in(ctx.dirs.home.join(".nvm"));
     if ctx.dry_run {
-        ctx.out.info("would install nvm from its latest release");
+        ctx.out.plan("would install nvm from its latest release");
         return Ok(target);
     }
     run_installer(
@@ -178,7 +178,7 @@ pub fn update_nvm_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NvmIn
         bail!("nvm is managed by Homebrew and was not updated; update it with `brew upgrade nvm`");
     }
     if ctx.dry_run {
-        ctx.out.info("would update nvm from its latest release");
+        ctx.out.plan("would update nvm from its latest release");
         return Ok(found);
     }
     run_installer(
@@ -262,7 +262,7 @@ fn run_nvm_install(
 ) -> Result<NodeInstall> {
     let action = format!("nvm install {NODE_MAJOR}");
     if ctx.dry_run {
-        ctx.out.info(&format!("would run {action}"));
+        ctx.out.plan(&format!("would run {action}"));
         let version = format!("v{NODE_MAJOR}");
         return Ok(NodeInstall {
             root: nvm.dir.join("versions").join("node").join(&version),
@@ -348,7 +348,7 @@ pub fn latest_node_24(net: &dyn Net) -> Result<String> {
 pub fn link_node(ctx: &Ctx, node: &NodeInstall) -> Result<PathBuf> {
     let link = ctx.dirs.data.join("node");
     if ctx.dry_run {
-        ctx.out.info(&format!(
+        ctx.out.plan(&format!(
             "would link {} to {}",
             link.display(),
             node.root.display()

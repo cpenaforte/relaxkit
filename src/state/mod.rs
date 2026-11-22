@@ -33,7 +33,7 @@ pub fn group_for(ctx: &Ctx, run: &RunId) -> RunId {
 /// Writes `text` to `path`, backing up the old file under the run and journaling the change.
 pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()> {
     if ctx.dry_run {
-        ctx.out.info(&format!("would write {}", path.display()));
+        ctx.out.plan(&format!("would write {}", path.display()));
         return Ok(());
     }
     let target = resolve(path)?;
@@ -386,7 +386,7 @@ fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
         (Some(backup), _) => {
             if ctx.dry_run {
                 ctx.out
-                    .info(&format!("would restore {}", record.file.display()));
+                    .plan(&format!("would restore {}", record.file.display()));
                 return Ok(());
             }
             let bytes = fs::read(backup)
@@ -398,7 +398,7 @@ fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
         (None, true) => {
             if ctx.dry_run {
                 ctx.out
-                    .info(&format!("would remove {}", record.file.display()));
+                    .plan(&format!("would remove {}", record.file.display()));
                 return Ok(());
             }
             keep_current(ctx, &record.file)?;
@@ -419,7 +419,7 @@ fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
 fn restore_link(ctx: &Ctx, file: &Path, target: &Path) -> Result<()> {
     if ctx.dry_run {
         ctx.out
-            .info(&format!("would restore the link {}", file.display()));
+            .plan(&format!("would restore the link {}", file.display()));
         return Ok(());
     }
     if let Ok(meta) = file.symlink_metadata() {
@@ -517,7 +517,7 @@ mod tests {
         assert!(journal::read(&ctx.dirs).unwrap().is_empty());
         assert_eq!(
             ctx.out.lines(),
-            vec![format!("would write {}", file.display())]
+            vec![format!("·  would write {}", file.display())]
         );
     }
 

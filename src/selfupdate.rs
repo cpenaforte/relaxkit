@@ -15,6 +15,7 @@ use crate::fsx::write_atomic;
 use crate::net::github_latest_tag;
 use crate::runtime::{checksum_for, download_dir, fresh_dir, sha256_hex, utf8};
 use crate::state::record_backup;
+use crate::ui::Mark;
 
 /// The GitHub repository whose latest release is the newest relaxkit (K97). Confirmed by the owner (2026-11-22).
 pub const RELEASE_REPO: &str = "cpenaforte/relaxkit";
@@ -174,6 +175,19 @@ pub fn is_homebrew_path(path: &Path) -> bool {
     ]
     .iter()
     .any(|prefix| path.starts_with(prefix))
+}
+
+/// The mark of the self step's row: ok when relaxkit is current or moved, a warning when it could not be decided, a
+/// failure when an update failed, and skip when a check only reports an update or nothing was done.
+pub fn mark(outcome: &SelfUpdate) -> Mark {
+    match outcome {
+        SelfUpdate::Current { .. }
+        | SelfUpdate::Updated { .. }
+        | SelfUpdate::DelegatedToBrew { .. } => Mark::Ok,
+        SelfUpdate::Available { .. } => Mark::Skip,
+        SelfUpdate::UpdatedToolsFailed { .. } => Mark::Fail,
+        SelfUpdate::NotConfigured | SelfUpdate::NewestUnknown { .. } => Mark::Warn,
+    }
 }
 
 /// The text row for the self step, shown before the tool phase.

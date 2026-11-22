@@ -2262,11 +2262,11 @@ fn report_ends_with_the_restart_list() {
     let report = fx.run(false, Some("playwright")).unwrap();
 
     assert_eq!(report.restart, vec![HostKind::Claude]);
-    let lines = relaxkit::commands::update::lines(&report);
+    let lines = relaxkit::commands::update::lines(&report, relaxkit::ui::Palette::PLAIN);
     assert!(
-        lines
-            .last()
-            .is_some_and(|line| line.starts_with("restart:") && line.contains("Claude Code")),
+        lines.last().is_some_and(|line| {
+            line.starts_with("!  restart Claude Code") && line.contains("hooks and plugins")
+        }),
         "{lines:?}"
     );
 }

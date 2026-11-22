@@ -80,3 +80,60 @@ fn doctor_all_parses_as_a_flag_of_doctor() {
         cli.command
     );
 }
+
+/// A dry run changes nothing, so each line it prints is a plan: the skip mark, never an outcome that claims a change.
+#[test]
+fn a_dry_run_prints_plans_with_the_skip_mark_and_no_outcome() {
+    let scratch = Scratch::claude_only();
+
+    for args in [
+        vec!["--dry-run", "privacy"],
+        vec!["--dry-run", "preset", "balanced"],
+        vec!["--dry-run", "config", "set", "implementer", "cheap"],
+        vec!["--dry-run", "undo"],
+    ] {
+        let output = scratch.relaxkit().args(&args).output().unwrap();
+        let text = both(&output);
+
+        assert!(output.status.success(), "{args:?}: {text}");
+        assert!(text.contains("·  "), "{args:?}: {text}");
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.starts_with("✓  ") || line.starts_with("✗  ")),
+            "{args:?} claims an outcome in a dry run: {text}"
+        );
+    }
+}
+
+#[test]
+fn undo_with_nothing_to_undo_says_so_with_the_skip_mark() {
+    let scratch = Scratch::claude_only();
+
+    let output = scratch.relaxkit().arg("undo").output().unwrap();
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "·  nothing to undo: no changes are journaled\n"
+    );
+}
+
+/// The old prefixes (`warning: `, `==> `) are gone from every command: warnings and results share one mark layout.
+#[test]
+fn no_command_prints_the_old_warning_or_step_prefixes() {
+    let scratch = Scratch::claude_only();
+
+    for args in [
+        vec!["--dry-run", "setup"],
+        vec!["doctor"],
+        vec!["status"],
+        vec!["config", "show"],
+        vec!["--dry-run", "privacy"],
+    ] {
+        let output = scratch.relaxkit().args(&args).output().unwrap();
+        let text = both(&output);
+
+        assert!(!text.contains("warning: "), "{args:?}: {text}");
+        assert!(!text.contains("==> "), "{args:?}: {text}");
+    }
+}

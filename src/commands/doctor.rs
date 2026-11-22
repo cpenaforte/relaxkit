@@ -27,7 +27,7 @@ use crate::sandbox::selftest::selftest;
 use crate::state::lockfile::Lockfile;
 use crate::tools::detect::{plugin_name, plugin_spec};
 use crate::tools::engine::{mcp_path_dirs, probe_path};
-use crate::ui::{Mark, Palette, heading, key_values};
+use crate::ui::{Mark, Palette, heading, key_values, outcome};
 
 /// The outcome of one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -626,21 +626,21 @@ pub fn findings(checks: &[Check]) -> Vec<Finding<'_>> {
 /// The lines of one finding. A single check shows its id, message and fix. A group shows its message once and the
 /// checks under it: with their own fixes when `detail` is set, else with their ids only.
 pub fn finding_lines(finding: &Finding<'_>, detail: bool, palette: Palette) -> Vec<String> {
-    let mark = palette.mark(finding.status.mark());
+    let status = finding.status.mark();
     if let [check] = finding.checks.as_slice() {
         let mut lines = vec![
-            format!("  {mark} {}", check.id),
-            format!("      {}", finding.message),
+            crate::ui::detail(palette, status, &check.id),
+            format!("     {}", finding.message),
         ];
         if let Some(fix) = &check.fix {
-            lines.push(format!("      fix  {fix}"));
+            lines.push(format!("     fix  {fix}"));
         }
         return lines;
     }
-    let mut lines = vec![format!(
-        "  {mark} {}  ({} checks)",
-        finding.message,
-        finding.checks.len()
+    let mut lines = vec![crate::ui::detail(
+        palette,
+        status,
+        &format!("{}  ({} checks)", finding.message, finding.checks.len()),
     )];
     if detail {
         let rows: Vec<(&str, Vec<String>)> = finding
@@ -653,15 +653,15 @@ pub fn finding_lines(finding: &Finding<'_>, detail: bool, palette: Palette) -> V
                 )
             })
             .collect();
-        lines.extend(key_values(&rows, 6));
+        lines.extend(key_values(&rows, 5));
     } else {
         let ids: Vec<&str> = finding
             .checks
             .iter()
             .map(|check| check.id.as_str())
             .collect();
-        lines.push(format!("      {}", ids.join(", ")));
-        lines.push("      relaxkit doctor shows the command for each".to_string());
+        lines.push(format!("     {}", ids.join(", ")));
+        lines.push("     relaxkit doctor shows the command for each".to_string());
     }
     lines
 }
@@ -707,11 +707,7 @@ pub fn lines(checks: &[Check], all: bool, palette: Palette) -> Vec<String> {
     } else {
         Mark::Ok
     };
-    let mut lines = vec![format!(
-        "{} {}",
-        palette.mark(verdict_mark),
-        tally_text(fail, warn, ok)
-    )];
+    let mut lines = vec![outcome(palette, verdict_mark, &tally_text(fail, warn, ok))];
     for name in AREAS {
         let in_area: Vec<&Check> = checks
             .iter()
@@ -732,11 +728,10 @@ pub fn lines(checks: &[Check], all: bool, palette: Palette) -> Vec<String> {
                 .iter()
                 .filter(|check| check.status == CheckStatus::Ok)
             {
-                lines.push(format!(
-                    "  {} {}  {}",
-                    palette.mark(Mark::Ok),
-                    check.id,
-                    check.message
+                lines.push(crate::ui::detail(
+                    palette,
+                    Mark::Ok,
+                    &format!("{}  {}", check.id, check.message),
                 ));
             }
         }
@@ -810,17 +805,17 @@ mod tests {
 
         let lines = lines(&checks, false, Palette::PLAIN);
 
-        assert_eq!(lines[0], "✗ 1 failed, 1 ok", "{lines:?}");
+        assert_eq!(lines[0], "✗  1 failed, 1 ok", "{lines:?}");
         assert!(
             lines.contains(&"Claude Code  1 failed, 1 ok".to_string()),
             "{lines:?}"
         );
         assert!(
-            lines.contains(&"  ✗ claude.sandbox.selftest".to_string()),
+            lines.contains(&"  ✗  claude.sandbox.selftest".to_string()),
             "{lines:?}"
         );
         assert!(
-            lines.contains(&"      fix  run `relaxkit setup` again".to_string()),
+            lines.contains(&"     fix  run `relaxkit setup` again".to_string()),
             "{lines:?}"
         );
         assert!(
@@ -846,7 +841,7 @@ mod tests {
         let lines = lines(&checks, true, Palette::PLAIN);
 
         assert!(
-            lines.contains(&"  ✓ claude.hooks  hooks are in place".to_string()),
+            lines.contains(&"  ✓  claude.hooks  hooks are in place".to_string()),
             "{lines:?}"
         );
         assert!(
@@ -875,18 +870,18 @@ mod tests {
         let lines = lines(&checks, false, Palette::PLAIN);
 
         assert!(
-            lines.contains(&"  ! not run here  (2 checks)".to_string()),
+            lines.contains(&"  !  not run here  (2 checks)".to_string()),
             "{lines:?}"
         );
         assert!(
-            lines.contains(&"      tool.ccusage.claude    run `a`".to_string()),
+            lines.contains(&"     tool.ccusage.claude    run `a`".to_string()),
             "{lines:?}"
         );
         assert!(
-            lines.contains(&"      tool.ccusage.opencode  run `bb`".to_string()),
+            lines.contains(&"     tool.ccusage.opencode  run `bb`".to_string()),
             "{lines:?}"
         );
-        assert!(lines[0].starts_with("! 2 warnings"), "{lines:?}");
+        assert!(lines[0].starts_with("!  2 warnings"), "{lines:?}");
     }
 
     #[test]

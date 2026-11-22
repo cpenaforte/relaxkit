@@ -37,7 +37,7 @@ pub fn run(ctx: &Ctx, args: &[String]) -> Result<i32> {
     );
     let cmd = cmd.env("PATH", &path).inherit_terminal();
     if ctx.dry_run {
-        ctx.out.info(&format!("would run {cmd}"));
+        ctx.out.plan(&format!("would run {cmd}"));
         return Ok(0);
     }
     Ok(ctx.runner.run(&cmd)?.code)

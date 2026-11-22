@@ -17,13 +17,14 @@ pub const OUTPUT_LINES: usize = 6;
 /// How long one spinner frame stays on screen.
 const FRAME_INTERVAL: Duration = Duration::from_millis(80);
 
-/// The outcome shown as a glyph at the start of a line.
+/// The outcome shown as a glyph at the start of a line. Every command reads the marks the same way: `Ok` is done,
+/// `Warn` is done with something to look at, or a result that could not be decided, `Fail` is a failure, and `Skip`
+/// is not done: a plan in a dry run, a step that does not apply, or nothing checked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {
     Ok,
     Warn,
     Fail,
-    /// Nothing to report, or not checked.
     Skip,
 }
 
@@ -264,6 +265,17 @@ pub fn table(headers: &[&str], rows: &[Vec<Cell>], indent: usize, palette: Palet
 /// A section title: bold on a terminal, plain otherwise.
 pub fn heading(text: &str, palette: Palette) -> String {
     palette.paint(text, Style::Bold)
+}
+
+/// A result line: its mark, then the text. Every command prints what happened this way, so a line reads the same
+/// whichever command printed it.
+pub fn outcome(palette: Palette, mark: Mark, text: &str) -> String {
+    format!("{}{text}", palette.mark_column(mark))
+}
+
+/// A result under another one, indented two columns.
+pub fn detail(palette: Palette, mark: Mark, text: &str) -> String {
+    format!("  {}", outcome(palette, mark, text))
 }
 
 /// Lines of `key  value` with the keys aligned. A value can take several lines; the rest sit under the first.
@@ -662,6 +674,14 @@ mod tests {
             lines,
             vec!["  command  doctor", "  output   first", "           second",]
         );
+    }
+
+    #[test]
+    fn an_outcome_line_starts_with_its_mark_and_a_detail_is_indented() {
+        assert_eq!(outcome(Palette::PLAIN, Mark::Ok, "done"), "✓  done");
+        assert_eq!(outcome(Palette::ASCII, Mark::Warn, "careful"), "!! careful");
+        assert_eq!(detail(Palette::PLAIN, Mark::Skip, "left"), "  ·  left");
+        assert_eq!(strip(&outcome(COLOR, Mark::Fail, "x")), "✗  x");
     }
 
     #[test]

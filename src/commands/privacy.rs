@@ -8,6 +8,7 @@ use crate::config_apply::{claude, privacy};
 use crate::ctx::Ctx;
 use crate::host::{HostKind, detect_hosts};
 use crate::state::{RunId, with_run_lock};
+use crate::ui::Mark;
 
 pub fn run(ctx: &Ctx, claude_code: bool) -> Result<()> {
     let body = |run: &RunId| -> Result<()> {
@@ -29,15 +30,31 @@ pub fn run(ctx: &Ctx, claude_code: bool) -> Result<()> {
                 // The warning is shown before the switch is written, as the spec asks (6.3).
                 ctx.out.warn(claude::CLAUDE_TELEMETRY_WARNING);
                 claude::disable_claude_code_telemetry(ctx, run, host.as_ref())?;
-                ctx.out
-                    .info("Claude Code telemetry is off (env.DISABLE_TELEMETRY = 1)");
+                done(
+                    ctx,
+                    "Claude Code telemetry is off (env.DISABLE_TELEMETRY = 1)",
+                    "would turn off Claude Code telemetry (env.DISABLE_TELEMETRY = 1)",
+                );
             }
         }
-        ctx.out.info("rtk and caveman telemetry are off, and superpowers telemetry is disabled in Claude Code");
+        done(
+            ctx,
+            "rtk and caveman telemetry are off, and superpowers telemetry is disabled in Claude Code",
+            "would turn off rtk and caveman telemetry, and disable superpowers telemetry in Claude Code",
+        );
         Ok(())
     };
     if ctx.dry_run {
         return body(&ctx.run);
     }
     with_run_lock(&ctx.dirs, || body(&ctx.run))
+}
+
+/// A switch that is now off: an outcome, or in a dry run, the plan, since nothing is switched.
+fn done(ctx: &Ctx, text: &str, planned: &str) {
+    if ctx.dry_run {
+        ctx.out.plan(planned);
+    } else {
+        ctx.out.outcome(Mark::Ok, text);
+    }
 }

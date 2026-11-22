@@ -7,7 +7,7 @@ use crate::exec::{FakeRunner, Runner, SystemRunner};
 use crate::net::{FakeNet, HttpNet, Net};
 use crate::platform::KitDirs;
 use crate::state::RunId;
-use crate::ui::{self, Palette, Stream, stderr_is_terminal, stdout_is_terminal};
+use crate::ui::{self, Mark, Palette, Stream, stderr_is_terminal, stdout_is_terminal};
 
 /// Where user-facing lines go. `stdout()` prints; `capture()` keeps them for tests.
 #[derive(Clone, Default)]
@@ -36,6 +36,16 @@ impl Reporter {
         }
     }
 
+    /// Keeps the lines like `capture`, but painted as this reporter would print them, so the lines keep their colors
+    /// when they are printed later.
+    pub fn capture_styled(&self) -> Reporter {
+        Reporter {
+            capture: Some(Arc::new(Mutex::new(Vec::new()))),
+            palette: self.palette,
+            progress: self.progress,
+        }
+    }
+
     /// How a line printed to standard output is painted.
     pub fn palette(&self) -> Palette {
         self.palette
@@ -46,19 +56,27 @@ impl Reporter {
         self.progress
     }
 
+    /// Prints a line as it is. A line that reports a result goes through `outcome`, so it carries its mark.
     pub fn info(&self, msg: &str) {
-        self.emit(msg, "");
+        self.emit(Stream::Stdout, msg.to_string());
     }
 
+    /// Prints a result on standard output: its mark, then the text.
+    pub fn outcome(&self, mark: Mark, msg: &str) {
+        self.emit(Stream::Stdout, ui::outcome(self.palette, mark, msg));
+    }
+
+    /// Prints an action that a dry run did not take: a skip mark, then the text.
+    pub fn plan(&self, msg: &str) {
+        self.outcome(Mark::Skip, msg);
+    }
+
+    /// Prints a warning on standard error, with the warning mark.
     pub fn warn(&self, msg: &str) {
-        self.emit(msg, "warning: ");
+        self.emit(Stream::Stderr, ui::outcome(self.progress, Mark::Warn, msg));
     }
 
-    pub fn step(&self, msg: &str) {
-        self.emit(msg, "==> ");
-    }
-
-    /// Messages recorded by a `capture()` reporter, without any prefix. Empty for `stdout()`.
+    /// Lines recorded by a capture reporter, as they would print. Empty for `stdout()`.
     pub fn lines(&self) -> Vec<String> {
         match &self.capture {
             Some(lines) => lines.lock().expect("reporter lock").clone(),
@@ -66,13 +84,10 @@ impl Reporter {
         }
     }
 
-    fn emit(&self, msg: &str, prefix: &str) {
+    fn emit(&self, stream: Stream, line: String) {
         match &self.capture {
-            Some(lines) => lines.lock().expect("reporter lock").push(msg.to_string()),
-            None if prefix == "warning: " => {
-                ui::print_line(Stream::Stderr, &format!("{prefix}{msg}"));
-            }
-            None => ui::print_line(Stream::Stdout, &format!("{prefix}{msg}")),
+            Some(lines) => lines.lock().expect("reporter lock").push(line),
+            None => ui::print_line(stream, &line),
         }
     }
 }
@@ -152,12 +167,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn capture_reporter_keeps_plain_messages() {
+    fn capture_reporter_keeps_lines_as_they_print() {
         let ctx = Ctx::for_test(Path::new("/h"), FakeRunner::new(), FakeNet::new());
         ctx.out.info("hello");
         ctx.out.warn("careful");
-        ctx.out.step("doing");
-        assert_eq!(ctx.out.lines(), vec!["hello", "careful", "doing"]);
+        ctx.out.outcome(Mark::Ok, "done");
+        ctx.out.plan("would run it");
+        assert_eq!(
+            ctx.out.lines(),
+            vec!["hello", "!  careful", "✓  done", "·  would run it"]
+        );
     }
 
     #[test]

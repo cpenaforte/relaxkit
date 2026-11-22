@@ -37,7 +37,7 @@ fn ensure_uv_pinned(ctx: &Ctx, run: &RunId, expected_sha256: &str) -> Result<Pat
     }
     if ctx.dry_run {
         ctx.out
-            .info(&format!("would install uv into {}", ctx.dirs.bin.display()));
+            .plan(&format!("would install uv into {}", ctx.dirs.bin.display()));
         return Ok(bin);
     }
     let installer = download_verified(ctx, run, "uv", UV_INSTALL_URL, expected_sha256)?;

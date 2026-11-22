@@ -25,6 +25,7 @@ use crate::runtime::nvm::{
 use crate::state::lockfile::{LockedTool, Lockfile};
 use crate::state::{record_backup, record_link};
 use crate::tools::engine::{Engine, UNVERSIONED};
+use crate::ui::{Cell, Mark, Palette, heading, outcome, table};
 
 /// The rows in run order (K80): rtk first, the pinned tools and Node before the tools that run on Node, then the rest.
 const ORDER: [&str; 13] = [
@@ -73,6 +74,17 @@ pub enum RowResult {
 }
 
 impl RowResult {
+    /// The mark that shows the result: ok when the tool is current, moved or recorded; a warning when its newest
+    /// release is unknown; a failure when a move failed; skip when nothing was changed (a check, or a host not touched).
+    pub fn mark(&self) -> Mark {
+        match self {
+            RowResult::Updated | RowResult::Current | RowResult::Recorded => Mark::Ok,
+            RowResult::NewestUnknown => Mark::Warn,
+            RowResult::Available | RowResult::NotTouched(_) => Mark::Skip,
+            RowResult::RolledBack | RowResult::RollbackFailed(_) => Mark::Fail,
+        }
+    }
+
     /// The result in words, for the text and JSON output.
     pub fn label(&self) -> String {
         match self {
@@ -959,25 +971,42 @@ fn back_up_first(
     Ok(())
 }
 
-/// The text of the report, one line per row, then any failures, then the restart list, which is always last (K69).
-pub fn lines(report: &UpdateReport) -> Vec<String> {
+/// The text of the report: a table with one row per tool, then any failures, then the restart list, which is always
+/// last (K69).
+pub fn lines(report: &UpdateReport, palette: Palette) -> Vec<String> {
     let mut lines = Vec::new();
-    for row in &report.rows {
-        let installed = row.installed.as_deref().unwrap_or("-");
-        let newest = row.newest.as_deref().unwrap_or("unknown");
-        let note = row
-            .note
-            .as_deref()
-            .map(|note| format!(" ({note})"))
-            .unwrap_or_default();
-        lines.push(format!(
-            "{:<22} {installed} -> {newest}: {}{note}",
-            row.tool,
-            row.result.label()
+    if !report.rows.is_empty() {
+        lines.push(heading("Tools", palette));
+        let rows: Vec<Vec<Cell>> = report
+            .rows
+            .iter()
+            .map(|row| {
+                let note = row
+                    .note
+                    .as_deref()
+                    .map(|note| format!(" ({note})"))
+                    .unwrap_or_default();
+                vec![
+                    Cell::new(row.tool.as_str()),
+                    Cell::new(row.installed.as_deref().unwrap_or("-")),
+                    Cell::new(row.newest.as_deref().unwrap_or("unknown")),
+                    Cell::marked(row.result.mark(), format!("{}{note}", row.result.label())),
+                ]
+            })
+            .collect();
+        lines.extend(table(
+            &["TOOL", "INSTALLED", "NEWEST", "RESULT"],
+            &rows,
+            2,
+            palette,
         ));
     }
     if !report.failed.is_empty() {
-        lines.push(format!("failed: {}", report.failed.join(", ")));
+        lines.push(outcome(
+            palette,
+            Mark::Fail,
+            &format!("failed: {}", report.failed.join(", ")),
+        ));
     }
     if !report.restart.is_empty() {
         let names: Vec<&str> = report
@@ -985,9 +1014,13 @@ pub fn lines(report: &UpdateReport) -> Vec<String> {
             .iter()
             .map(|kind| kind.product_name())
             .collect();
-        lines.push(format!(
-            "restart: {} (hooks and plugins load when a session starts)",
-            names.join(" and ")
+        lines.push(outcome(
+            palette,
+            Mark::Warn,
+            &format!(
+                "restart {} for the changes: hooks and plugins load when a session starts",
+                names.join(" and ")
+            ),
         ));
     }
     lines
