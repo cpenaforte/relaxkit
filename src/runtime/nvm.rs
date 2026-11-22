@@ -285,6 +285,14 @@ pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<Node
 /// A version without `bin/node` is refused, which leaves the old link in place.
 pub fn link_node(ctx: &Ctx, node: &NodeInstall) -> Result<PathBuf> {
     let link = ctx.dirs.data.join("node");
+    if ctx.dry_run {
+        ctx.out.info(&format!(
+            "would link {} to {}",
+            link.display(),
+            node.root.display()
+        ));
+        return Ok(link);
+    }
     if !node.root.is_absolute() {
         bail!(
             "cannot link to {}: the path is not absolute",
@@ -293,14 +301,6 @@ pub fn link_node(ctx: &Ctx, node: &NodeInstall) -> Result<PathBuf> {
     }
     if !node.root.join("bin").join("node").is_file() {
         bail!("cannot link to {}: it has no bin/node", node.root.display());
-    }
-    if ctx.dry_run {
-        ctx.out.info(&format!(
-            "would link {} to {}",
-            link.display(),
-            node.root.display()
-        ));
-        return Ok(link);
     }
     if link
         .symlink_metadata()
@@ -786,6 +786,28 @@ mod tests {
                 .is_err(),
             "the temp link was renamed away"
         );
+    }
+
+    #[test]
+    fn a_link_dry_run_does_not_check_the_target() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let old = NodeInstall {
+            version: "v24.1.0".into(),
+            root: node_at(home, "v24.1.0"),
+        };
+        let missing = NodeInstall {
+            version: "v24.9.9".into(),
+            root: home.join(".nvm/versions/node/v24.9.9"),
+        };
+        let mut ctx = ctx_with(home, &Recorder::new(FakeRunner::new()), FakeNet::new());
+        let link = link_node(&ctx, &old).unwrap();
+        ctx.dry_run = true;
+
+        let planned = link_node(&ctx, &missing).unwrap();
+
+        assert_eq!(planned, link);
+        assert_eq!(fs::read_link(&link).unwrap(), old.root);
     }
 
     #[test]
