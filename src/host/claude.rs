@@ -116,6 +116,15 @@ impl Host for ClaudeHost {
         Ok(())
     }
 
+    fn mcp_entry_present(&self, _ctx: &Ctx, name: &str) -> Result<bool> {
+        let text = match std::fs::read_to_string(&self.state) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) => return Err(err.into()),
+        };
+        Ok(crate::edit::jsonc_get(&text, &["mcpServers", name])?.is_some())
+    }
+
     fn plugin_install(&self, ctx: &Ctx, spec: &str) -> Result<()> {
         let cmd = Cmd::new("claude").args(&["plugin", "install"]).arg(spec);
         run_edit(ctx, &self.edited_files(), &cmd)

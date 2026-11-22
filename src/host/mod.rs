@@ -55,6 +55,8 @@ pub trait Host {
         env: &[(String, String)],
     ) -> Result<()>;
     fn mcp_remove(&self, ctx: &Ctx, name: &str) -> Result<()>;
+    /// Whether the host's own config holds an MCP entry with this name. Read-only: nothing is started (ruling R2-1).
+    fn mcp_entry_present(&self, ctx: &Ctx, name: &str) -> Result<bool>;
     fn plugin_install(&self, ctx: &Ctx, spec: &str) -> Result<()>;
     fn plugin_update(&self, ctx: &Ctx, spec: &str) -> Result<()>;
     fn plugin_list(&self, ctx: &Ctx) -> Result<Vec<InstalledPlugin>>;

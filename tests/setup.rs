@@ -448,3 +448,40 @@ fn a_failed_check_takes_precedence_over_a_pending_login() {
     assert!(text.contains("fail claude.status_line"), "{text}");
     assert!(text.contains("gh auth login --web --clipboard"), "{text}");
 }
+
+#[test]
+fn setup_readds_a_missing_mcp_entry_through_the_host_step() {
+    // R2-1: a locked MCP entry that is gone from the host config is added again by the host's MCP step. The tool is
+    // not reinstalled.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    fs::write(
+        scratch.home().join(".claude.json"),
+        "{\"mcpServers\": {}}\n",
+    )
+    .unwrap();
+    scratch.clear_calls();
+
+    let output = scratch.relaxkit().arg("setup").assert().success();
+
+    let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    assert!(
+        text.contains("repaired serena on claude: re-added"),
+        "{text}"
+    );
+    let calls = scratch.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.starts_with("claude mcp add --scope user serena")),
+        "{calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.starts_with("uv tool install")),
+        "the tool must not be reinstalled: {calls:?}"
+    );
+    let state = fs::read_to_string(scratch.home().join(".claude.json")).unwrap();
+    assert!(state.contains("\"serena\""), "{state}");
+}

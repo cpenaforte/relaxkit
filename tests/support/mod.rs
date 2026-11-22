@@ -52,6 +52,19 @@ if [ -n "$RELAXKIT_STUB_FAIL_ONCE" ]; then
       fi ;;
   esac
 fi
+# `claude mcp add` and `claude mcp remove` keep the user-scope entries in ~/.claude.json, as Claude Code does.
+mcp_names="$RELAXKIT_STUB_STATE/mcp-names"
+mcp_forget() {
+  : >> "$mcp_names"
+  tmp="$mcp_names.tmp"; : > "$tmp"
+  while IFS= read -r n; do [ "$n" = "$1" ] || echo "$n" >> "$tmp"; done < "$mcp_names"
+  mv "$tmp" "$mcp_names"
+}
+mcp_write() {
+  body=""; sep=""
+  while IFS= read -r n; do body="$body$sep\"$n\": {}"; sep=", "; done < "$mcp_names"
+  printf '{"mcpServers": {%s}}\n' "$body" > "$HOME/.claude.json"
+}
 case "$line" in
   *"@anthropic-ai/sandbox-runtime"*) printf 'status=1\n403\n'; exit 0 ;;
   "claude --version"|"claude -v") echo "2.1.330 (Claude Code)" ;;
@@ -65,6 +78,8 @@ case "$line" in
     mkdir -p "$RELAXKIT_STUB_STATE"
     echo "${line#claude plugin install }  Version: 1.0.0" >> "$RELAXKIT_STUB_STATE/plugins" ;;
   "claude plugin marketplace list") echo "❯ anthropic-plugin-directory  (fixture)" ;;
+  "claude mcp add "*) mcp_forget "$5"; echo "$5" >> "$mcp_names"; mcp_write ;;
+  "claude mcp remove "*) mcp_forget "$5"; mcp_write ;;
   "gh auth status") exit "${RELAXKIT_STUB_GH_AUTH:-0}" ;;
 esac
 exit 0

@@ -324,28 +324,49 @@ fn verify_step(
     report: &mut SetupReport,
 ) -> Result<bool> {
     let mut checks = doctor::checks_for(ctx, hosts)?;
-    let mut targets: Vec<(String, HostKind)> = Vec::new();
+    let mut repairs: Vec<Repair> = Vec::new();
     for check in &checks {
-        if let Some(target) = reinstall_target(check)
-            && !targets.contains(&target)
+        if let Some(repair) = repair_for(check)
+            && !repairs.contains(&repair)
         {
-            targets.push(target);
+            repairs.push(repair);
         }
     }
-    for (id, kind) in &targets {
-        let Some(recipe) = engine.recipes.iter().find(|recipe| &recipe.id == id) else {
-            continue;
-        };
-        match engine.reinstall(recipe, *kind) {
-            Ok(_) => report.say(
-                ctx,
-                "verify",
-                format!("repaired {id} on {kind}: reinstalled at its locked version and configured again"),
-            ),
-            Err(err) => report.say(ctx, "verify", format!("could not repair {id} on {kind}: {err:#}")),
+    for repair in &repairs {
+        match repair {
+            Repair::Reinstall(id, kind) => {
+                let Some(recipe) = engine.recipes.iter().find(|recipe| &recipe.id == id) else {
+                    continue;
+                };
+                match engine.reinstall(recipe, *kind) {
+                    Ok(_) => report.say(
+                        ctx,
+                        "verify",
+                        format!("repaired {id} on {kind}: reinstalled at its locked version and configured again"),
+                    ),
+                    Err(err) => report.say(ctx, "verify", format!("could not repair {id} on {kind}: {err:#}")),
+                }
+            }
+            Repair::ReAddEntry(id, kind) => {
+                let Some(recipe) = engine.recipes.iter().find(|recipe| &recipe.id == id) else {
+                    continue;
+                };
+                match engine.readd_mcp(recipe, *kind) {
+                    Ok(()) => report.say(
+                        ctx,
+                        "verify",
+                        format!("repaired {id} on {kind}: re-added its MCP entry"),
+                    ),
+                    Err(err) => report.say(
+                        ctx,
+                        "verify",
+                        format!("could not repair {id} on {kind}: {err:#}"),
+                    ),
+                }
+            }
         }
     }
-    if !targets.is_empty() {
+    if !repairs.is_empty() {
         checks = doctor::checks_for(ctx, hosts)?;
     }
     let count = |status: CheckStatus| checks.iter().filter(|check| check.status == status).count();
@@ -386,18 +407,31 @@ fn verify_step(
     Ok(fail > 0)
 }
 
-/// The locked tool a failing check repairs by reinstalling it: a failing probe (`tool.<id>.<host>`) or a missing MCP
-/// command (`mcp.<id>.<host>`). No other check has a reinstall repair (ruling OWNER-3).
-fn reinstall_target(check: &Check) -> Option<(String, HostKind)> {
+/// A repair a failing check gets on a rerun (ruling OWNER-3, and R2-1 for the MCP entry).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Repair {
+    /// Reinstall the locked tool on the host, through the engine path.
+    Reinstall(String, HostKind),
+    /// Add the locked MCP entry again through the host's MCP step, without reinstalling the tool.
+    ReAddEntry(String, HostKind),
+}
+
+/// The repair for a failing check, or `None` when no repair exists. A failing probe (`tool.<id>.<host>`) or MCP
+/// command (`mcp.<id>.<host>`) reinstalls the locked tool; a missing MCP entry (`mcp-entry.<id>.<host>`) is re-added.
+fn repair_for(check: &Check) -> Option<Repair> {
     if check.status != CheckStatus::Fail {
         return None;
+    }
+    if let Some(rest) = check.id.strip_prefix("mcp-entry.") {
+        let (id, kind) = rest.rsplit_once('.')?;
+        return Some(Repair::ReAddEntry(id.to_string(), kind.parse().ok()?));
     }
     let rest = check
         .id
         .strip_prefix("tool.")
         .or_else(|| check.id.strip_prefix("mcp."))?;
     let (id, kind) = rest.rsplit_once('.')?;
-    Some((id.to_string(), kind.parse().ok()?))
+    Some(Repair::Reinstall(id.to_string(), kind.parse().ok()?))
 }
 
 /// A recipe is left alone when every host it names that is installed already has it in the lock. The lock

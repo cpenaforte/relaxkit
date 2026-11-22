@@ -407,22 +407,25 @@ fn mcp_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Re
             let Ok(kind) = host_name.parse::<HostKind>() else {
                 continue;
             };
-            if !hosts.iter().any(|host| host.info().kind == kind) {
+            let Some(host) = hosts.iter().find(|host| host.info().kind == kind) else {
                 continue;
-            }
-            let program =
+            };
+            let entry =
                 recipe
                     .install
                     .get(&kind)
                     .into_iter()
                     .flatten()
                     .find_map(|step| match step {
-                        Step::Mcp { argv, .. } => argv.first().cloned(),
+                        Step::Mcp { name, argv } => {
+                            argv.first().map(|program| (name.clone(), program.clone()))
+                        }
                         _ => None,
                     });
-            let Some(program) = program else {
+            let Some((entry, program)) = entry else {
                 continue;
             };
+            checks.push(mcp_entry_check(ctx, host.as_ref(), &entry, id, kind));
             let check_id = format!("mcp.{id}.{kind}");
             let found = match program.as_str() {
                 "{npx}" => Some(npx_bin(ctx)).filter(|path| is_executable(path)),
@@ -446,6 +449,25 @@ fn mcp_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Re
         }
     }
     Ok(())
+}
+
+/// Whether a locked MCP entry is in the host's own config (OWNER-3 (c), ruling R2-1). A missing entry is a fail that
+/// setup repairs by adding it again; a config that cannot be read is a fail with the fix to repair it by hand.
+fn mcp_entry_check(ctx: &Ctx, host: &dyn Host, entry: &str, id: &str, kind: HostKind) -> Check {
+    let check_id = format!("mcp-entry.{id}.{kind}");
+    match host.mcp_entry_present(ctx, entry) {
+        Ok(true) => Check::ok(&check_id, format!("{entry} is in the {kind} config")),
+        Ok(false) => Check::fail(
+            &check_id,
+            format!("{entry} is missing from the {kind} config"),
+            "run relaxkit setup; it re-adds the entry",
+        ),
+        Err(err) => Check::fail(
+            &check_id,
+            format!("the {kind} config cannot be read: {err:#}"),
+            "relaxkit does not rewrite a file that does not parse; repair it by hand",
+        ),
+    }
 }
 
 /// The file a probe's program runs from, looked up the way the engine looks: the Node link, the pack bin, `~/.local/bin`,

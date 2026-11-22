@@ -407,19 +407,7 @@ impl<'a> Engine<'a> {
                     let cmd = self.command(&argv)?;
                     self.run_checked(host, &cmd)?;
                 }
-                Step::Mcp { name, argv } => {
-                    let argv = recipe.expand(argv, &vars)?;
-                    // The entry starts Node through the fixed link (spec 4, items 4 and 5), so PATH names that link
-                    // first, then the system directories, and no other PATH is inherited.
-                    let mut env = vec![("PATH".to_string(), self.mcp_path())];
-                    env.extend(
-                        recipe
-                            .env
-                            .iter()
-                            .map(|(key, value)| (key.clone(), value.clone())),
-                    );
-                    host.mcp_add(self.ctx, name, &argv, &env)?;
-                }
+                Step::Mcp { name, argv } => self.add_mcp(recipe, host, name, argv, &vars)?,
                 Step::Plugin { spec } => {
                     let spec = expand_one(recipe, spec, &vars)?;
                     host.plugin_install(self.ctx, &spec)?;
@@ -433,6 +421,51 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(vars)
+    }
+
+    /// Adds one MCP entry through the host. The entry starts Node through the fixed link (spec 4, items 4 and 5), so PATH
+    /// names that link first, then the system directories, and no other PATH is inherited.
+    fn add_mcp(
+        &self,
+        recipe: &Recipe,
+        host: &dyn Host,
+        name: &str,
+        argv: &[String],
+        vars: &Vars,
+    ) -> Result<()> {
+        let argv = recipe.expand(argv, vars)?;
+        let mut env = vec![("PATH".to_string(), self.mcp_path())];
+        env.extend(
+            recipe
+                .env
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        host.mcp_add(self.ctx, name, &argv, &env)
+    }
+
+    /// Adds one locked MCP entry again through the host's MCP step, without reinstalling its tool (ruling R2-1).
+    pub fn readd_mcp(&self, recipe: &Recipe, kind: HostKind) -> Result<()> {
+        let Some(host) = self.hosts.iter().find(|host| host.info().kind == kind) else {
+            bail!(
+                "{kind} is not installed, so {} cannot be re-added on it",
+                recipe.id
+            );
+        };
+        let entry = recipe
+            .install
+            .get(&kind)
+            .into_iter()
+            .flatten()
+            .find_map(|step| match step {
+                Step::Mcp { name, argv } => Some((name, argv)),
+                _ => None,
+            });
+        let Some((name, argv)) = entry else {
+            bail!("{} has no MCP entry on {kind}", recipe.id);
+        };
+        let vars = self.vars(recipe)?;
+        self.add_mcp(recipe, host.as_ref(), name, argv, &vars)
     }
 
     /// The variables steps expand with. Node and npx come from the fixed link; Chromium is resolved only when a

@@ -14,7 +14,7 @@ use relaxkit::ctx::Ctx;
 use relaxkit::edit::block_upsert;
 use relaxkit::exec::{FakeRunner, Output};
 use relaxkit::host::claude::{ClaudeHost, claude_paths};
-use relaxkit::host::opencode::{OpencodeHost, opencode_dir};
+use relaxkit::host::opencode::{OpencodeHost, config_file_in, opencode_dir};
 use relaxkit::host::{Host, HostInfo, HostKind};
 use relaxkit::net::FakeNet;
 use relaxkit::runtime::nvm::npx_bin;
@@ -464,6 +464,85 @@ fn doctor_warns_when_a_probe_is_not_run() {
     let probe = find(&checks, "tool.playwright.claude");
     assert_eq!(probe.status, CheckStatus::Warn, "{probe:?}");
     assert!(probe.message.contains("not run"), "{probe:?}");
+}
+
+#[test]
+fn doctor_fails_when_a_locked_mcp_entry_is_missing_from_claude() {
+    // R2-1 (OWNER-3 (c)): the locked serena entry must exist in Claude's user-scope state file. The command is present,
+    // so only the entry is missing; setup re-adds it.
+    let root = tempfile::tempdir().unwrap();
+    lock(root.path(), &[("serena", "2.1.0", "uv", &["claude"])]);
+    let command = root.path().join(".local/bin/serena");
+    write(&command, "#!/bin/sh\n");
+    fs::set_permissions(
+        &command,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &[claude(root.path())],
+    )
+    .unwrap();
+    let entry = find(&checks, "mcp-entry.serena.claude");
+    assert_eq!(entry.status, CheckStatus::Fail, "{entry:?}");
+    assert!(
+        entry
+            .fix
+            .as_deref()
+            .unwrap_or("")
+            .contains("run relaxkit setup"),
+        "{entry:?}"
+    );
+
+    write(
+        &root.path().join(".claude.json"),
+        "{\"mcpServers\": {\"serena\": {}}}\n",
+    );
+    let checks = doctor::checks_for(
+        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &[claude(root.path())],
+    )
+    .unwrap();
+    assert_eq!(
+        find(&checks, "mcp-entry.serena.claude").status,
+        CheckStatus::Ok
+    );
+}
+
+#[test]
+fn doctor_fails_when_a_locked_mcp_entry_is_missing_from_opencode() {
+    let root = tempfile::tempdir().unwrap();
+    lock(root.path(), &[("serena", "2.1.0", "uv", &["opencode"])]);
+    let command = root.path().join(".local/bin/serena");
+    write(&command, "#!/bin/sh\n");
+    fs::set_permissions(
+        &command,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let config = config_file_in(&opencode_dir(root.path(), None));
+    write(&config, "{\"mcp\": {\"servers\": {}}}\n");
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+    let entry = find(&checks, "mcp-entry.serena.opencode");
+    assert_eq!(entry.status, CheckStatus::Fail, "{entry:?}");
+
+    write(&config, "{\"mcp\": {\"servers\": {\"serena\": {}}}}\n");
+    let checks = doctor::checks_for(
+        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+    assert_eq!(
+        find(&checks, "mcp-entry.serena.opencode").status,
+        CheckStatus::Ok
+    );
 }
 
 #[test]

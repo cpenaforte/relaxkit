@@ -136,6 +136,21 @@ impl Host for OpencodeHost {
         })
     }
 
+    /// Whether `mcp.servers.<name>` is in either config file (ruling R2-1).
+    fn mcp_entry_present(&self, _ctx: &Ctx, name: &str) -> Result<bool> {
+        for file in self.config_candidates() {
+            let text = match fs::read_to_string(&file) {
+                Ok(text) => text,
+                Err(err) if err.kind() == ErrorKind::NotFound => continue,
+                Err(err) => return Err(err.into()),
+            };
+            if jsonc_get(&text, &["mcp", "servers", name])?.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Removes `mcp.servers.<name>` with the comment-preserving editor. No native `mcp remove` is known
     /// for OpenCode 2.2.6 (spike A1 covers add only), so this path does not shell out.
     fn mcp_remove(&self, ctx: &Ctx, name: &str) -> Result<()> {
