@@ -9,10 +9,10 @@ use selftest::RUNTIME_PACKAGE;
 
 use anyhow::{Context, Result, anyhow, bail};
 use semver::{Version, VersionReq};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::ctx::Ctx;
-use crate::edit::{jsonc_get, jsonc_set};
+use crate::edit::{jsonc_append, jsonc_get, jsonc_set};
 use crate::exec::Cmd;
 use crate::net::Net;
 use crate::platform::{Os, PrereqPlan, current_os, prerequisite_plan};
@@ -204,17 +204,32 @@ fn now_seconds() -> i64 {
 /// Adds each wanted string to the JSON array at `path`, after the items already there, and skips any that are
 /// present. A missing array is created. Other keys stay as they are.
 pub fn union_strings(text: &str, path: &[&str], wanted: &[&str]) -> Result<String> {
-    let mut items = match jsonc_get(text, path)? {
-        None | Some(Value::Null) => Vec::new(),
-        Some(Value::Array(items)) => items,
-        Some(_) => bail!("`{}` is not a list", path.join(".")),
-    };
-    for word in wanted {
-        if !items.iter().any(|item| item.as_str() == Some(word)) {
-            items.push(Value::String((*word).to_string()));
+    match jsonc_get(text, path)? {
+        None | Some(Value::Null) => {
+            // No list yet: write the whole list once, without repeats.
+            let mut items: Vec<Value> = Vec::new();
+            for word in wanted {
+                if !items.iter().any(|item| item.as_str() == Some(word)) {
+                    items.push(Value::String((*word).to_string()));
+                }
+            }
+            jsonc_set(text, path, &Value::Array(items))
         }
+        Some(Value::Array(items)) => {
+            // An existing list gets each missing item appended, so its comments and layout stay as they are, and
+            // nothing is written when every item is present.
+            let mut present: Vec<Value> = items;
+            let mut out = text.to_string();
+            for word in wanted {
+                if !present.iter().any(|item| item.as_str() == Some(word)) {
+                    out = jsonc_append(&out, path, &json!(word))?;
+                    present.push(Value::String((*word).to_string()));
+                }
+            }
+            Ok(out)
+        }
+        Some(_) => bail!("`{}` is not a list", path.join(".")),
     }
-    jsonc_set(text, path, &Value::Array(items))
 }
 
 #[cfg(test)]
@@ -267,6 +282,46 @@ mod tests {
         let out = union_strings(text, &["network", "allowedDomains"], &["b"]).unwrap();
 
         assert!(out.contains("\n    \"label\": \"caf\\u00e9\",\n"), "{out}");
+    }
+
+    #[test]
+    fn union_appends_to_a_multi_line_array_and_keeps_its_comments_and_layout() {
+        // Spec 5: an edit that adds one item must not re-render the array around it.
+        let text = "{\n  // keep me\n  \"network\": {\n    \"allowedDomains\": [\n      \"a.example\", // first\n      \"b.example\"\n    ]\n  }\n}\n";
+
+        let out = union_strings(text, &["network", "allowedDomains"], &["c.example"]).unwrap();
+
+        assert!(out.contains("// keep me"), "{out}");
+        assert!(out.contains("      \"a.example\", // first\n"), "{out}");
+        assert!(out.contains("\"b.example\""), "{out}");
+        assert!(out.contains("\"c.example\""), "{out}");
+        let value: Value = serde_json::from_str(&strip_line_comments(&out)).unwrap();
+        assert_eq!(
+            value["network"]["allowedDomains"],
+            json!(["a.example", "b.example", "c.example"])
+        );
+    }
+
+    #[test]
+    fn union_with_nothing_missing_returns_the_input_byte_identical() {
+        let text = "{\n  // keep me\n  \"network\": {\n    \"allowedDomains\": [\n      \"a.example\", // first\n      \"b.example\"\n    ]\n  }\n}\n";
+
+        let out = union_strings(
+            text,
+            &["network", "allowedDomains"],
+            &["b.example", "a.example"],
+        )
+        .unwrap();
+
+        assert_eq!(out, text);
+    }
+
+    /// Drops `//` comments, so a test can read the values of a JSONC text with serde_json.
+    fn strip_line_comments(text: &str) -> String {
+        text.lines()
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
