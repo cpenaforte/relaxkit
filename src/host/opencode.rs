@@ -222,6 +222,16 @@ impl Host for OpencodeHost {
     fn marketplace_add(&self, _ctx: &Ctx, source: &str) -> Result<()> {
         bail!("OpenCode has no plugin marketplaces, so `{source}` cannot be added")
     }
+
+    fn marketplace_update(&self, _ctx: &Ctx) -> Result<()> {
+        bail!("OpenCode has no plugin marketplaces, so none can be updated")
+    }
+
+    fn state_files(&self, ctx: &Ctx) -> Vec<PathBuf> {
+        let mut files = self.config_candidates();
+        files.push(self.instructions_file(ctx));
+        files
+    }
 }
 
 #[cfg(test)]

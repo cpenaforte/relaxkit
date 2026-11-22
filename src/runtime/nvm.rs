@@ -9,6 +9,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::host::run_edit;
+use crate::net::Net;
 use crate::runtime::{download_verified, utf8};
 use crate::state::RunId;
 
@@ -248,6 +249,17 @@ pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<Node
     if let Some(node) = installed_node(&nvm.dir) {
         return Ok(node);
     }
+    run_nvm_install(ctx, &nvm, reused, &[])
+}
+
+/// Runs `nvm install 24` through the nvm in use, with `env` set, and returns the Node 24 it reports. A dry run reports
+/// the placeholder it would install. nvm's default alias is cleared again when a reused nvm had none.
+fn run_nvm_install(
+    ctx: &Ctx,
+    nvm: &NvmInstall,
+    reused: bool,
+    env: &[(&str, &str)],
+) -> Result<NodeInstall> {
     let action = format!("nvm install {NODE_MAJOR}");
     if ctx.dry_run {
         ctx.out.info(&format!("would run {action}"));
@@ -262,7 +274,11 @@ pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<Node
     let default = nvm.dir.join("alias").join("default");
     let had_default = default.symlink_metadata().is_ok();
     // The result is held, not propagated, so the alias is cleared even when the runner itself fails.
-    let ran = ctx.runner.run(&nvm_cmd(&nvm, &action)?);
+    let mut cmd = nvm_cmd(nvm, &action)?;
+    for (key, value) in env {
+        cmd = cmd.env(key, value);
+    }
+    let ran = ctx.runner.run(&cmd);
     if reused && !had_default && default.symlink_metadata().is_ok() {
         fs::remove_file(&default)
             .with_context(|| format!("cannot remove {}", default.display()))?;
@@ -282,6 +298,48 @@ pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<Node
         );
     }
     Ok(NodeInstall { version, root })
+}
+
+/// Updates Node to the newest 24.x through the nvm in use (K66, K81). `nvm install 24` resolves the newest 24.x, and
+/// `PROFILE=/dev/null` keeps nvm from editing the shell profile. Nothing else is changed: no `nvm use`, no alias.
+pub fn update_node_in(ctx: &Ctx, search: &NvmSearch) -> Result<NodeInstall> {
+    let Some(nvm) = find_nvm_in(ctx, search) else {
+        bail!("nvm is not installed; run `relaxkit setup` first");
+    };
+    run_nvm_install(ctx, &nvm, true, &[("PROFILE", "/dev/null")])
+}
+
+/// The Node that the fixed link points at, when the link exists: its version (such as `v24.13.0`) and its root.
+pub fn current_node(ctx: &Ctx) -> Option<NodeInstall> {
+    let link = ctx.dirs.data.join("node");
+    let root = fs::read_link(&link).ok()?;
+    let version = root.file_name()?.to_str()?.to_string();
+    Some(NodeInstall { version, root })
+}
+
+/// The newest 24.x release in Node's public index, without its `v` (such as `24.22.3`). Other majors are ignored, so
+/// Node never moves to 25 or later through relaxkit (K81).
+pub fn latest_node_24(net: &dyn Net) -> Result<String> {
+    let body = net.get_text("https://nodejs.org/dist/index.json")?;
+    let index: Vec<serde_json::Value> =
+        serde_json::from_str(&body).context("Node's release index is not JSON")?;
+    let mut best: Option<semver::Version> = None;
+    for entry in &index {
+        let Some(raw) = entry.get("version").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let Some(version) = raw
+            .strip_prefix('v')
+            .and_then(|bare| semver::Version::parse(bare).ok())
+        else {
+            continue;
+        };
+        if version.major.to_string() == NODE_MAJOR && best.as_ref().is_none_or(|b| version > *b) {
+            best = Some(version);
+        }
+    }
+    best.map(|version| version.to_string())
+        .ok_or_else(|| anyhow!("Node's release index lists no {NODE_MAJOR}.x release"))
 }
 
 /// Points the fixed link `dirs.data/node` at `node.root`. The new link is made under a temp name and

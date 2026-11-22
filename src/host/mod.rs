@@ -61,6 +61,11 @@ pub trait Host {
     fn plugin_update(&self, ctx: &Ctx, spec: &str) -> Result<()>;
     fn plugin_list(&self, ctx: &Ctx) -> Result<Vec<InstalledPlugin>>;
     fn marketplace_add(&self, ctx: &Ctx, source: &str) -> Result<()>;
+    /// Refreshes every plugin marketplace the host lists (`claude plugin marketplace update`). A host with no
+    /// marketplaces refuses.
+    fn marketplace_update(&self, ctx: &Ctx) -> Result<()>;
+    /// The user files this host's own commands may rewrite, which an update backs up before it changes anything.
+    fn state_files(&self, ctx: &Ctx) -> Vec<PathBuf>;
 }
 
 /// Finds the hosts on the PATH. A host whose version cannot be read is left out with a warning.

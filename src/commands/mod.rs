@@ -3,6 +3,7 @@
 pub mod doctor;
 pub mod setup;
 pub mod status;
+pub mod update;
 
 use std::fs;
 use std::io::ErrorKind;

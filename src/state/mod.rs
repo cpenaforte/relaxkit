@@ -25,58 +25,69 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
         return Ok(());
     }
     let target = resolve(path)?;
+    record_backup(ctx, run, path)?;
+    ensure_parent(&target)?;
+    write_atomic(&target, text.as_bytes())
+}
+
+/// Backs up the current content of `path` under the run and journals it, without writing the file, so `undo` can
+/// revert the file to this state. Only the first record of a file in a run is kept, so its backup is the original.
+/// A file that does not exist yet is journaled as created. A dry run journals nothing.
+pub fn record_backup(ctx: &Ctx, run: &RunId, path: &Path) -> Result<()> {
+    if ctx.dry_run {
+        return Ok(());
+    }
+    let target = resolve(path)?;
     let journaled = journal::read(&ctx.dirs)?
         .iter()
         .any(|record| record.run == *run && record.file == target);
-    if !journaled {
-        // Only the first write to a file in a run is journaled, so its backup is the original.
-        let record = if target.exists() {
-            let backup = backup_path(ctx, run, &target);
-            if let Some(parent) = backup.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("cannot create {}", parent.display()))?;
-            }
-            fs::copy(&target, &backup)
-                .with_context(|| format!("cannot back up {}", target.display()))?;
-            // fs::copy gives the backup the target's mode. A read-only target would leave a backup
-            // that a later copy in the same run cannot write over. Restore needs only the bytes, so
-            // the backup gets 0600.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))
-                    .with_context(|| format!("cannot set the mode of {}", backup.display()))?;
-            }
-            // The copy must reach the disk before the journal record that names it is synced.
-            // On Unix a read-only open can fsync, whatever the mode.
-            // Windows needs write access for FlushFileBuffers; opening does not truncate.
-            let opened = if cfg!(windows) {
-                OpenOptions::new().write(true).open(&backup)
-            } else {
-                fs::File::open(&backup)
-            };
-            opened
-                .and_then(|file| file.sync_all())
-                .with_context(|| format!("cannot flush the backup {}", backup.display()))?;
-            sync_backup_dirs(ctx, &backup)?;
-            EditRecord {
-                run: run.clone(),
-                file: target.clone(),
-                backup: Some(backup),
-                created: false,
-            }
-        } else {
-            EditRecord {
-                run: run.clone(),
-                file: target.clone(),
-                backup: None,
-                created: true,
-            }
-        };
-        journal::append(&ctx.dirs, &record)?;
+    if journaled {
+        return Ok(());
     }
-    ensure_parent(&target)?;
-    write_atomic(&target, text.as_bytes())
+    let record = if target.exists() {
+        let backup = backup_path(ctx, run, &target);
+        if let Some(parent) = backup.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("cannot create {}", parent.display()))?;
+        }
+        fs::copy(&target, &backup)
+            .with_context(|| format!("cannot back up {}", target.display()))?;
+        // fs::copy gives the backup the target's mode. A read-only target would leave a backup
+        // that a later copy in the same run cannot write over. Restore needs only the bytes, so
+        // the backup gets 0600.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("cannot set the mode of {}", backup.display()))?;
+        }
+        // The copy must reach the disk before the journal record that names it is synced.
+        // On Unix a read-only open can fsync, whatever the mode.
+        // Windows needs write access for FlushFileBuffers; opening does not truncate.
+        let opened = if cfg!(windows) {
+            OpenOptions::new().write(true).open(&backup)
+        } else {
+            fs::File::open(&backup)
+        };
+        opened
+            .and_then(|file| file.sync_all())
+            .with_context(|| format!("cannot flush the backup {}", backup.display()))?;
+        sync_backup_dirs(ctx, &backup)?;
+        EditRecord {
+            run: run.clone(),
+            file: target.clone(),
+            backup: Some(backup),
+            created: false,
+        }
+    } else {
+        EditRecord {
+            run: run.clone(),
+            file: target.clone(),
+            backup: None,
+            created: true,
+        }
+    };
+    journal::append(&ctx.dirs, &record)
 }
 
 /// Flushes the directories from the backup's parent up to `dirs.home`, inclusive, so the backup's

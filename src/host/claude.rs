@@ -146,6 +146,17 @@ impl Host for ClaudeHost {
             .arg(source);
         run_edit(ctx, &self.edited_files(), &cmd)
     }
+
+    fn marketplace_update(&self, ctx: &Ctx) -> Result<()> {
+        let cmd = Cmd::new("claude").args(&["plugin", "marketplace", "update"]);
+        run_edit(ctx, &self.edited_files(), &cmd)
+    }
+
+    fn state_files(&self, ctx: &Ctx) -> Vec<PathBuf> {
+        let mut files = self.edited_files();
+        files.push(self.instructions_file(ctx));
+        files
+    }
 }
 
 #[cfg(test)]

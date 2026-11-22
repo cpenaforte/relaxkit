@@ -178,7 +178,11 @@ impl<'a> Engine<'a> {
     /// The probe's first word, when that binary is on the PATH: its name and the path it resolves to. A copy relaxkit
     /// installed in its bin directory counts too, because the engine's commands search that directory. Such a copy
     /// is probed by its full path, since the bare name is not on the PATH.
-    fn probe_on_path(&self, recipe: &Recipe, kind: HostKind) -> Option<(String, PathBuf)> {
+    pub(crate) fn probe_on_path(
+        &self,
+        recipe: &Recipe,
+        kind: HostKind,
+    ) -> Option<(String, PathBuf)> {
         let probe = recipe.probe.get(&kind)?;
         let bin = probe.argv.first().filter(|arg| !arg.starts_with('{'))?;
         // rtk resolves its pack copy first, so a broken rtk elsewhere on the PATH does not decide (ruling R3-2).
@@ -300,6 +304,15 @@ impl<'a> Engine<'a> {
                 recipe.id
             );
         };
+        // The same floor plan() applies: a host below the recipe's minimum is refused, not reinstalled (K73).
+        if let Some(need) = recipe.minimum_host.get(&kind)
+            && let HostCheck::TooOld { have, need } = check_minimum(host.info(), need)
+        {
+            bail!(
+                "{kind} {have} is older than {need}, the oldest this tool supports, so {} was not reinstalled",
+                recipe.id
+            );
+        }
         let steps = recipe.install.get(&kind).cloned().unwrap_or_default();
         self.preflight_steps(recipe, kind, &steps)?;
         // An unpinned plugin that is already listed keeps the version it has: only its configuration runs again, and
@@ -400,7 +413,12 @@ impl<'a> Engine<'a> {
 
     /// Every handler a step list names must exist before anything runs, so an unimplemented handler stops the
     /// install before a command is run.
-    fn preflight_steps(&self, recipe: &Recipe, kind: HostKind, steps: &[Step]) -> Result<()> {
+    pub(crate) fn preflight_steps(
+        &self,
+        recipe: &Recipe,
+        kind: HostKind,
+        steps: &[Step],
+    ) -> Result<()> {
         for step in steps {
             if let Step::Handler { name } = step
                 && handler(name).is_none()
@@ -416,7 +434,7 @@ impl<'a> Engine<'a> {
 
     /// Runs the configuration steps of an adopted install, in order: the exec steps that do not install or add
     /// anything, and the configuration handlers.
-    fn run_config_steps(&self, recipe: &Recipe, host: &dyn Host) -> Result<Vars> {
+    pub(crate) fn run_config_steps(&self, recipe: &Recipe, host: &dyn Host) -> Result<Vars> {
         let kind = host.info().kind;
         let mut vars = self.vars(recipe)?;
         for step in config_steps(recipe, kind) {
@@ -477,7 +495,7 @@ impl<'a> Engine<'a> {
 
     /// Adds one MCP entry through the host. The entry starts Node through the fixed link (spec 4, items 4 and 5), so PATH
     /// names that link first, then the system directories, and no other PATH is inherited.
-    fn add_mcp(
+    pub(crate) fn add_mcp(
         &self,
         recipe: &Recipe,
         host: &dyn Host,
@@ -522,7 +540,7 @@ impl<'a> Engine<'a> {
 
     /// The variables steps expand with. Node and npx come from the fixed link; Chromium is resolved only when a
     /// step names it.
-    fn vars(&self, recipe: &Recipe) -> Result<Vars> {
+    pub(crate) fn vars(&self, recipe: &Recipe) -> Result<Vars> {
         let mut vars = Vars {
             node: utf8(&node_bin(self.ctx))?.to_string(),
             npx: utf8(&npx_bin(self.ctx))?.to_string(),
@@ -624,27 +642,31 @@ impl<'a> Engine<'a> {
             relaxkit: env!("CARGO_PKG_VERSION").to_string(),
             tools: BTreeMap::new(),
         });
-        // The hosts already locked for this tool stay locked: a run on some hosts only adds to the list (ruling K56).
-        let mut hosts: BTreeSet<String> =
-            rows.iter().map(|(kind, _, _)| kind.to_string()).collect();
-        if let Some(existing) = lock.tools.get(&recipe.id) {
-            hosts.extend(existing.hosts.iter().cloned());
-        }
-        lock.tools.insert(
-            recipe.id.clone(),
-            LockedTool {
+        // The hosts already locked for this tool stay locked, each on its own version: a run on some hosts only moves
+        // those hosts (ruling K56, and K73 for the per-host versions).
+        let touched: Vec<String> = rows.iter().map(|(kind, _, _)| kind.to_string()).collect();
+        let next = match lock.tools.get(&recipe.id) {
+            Some(existing) => existing.moved(&touched, version, &route),
+            None => LockedTool {
                 version: version.clone(),
                 route,
-                hosts: hosts.into_iter().collect(),
+                hosts: touched
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<String>>()
+                    .into_iter()
+                    .collect(),
+                host_versions: BTreeMap::new(),
             },
-        );
+        };
+        lock.tools.insert(recipe.id.clone(), next);
         lock.save(self.ctx, self.run)
     }
 }
 
 /// A recipe that sets a workdir cannot be applied through the Host API (SA-1). Until the owner decides how it is
 /// applied, the install is refused before any step, so the process never starts without it.
-fn refuse_workdir(recipe: &Recipe) -> Result<()> {
+pub(crate) fn refuse_workdir(recipe: &Recipe) -> Result<()> {
     if recipe.workdir.is_some() {
         bail!(
             "workdir not applied (SA-1, owner decision pending): {}",
@@ -1519,6 +1541,7 @@ handler = "opencode_sandbox_config"
                 version: "1.2.3".to_string(),
                 route: "npm".to_string(),
                 hosts: vec!["claude".to_string()],
+                host_versions: BTreeMap::new(),
             })
         );
     }
@@ -1537,6 +1560,7 @@ handler = "opencode_sandbox_config"
                 version: "9.9.9".to_string(),
                 route: "npm".to_string(),
                 hosts: vec!["claude".to_string()],
+                host_versions: BTreeMap::new(),
             },
         );
         let before = Lockfile {

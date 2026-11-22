@@ -4,6 +4,7 @@
 pub mod detect;
 pub mod engine;
 pub mod handlers;
+pub mod update;
 
 pub use detect::Route;
 pub use engine::{Engine, HandlerFn, Outcome, handler};

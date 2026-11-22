@@ -23,6 +23,7 @@ use anyhow::{Result, anyhow};
 
 use cli::{Cli, Command};
 use ctx::Ctx;
+use runtime::nvm::NvmSearch;
 
 /// Runs a parsed command and returns the process exit code. Each handler is a stub until its task lands.
 pub fn run(cli: Cli) -> Result<i32> {
@@ -64,8 +65,32 @@ pub fn run(cli: Cli) -> Result<i32> {
                 .any(|check| check.status == commands::doctor::CheckStatus::Fail);
             Ok(if failed { 1 } else { 0 })
         }
-        Command::Update { .. }
-        | Command::Config(_)
+        Command::Update {
+            self_only,
+            tools_only,
+            check,
+            tool,
+        } => {
+            if self_only {
+                return Err(anyhow!("relaxkit's own update is built in a later step"));
+            }
+            let ctx = Ctx::system(cli.dry_run, None, false)?;
+            // A plain update says that the self step comes first and is not built yet (ruling K63).
+            if tool.is_none() && !tools_only {
+                ctx.out.info("relaxkit itself: updated in a later step");
+            }
+            let args = commands::update::UpdateArgs { check, tool };
+            let report = commands::update::run(&ctx, &args, &NvmSearch::from_env())?;
+            if cli.json {
+                println!("{}", commands::update::to_json(&report));
+            } else {
+                for line in commands::update::lines(&report) {
+                    ctx.out.info(&line);
+                }
+            }
+            Ok(if report.failed.is_empty() { 0 } else { 1 })
+        }
+        Command::Config(_)
         | Command::Preset { .. }
         | Command::Privacy { .. }
         | Command::Login { .. }

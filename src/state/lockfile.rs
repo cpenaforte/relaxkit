@@ -1,6 +1,6 @@
 //! `lock.toml`: the exact tool versions relaxkit installed. Ranges and `latest` are refused.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
@@ -24,6 +24,44 @@ pub struct LockedTool {
     pub version: String,
     pub route: String,
     pub hosts: Vec<String>,
+    /// The version of each host that differs from `version`, so a partial update keeps the other host's version.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub host_versions: BTreeMap<String, String>,
+}
+
+impl LockedTool {
+    /// The version this tool is at on `host`: its own entry in `host_versions`, else `version`.
+    pub fn version_for(&self, host: &str) -> &str {
+        self.host_versions
+            .get(host)
+            .map(String::as_str)
+            .unwrap_or(&self.version)
+    }
+
+    /// The entry after `updated` hosts moved to `version` by `route`. Every other host keeps the version it had, so a
+    /// partial update never moves a host it did not touch (ruling K73). `version` stays the primary value, and only
+    /// hosts that differ from it are listed in `host_versions`.
+    pub fn moved(&self, updated: &[String], version: &str, route: &str) -> LockedTool {
+        let mut hosts: BTreeSet<String> = self.hosts.iter().cloned().collect();
+        hosts.extend(updated.iter().cloned());
+        let host_versions = hosts
+            .iter()
+            .filter_map(|host| {
+                let at = if updated.contains(host) {
+                    version.to_string()
+                } else {
+                    self.version_for(host).to_string()
+                };
+                (at != version).then(|| (host.clone(), at))
+            })
+            .collect();
+        LockedTool {
+            version: version.to_string(),
+            route: route.to_string(),
+            hosts: hosts.into_iter().collect(),
+            host_versions,
+        }
+    }
 }
 
 /// Accepts an exact version, optionally with a leading `v`. Rejects ranges and `latest`.
@@ -94,6 +132,43 @@ mod tests {
     use crate::exec::FakeRunner;
     use crate::net::FakeNet;
 
+    fn tool(version: &str, hosts: &[&str]) -> LockedTool {
+        LockedTool {
+            version: version.to_string(),
+            route: "npm".to_string(),
+            hosts: hosts.iter().map(|h| h.to_string()).collect(),
+            host_versions: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_partial_move_keeps_the_other_host_on_its_version() {
+        let before = tool("7.0.2", &["claude", "opencode"]);
+        let moved = before.moved(&["claude".to_string()], "7.0.3", "claude-plugin:m");
+        assert_eq!(moved.version, "7.0.3");
+        assert_eq!(moved.version_for("claude"), "7.0.3");
+        assert_eq!(moved.version_for("opencode"), "7.0.2");
+        assert_eq!(
+            moved.hosts,
+            vec!["claude".to_string(), "opencode".to_string()]
+        );
+        assert_eq!(moved.host_versions.len(), 1);
+    }
+
+    #[test]
+    fn a_full_move_leaves_no_host_overrides_and_keeps_the_hosts() {
+        let before = tool("7.0.2", &["claude"]);
+        let moved = before.moved(&["claude".to_string()], "7.0.3", "npm");
+        assert!(moved.host_versions.is_empty());
+        assert_eq!(moved.version_for("claude"), "7.0.3");
+        assert_eq!(moved.route, "npm");
+    }
+
+    #[test]
+    fn a_host_that_is_not_listed_reads_the_primary_version() {
+        assert_eq!(tool("1.0.0", &["claude"]).version_for("opencode"), "1.0.0");
+    }
+
     fn sample() -> Lockfile {
         let mut tools = BTreeMap::new();
         tools.insert(
@@ -102,6 +177,7 @@ mod tests {
                 version: "v0.41.0".to_string(),
                 route: "github:nvm-sh/nvm".to_string(),
                 hosts: vec!["claude".to_string()],
+                host_versions: BTreeMap::new(),
             },
         );
         Lockfile {
