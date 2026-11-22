@@ -677,3 +677,15 @@ fn a_repair_never_moves_a_listed_unpinned_plugin() {
         "{calls:?}"
     );
 }
+
+#[test]
+fn setup_does_not_record_a_brew_or_system_gh() {
+    // The Scratch PATH holds a gh stub that the pack did not install, so setup must not write a gh lock entry (K84).
+    let scratch = Scratch::claude_only();
+
+    scratch.relaxkit().arg("setup").assert().success();
+
+    let lock =
+        fs::read_to_string(scratch.home().join(".config/relaxkit/lock.toml")).unwrap_or_default();
+    assert!(!lock.contains("[tools.gh]"), "{lock}");
+}

@@ -1911,6 +1911,22 @@ fn an_mcp_entry_is_shown_as_not_read_not_as_missing() {
 }
 
 #[test]
+fn gh_is_not_reported_as_a_tool_without_a_recipe() {
+    // gh is not a recipe: its lock entry is the pack copy's record, and status does not read it (parked). It must not
+    // print the "no recipe carries it" line (K84, G1).
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.9", "release", &[])]);
+
+    let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
+
+    assert!(
+        report.lines.iter().all(|line| !line.starts_with("gh:")),
+        "{:?}",
+        report.lines
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

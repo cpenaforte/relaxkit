@@ -65,6 +65,10 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
     };
     if let Some(lock) = &lock {
         for (id, tool) in &lock.tools {
+            // gh is not a recipe, and status does not read it: its pack copy is shown by the update report only (K84).
+            if id == crate::runtime::gh::GH_ID {
+                continue;
+            }
             let Some(recipe) = recipes.iter().find(|recipe| &recipe.id == id) else {
                 lines.push(format!(
                     "{id}: locked {} but no recipe carries it",

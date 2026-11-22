@@ -115,7 +115,8 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
     let node = nvm::ensure_node(ctx, &run)?;
     nvm::link_node(ctx, &node)?;
     uv::ensure_uv(ctx, &run)?;
-    gh::ensure_gh(ctx, &run)?;
+    let gh_install = gh::ensure_gh(ctx, &run)?;
+    gh::record_pack_copy(ctx, &run, &gh_install)?;
     report.say(
         ctx,
         "prerequisites",

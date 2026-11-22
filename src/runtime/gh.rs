@@ -1,8 +1,9 @@
 //! gh: an existing gh is adopted and never changed. Otherwise a private copy of the official release goes
 //! into the pack bin directory, after its archive matches the release's checksums file. Never `sudo`.
 
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -13,6 +14,8 @@ use crate::net::github_latest_tag;
 use crate::platform::{Arch, Os, current_arch, current_os, is_executable};
 use crate::runtime::{checksum_for, download_dir, fresh_dir, sha256_hex, utf8};
 use crate::state::RunId;
+use crate::state::lockfile::{LockedTool, Lockfile, check_version};
+use crate::tools::engine::UNVERSIONED;
 
 /// The repository whose release archive is installed.
 pub const GH_REPO: &str = "cli/cli";
@@ -23,6 +26,65 @@ pub const GH_REPO: &str = "cli/cli";
 pub struct GhInstall {
     pub path: PathBuf,
     pub owned_by_pack: bool,
+}
+
+/// The lock key and route of the gh pack copy (K84).
+pub const GH_ID: &str = "gh";
+const GH_ROUTE: &str = "release";
+
+/// Records the pack copy in the lock when relaxkit installed it (K84). A brew or system gh is never recorded, and a dry
+/// run writes nothing. An existing entry is kept. The version is the one `gh --version` reports, or `unversioned` when
+/// none is read.
+pub fn record_pack_copy(ctx: &Ctx, run: &RunId, gh: &GhInstall) -> Result<()> {
+    if ctx.dry_run || !gh.owned_by_pack || gh.path != ctx.dirs.bin.join("gh") {
+        return Ok(());
+    }
+    if let Some(lock) = Lockfile::load(ctx)?
+        && lock.tools.contains_key(GH_ID)
+    {
+        return Ok(());
+    }
+    let version = reported_version(ctx, &gh.path);
+    record_version(ctx, run, &version)
+}
+
+/// Writes the gh entry for `version`, the release relaxkit placed in the pack bin directory.
+pub fn record_version(ctx: &Ctx, run: &RunId, version: &str) -> Result<()> {
+    let mut lock = Lockfile::load(ctx)?.unwrap_or_else(|| Lockfile {
+        relaxkit: env!("CARGO_PKG_VERSION").to_string(),
+        tools: BTreeMap::new(),
+    });
+    lock.tools.insert(
+        GH_ID.to_string(),
+        LockedTool {
+            version: version.to_string(),
+            route: GH_ROUTE.to_string(),
+            hosts: Vec::new(),
+            host_versions: BTreeMap::new(),
+        },
+    );
+    lock.save(ctx, run)
+}
+
+/// The version `gh --version` reports for the copy at `path`, or `unversioned` when none is read.
+fn reported_version(ctx: &Ctx, path: &Path) -> String {
+    let cmd = Cmd::new(&path.display().to_string()).arg("--version");
+    match ctx.runner.run(&cmd) {
+        Ok(out) if out.code == 0 => {
+            parse_version(&out.stdout).unwrap_or_else(|| UNVERSIONED.to_string())
+        }
+        _ => UNVERSIONED.to_string(),
+    }
+}
+
+/// The first exact version after the word `version` in `gh --version` output, without a leading `v`.
+pub fn parse_version(text: &str) -> Option<String> {
+    let token = text
+        .split_whitespace()
+        .skip_while(|word| *word != "version")
+        .nth(1)?;
+    let version = token.strip_prefix('v').unwrap_or(token);
+    check_version(version).ok().map(|_| version.to_string())
 }
 
 pub fn ensure_gh(ctx: &Ctx, run: &RunId) -> Result<GhInstall> {
@@ -148,8 +210,9 @@ mod tests {
     use std::process::Command;
 
     use super::*;
-    use crate::exec::FakeRunner;
+    use crate::exec::{FakeRunner, Output};
     use crate::net::FakeNet;
+    use crate::platform::KitDirs;
     use crate::runtime::testing::{Recorder, ctx_with};
     use crate::state::journal;
 
@@ -274,6 +337,113 @@ mod tests {
             "an unverified archive was extracted: {:?}",
             runner.lines()
         );
+    }
+
+    /// The lock file, if one was written.
+    fn lock_in(ctx: &Ctx) -> Option<crate::state::lockfile::Lockfile> {
+        crate::state::lockfile::Lockfile::load(ctx).unwrap()
+    }
+
+    /// An executable pack copy that is already in place (a rerun), without any download.
+    fn existing_pack_copy(root: &Path) {
+        let bin = KitDirs::rooted(root).bin;
+        fs::create_dir_all(&bin).unwrap();
+        let gh = bin.join("gh");
+        fs::write(&gh, "#!/bin/sh\necho gh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn version_reply(bin: &Path, text: &str) -> FakeRunner {
+        FakeRunner::new().reply(&format!("{} --version", bin.display()), Output::ok(text))
+    }
+
+    #[test]
+    fn a_fresh_pack_copy_is_recorded_with_the_version_it_reports() {
+        let root = tempfile::tempdir().unwrap();
+        let (bytes, checksums) = fixture(root.path(), None);
+        let bin = KitDirs::rooted(root.path()).bin.join("gh");
+        let runner =
+            Recorder::new(version_reply(&bin, "gh version 9.9.9 (2026-01-01)\n")).real("tar -xf");
+        let ctx = ctx_with(root.path(), &runner, net(bytes, &checksums));
+        let run = RunId::new();
+
+        let gh = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap();
+        record_pack_copy(&ctx, &run, &gh).unwrap();
+
+        let lock = lock_in(&ctx).expect("the install wrote no lock");
+        assert_eq!(lock.tools["gh"].version, "9.9.9");
+        assert_eq!(lock.tools["gh"].route, "release");
+    }
+
+    #[test]
+    fn a_rerun_with_the_pack_copy_records_it_without_reinstalling() {
+        let root = tempfile::tempdir().unwrap();
+        existing_pack_copy(root.path());
+        let bin = KitDirs::rooted(root.path()).bin.join("gh");
+        let runner = Recorder::new(version_reply(&bin, "gh version 9.9.9 (2026-01-01)\n"));
+        // No download is served: a reinstall would fail here.
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let run = RunId::new();
+
+        let gh = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap();
+        record_pack_copy(&ctx, &run, &gh).unwrap();
+
+        assert!(
+            runner.lines().iter().all(|line| !line.starts_with("tar")),
+            "{:?}",
+            runner.lines()
+        );
+        assert_eq!(lock_in(&ctx).unwrap().tools["gh"].version, "9.9.9");
+    }
+
+    #[test]
+    fn a_brew_gh_is_never_recorded() {
+        let root = tempfile::tempdir().unwrap();
+        let runner =
+            Recorder::new(FakeRunner::new().with_program("gh", Path::new("/opt/homebrew/bin/gh")));
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let run = RunId::new();
+
+        let gh = ensure_gh(&ctx, &run).unwrap();
+        record_pack_copy(&ctx, &run, &gh).unwrap();
+
+        assert!(
+            lock_in(&ctx).is_none_or(|lock| !lock.tools.contains_key("gh")),
+            "a brew gh was recorded"
+        );
+    }
+
+    #[test]
+    fn a_pack_copy_with_no_readable_version_is_recorded_as_unversioned() {
+        let root = tempfile::tempdir().unwrap();
+        existing_pack_copy(root.path());
+        let bin = KitDirs::rooted(root.path()).bin.join("gh");
+        let runner = Recorder::new(version_reply(&bin, "no version here\n"));
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let run = RunId::new();
+
+        let gh = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap();
+        record_pack_copy(&ctx, &run, &gh).unwrap();
+
+        assert_eq!(
+            lock_in(&ctx).unwrap().tools["gh"].version,
+            crate::tools::engine::UNVERSIONED
+        );
+    }
+
+    #[test]
+    fn a_dry_run_writes_no_lock_entry_for_the_pack_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let runner = Recorder::new(FakeRunner::new());
+        let mut ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        ctx.dry_run = true;
+        let run = RunId::new();
+
+        let gh = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap();
+        record_pack_copy(&ctx, &run, &gh).unwrap();
+
+        assert!(lock_in(&ctx).is_none(), "a dry run wrote a lock");
     }
 
     #[test]
