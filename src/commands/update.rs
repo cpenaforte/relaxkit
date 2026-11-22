@@ -529,14 +529,15 @@ fn rtk_flow(
         })
         .collect();
     if let Some(reason) = below.into_iter().next() {
-        return (row(RowResult::NotTouched(reason), note), Vec::new());
+        // Nothing was written here, so the brew note ("the pack copy was updated") does not apply (F3-3).
+        return (row(RowResult::NotTouched(reason), None), Vec::new());
     }
     let before = match FileState::capture(&bin) {
         Ok(before) => before,
         Err(err) => {
             report.failed.push(plan.id.to_string());
             return (
-                row(RowResult::NotTouched(format!("{err:#}")), note),
+                row(RowResult::NotTouched(format!("{err:#}")), None),
                 Vec::new(),
             );
         }

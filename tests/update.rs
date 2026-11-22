@@ -1404,6 +1404,35 @@ fn a_claude_plugin_at_the_newest_release_is_current_with_no_call() {
 }
 
 #[test]
+fn a_blocked_brew_rtk_does_not_claim_it_was_updated() {
+    // A brew-route rtk with a host below its minimum is not touched (K87). Nothing was written, so the row's note must
+    // not say the pack copy was updated (F3-3).
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    fx.hosts = vec![Box::new(ClaudeHost::new(
+        HostInfo {
+            kind: HostKind::Claude,
+            binary: PathBuf::from("/usr/local/bin/claude"),
+            version: "2.1.300".to_string(),
+        },
+        root.join(".claude"),
+        root.join(".claude.json"),
+    ))];
+    fx.lock(&[("rtk", "1.1.0", "brew", &["claude"])]);
+    serve_rtk(&fx);
+
+    let report = fx.run(false, Some("rtk")).unwrap();
+
+    let rtk = row(&report, "rtk");
+    assert!(matches!(rtk.result, RowResult::NotTouched(_)), "{rtk:?}");
+    let note = rtk.note.clone().unwrap_or_default();
+    assert!(
+        !note.contains("was updated"),
+        "the note claims a write: {rtk:?}"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
