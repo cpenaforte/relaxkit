@@ -37,6 +37,13 @@ pub enum SelfUpdate {
     Available { version: String },
     /// Swapped to `to`, and the new binary's `update --tools` ran and exited zero (K96).
     Updated { from: String, to: String },
+    /// Swapped to `to`, and the new binary's `update --tools` ran and exited non-zero: a tool failed. The failure is a
+    /// result, not a spawn error, so this process does not run the tool phase again (K102).
+    UpdatedToolsFailed {
+        from: String,
+        to: String,
+        reason: String,
+    },
     /// A Homebrew-owned binary was updated by `brew upgrade relaxkit` (K93).
     DelegatedToBrew,
     /// The embedded key is the placeholder, so nothing was fetched or swapped (K91).
@@ -111,8 +118,12 @@ pub fn apply_with(
         return Ok(SelfUpdate::Available { version: newest });
     }
     install(ctx, exe, pubkey_text, &newest)?;
-    if tools {
-        rerun(ctx, exe)?;
+    if tools && let Some(reason) = rerun(ctx, exe)? {
+        return Ok(SelfUpdate::UpdatedToolsFailed {
+            from: INSTALLED.to_string(),
+            to: newest,
+            reason,
+        });
     }
     Ok(SelfUpdate::Updated {
         from: INSTALLED.to_string(),
@@ -184,6 +195,9 @@ pub fn row(outcome: &SelfUpdate) -> String {
             format!("relaxkit {INSTALLED} -> {version}: update available")
         }
         SelfUpdate::Updated { from, to } => format!("relaxkit {from} -> {to}: updated"),
+        SelfUpdate::UpdatedToolsFailed { from, to, reason } => {
+            format!("relaxkit {from} -> {to}: updated, but a tool failed: {reason}")
+        }
         SelfUpdate::DelegatedToBrew => "relaxkit: updated by brew upgrade relaxkit".to_string(),
         SelfUpdate::NotConfigured => {
             "relaxkit: the release signing key is not configured, so the self update did nothing"
@@ -315,8 +329,8 @@ fn write_executable(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 /// Runs the new binary as `<new relaxkit> update --tools`, so the tool phase uses the new recipes (K96). Its output is
-/// passed on, and a non-zero exit is an error.
-fn rerun(ctx: &Ctx, exe: &Path) -> Result<()> {
+/// passed on. A spawn error is an error. A non-zero exit is returned as the reason (K102).
+fn rerun(ctx: &Ctx, exe: &Path) -> Result<Option<String>> {
     let program = utf8(exe)?;
     let out = ctx
         .runner
@@ -329,11 +343,11 @@ fn rerun(ctx: &Ctx, exe: &Path) -> Result<()> {
         ctx.out.warn(line);
     }
     if out.code != 0 {
-        bail!(
+        return Ok(Some(format!(
             "the new relaxkit's tool phase exited {}: {}",
             out.code,
             out.stderr.trim()
-        );
+        )));
     }
-    Ok(())
+    Ok(None)
 }

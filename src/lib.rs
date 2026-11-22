@@ -88,8 +88,18 @@ pub fn run(cli: Cli) -> Result<i32> {
                 match outcome {
                     Ok(result) => {
                         self_lines.push(selfupdate::row(&result));
-                        tools_done_by_new_binary =
-                            matches!(result, selfupdate::SelfUpdate::Updated { .. });
+                        // A swapped binary that ran its tool phase is done here (K96). A failed tool in that phase
+                        // is named and the exit is 1 (K102).
+                        match result {
+                            selfupdate::SelfUpdate::Updated { .. } => {
+                                tools_done_by_new_binary = true;
+                            }
+                            selfupdate::SelfUpdate::UpdatedToolsFailed { .. } => {
+                                tools_done_by_new_binary = true;
+                                self_failed = true;
+                            }
+                            _ => {}
+                        }
                     }
                     Err(err) => {
                         self_failed = true;
@@ -111,7 +121,7 @@ pub fn run(cli: Cli) -> Result<i32> {
                 return Ok(if self_failed { 1 } else { 0 });
             }
             if tools_done_by_new_binary {
-                return Ok(0);
+                return Ok(if self_failed { 1 } else { 0 });
             }
             // A failed self step does not stop the tool phase, which runs with the current binary (K92).
             let args = commands::update::UpdateArgs { check, tool };
