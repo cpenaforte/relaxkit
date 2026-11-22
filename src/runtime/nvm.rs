@@ -29,13 +29,13 @@ enum ProfileMode {
     Untouched,
 }
 
-/// Every shell profile nvm's installer may edit: `$ZDOTDIR/.zshrc` when set, then the home files.
+/// Every shell profile nvm's installer may edit. When ZDOTDIR is set, the installer reads the profile
+/// names under ZDOTDIR (`${ZDOTDIR:-$HOME}` in its script), so each name is a candidate there too.
 fn profile_candidates(ctx: &Ctx, search: &NvmSearch) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = search
-        .zdotdir
-        .iter()
-        .map(|dir| dir.join(".zshrc"))
-        .collect();
+    let mut files: Vec<PathBuf> = Vec::new();
+    if let Some(zdotdir) = &search.zdotdir {
+        files.extend(PROFILE_FILES.iter().map(|name| zdotdir.join(name)));
+    }
     files.extend(PROFILE_FILES.iter().map(|name| ctx.dirs.home.join(name)));
     let mut unique: Vec<PathBuf> = Vec::new();
     for file in files {
@@ -706,6 +706,48 @@ mod tests {
         };
         assert_eq!(backup_text(zdot.join(".zshrc")), "zdot zshrc\n");
         assert_eq!(backup_text(home.join(".zprofile")), "zprofile\n");
+    }
+
+    #[test]
+    fn zdotdir_profile_files_are_backed_up_too() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let zdot = home.join("zdot");
+        write(&zdot.join(".zprofile"), "zdot zprofile\n");
+        node_at(home, "v24.22.3");
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .reply("bash /", Output::ok(""))
+                .reply(
+                    &format!(
+                        "bash -c '. \"{}/.nvm/nvm.sh\" && command -v nvm'",
+                        home.display()
+                    ),
+                    Output::ok("nvm\n"),
+                )
+                .reply(
+                    &install_prefix(home),
+                    Output::ok("Downloading and installing node v24.22.3...\n"),
+                ),
+        );
+        let ctx = ctx_with(home, &runner, net_with_installer(INSTALLER));
+        let search = NvmSearch {
+            zdotdir: Some(zdot.clone()),
+            ..pinned()
+        };
+
+        ensure_node_in(&ctx, &RunId::new(), &search).unwrap();
+
+        let records = journal::read(&ctx.dirs).unwrap();
+        let record = records
+            .iter()
+            .find(|record| record.file == zdot.join(".zprofile"))
+            .expect("$ZDOTDIR/.zprofile is journaled");
+        let backup = record
+            .backup
+            .as_ref()
+            .expect("an existing file has a backup");
+        assert_eq!(fs::read_to_string(backup).unwrap(), "zdot zprofile\n");
     }
 
     #[test]
