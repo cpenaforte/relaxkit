@@ -320,6 +320,27 @@ fn setup_ends_by_running_doctor() {
 
 #[test]
 fn setup_exits_nonzero_when_a_check_fails() {
+    // caveman's badge replacing the status line is a fail with no repair, so the run must exit 1 and print its fix.
+    let scratch = Scratch::claude_only();
+    let settings = scratch.home().join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        "{\"statusLine\": {\"type\": \"command\", \"command\": \"caveman-badge\"}}\n",
+    )
+    .unwrap();
+
+    scratch
+        .relaxkit()
+        .arg("setup")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("fail claude.status_line"));
+}
+
+#[test]
+fn setup_warns_on_anthropic_base_url_and_never_deletes_it() {
+    // A warn does not fail setup, and setup never removes a variable it did not write (ruling OWNER-2).
     let scratch = Scratch::claude_only();
     let settings = scratch.home().join(".claude/settings.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
@@ -329,10 +350,13 @@ fn setup_exits_nonzero_when_a_check_fails() {
     )
     .unwrap();
 
-    scratch
-        .relaxkit()
-        .arg("setup")
-        .assert()
-        .code(1)
-        .stdout(predicate::str::contains("anthropic_base_url"));
+    let output = scratch.relaxkit().arg("setup").assert().code(0);
+    let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+
+    assert!(text.contains("warn claude.anthropic_base_url"), "{text}");
+    let after = fs::read_to_string(&settings).unwrap();
+    assert!(
+        after.contains("\"ANTHROPIC_BASE_URL\": \"https://example.invalid\""),
+        "{after}"
+    );
 }

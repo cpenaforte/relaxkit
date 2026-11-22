@@ -130,7 +130,9 @@ fn doctor_flags_a_project_sandbox_file() {
 }
 
 #[test]
-fn doctor_fails_if_caveman_routing_changed_anthropic_base_url() {
+fn doctor_warns_when_anthropic_base_url_is_set() {
+    // relaxkit does not set ANTHROPIC_BASE_URL, and a user's own proxy sets it too, so it is a warn with the removal
+    // as its fix. Nothing repairs it: setup never deletes a variable it did not write (ruling OWNER-2).
     let root = tempfile::tempdir().unwrap();
     write(
         &root.path().join(".claude/settings.json"),
@@ -141,13 +143,15 @@ fn doctor_fails_if_caveman_routing_changed_anthropic_base_url() {
     let checks = doctor::checks_for(&context, &[claude(root.path())]).unwrap();
 
     let check = find(&checks, "claude.anthropic_base_url");
-    assert_eq!(check.status, CheckStatus::Fail, "{check:?}");
+    assert_eq!(check.status, CheckStatus::Warn, "{check:?}");
+    assert_eq!(
+        check.message,
+        "ANTHROPIC_BASE_URL is set in settings.json. relaxkit does not set it; remove it if you do not use a proxy.",
+        "{check:?}"
+    );
+    let fix = check.fix.as_deref().unwrap_or("");
     assert!(
-        check
-            .fix
-            .as_deref()
-            .unwrap_or("")
-            .contains("caveman off routing"),
+        fix.contains("remove the ANTHROPIC_BASE_URL key"),
         "{check:?}"
     );
 }

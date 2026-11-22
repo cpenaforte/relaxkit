@@ -149,7 +149,7 @@ pub fn prerequisites_check(plan: &PrereqPlan, have: impl Fn(&str) -> bool) -> Ch
     )
 }
 
-/// Claude Code's settings: that the file parses, that no caveman routing base URL is set, and that caveman's badge
+/// Claude Code's settings: that the file parses, that no base URL override is set, and that caveman's badge
 /// did not replace the user's status line. Then the sandbox self-test.
 fn claude_checks(ctx: &Ctx, host: &dyn Host, checks: &mut Vec<Check>) -> Result<()> {
     let path = host.config_file(ctx);
@@ -166,11 +166,15 @@ fn claude_checks(ctx: &Ctx, host: &dyn Host, checks: &mut Vec<Check>) -> Result<
     } else {
         checks.push(Check::ok("claude.settings", "settings.json parses"));
     }
+    // A warn, not a fail: relaxkit does not set this variable, and a user's own proxy sets it too (ruling OWNER-2).
     match jsonc_get(&text, &["env", "ANTHROPIC_BASE_URL"]).ok().flatten() {
-        Some(url) => checks.push(Check::fail(
+        Some(_) => checks.push(Check::warn(
             "claude.anthropic_base_url",
-            format!("ANTHROPIC_BASE_URL is set in settings.json ({url}), which caveman routing sets"),
-            "run `caveman off routing --yes`; if you set this URL yourself, this result is expected",
+            "ANTHROPIC_BASE_URL is set in settings.json. relaxkit does not set it; remove it if you do not use a proxy.",
+            format!(
+                "remove the ANTHROPIC_BASE_URL key from the env object in {}",
+                path.display()
+            ),
         )),
         None => checks.push(Check::ok("claude.anthropic_base_url", "ANTHROPIC_BASE_URL is not set")),
     }
