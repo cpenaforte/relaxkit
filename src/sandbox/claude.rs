@@ -8,25 +8,38 @@ use anyhow::{Context, Result, bail};
 use serde_json::json;
 
 use super::{ALLOWED_DOMAINS, GhPath, union_strings};
+use crate::brand;
 use crate::ctx::Ctx;
 use crate::edit::{jsonc_remove, jsonc_set};
 use crate::host::{Host, HostKind};
 use crate::platform::Os;
 use crate::state::{RunId, safe_write};
 
-/// The relaxkit commands that run outside the sandbox, because they change the machine (spec 7). `status` is not
-/// among them, so it stays sandboxed.
-pub const RELAXKIT_EXCLUDED: [&str; 9] = [
-    "relaxkit setup",
-    "relaxkit update",
-    "relaxkit config",
-    "relaxkit preset",
-    "relaxkit privacy",
-    "relaxkit login",
-    "relaxkit undo",
-    "relaxkit uninstall",
-    "relaxkit doctor",
+/// The pack commands that change the machine, which run outside the sandbox (spec 7). `status` is not among them,
+/// so it stays sandboxed.
+pub const PACK_COMMANDS: [&str; 9] = [
+    "setup",
+    "update",
+    "config",
+    "preset",
+    "privacy",
+    "login",
+    "undo",
+    "uninstall",
+    "doctor",
 ];
+
+/// The sandbox exclusions: each pack command under the binary name and under the `rlx` alias (spec 4).
+pub fn excluded_commands() -> Vec<String> {
+    [brand::BIN, brand::ALIAS]
+        .iter()
+        .flat_map(|bin| {
+            PACK_COMMANDS
+                .iter()
+                .map(move |command| format!("{bin} {command}"))
+        })
+        .collect()
+}
 
 /// Writes the sandbox settings into Claude Code's settings file. A second run changes nothing.
 pub fn apply(ctx: &Ctx, run: &RunId, host: &dyn Host, gh: GhPath) -> Result<()> {
@@ -59,10 +72,11 @@ pub fn settings_text(old: &str, os: Os, gh: GhPath) -> Result<String> {
         &["sandbox", "network", "allowedDomains"],
         &ALLOWED_DOMAINS,
     )?;
-    let mut excluded: Vec<&str> = RELAXKIT_EXCLUDED.to_vec();
+    let mut excluded = excluded_commands();
     if gh == GhPath::ExcludedFallback {
-        excluded.push("gh *");
+        excluded.push("gh *".to_string());
     }
+    let excluded: Vec<&str> = excluded.iter().map(String::as_str).collect();
     text = union_strings(&text, &["sandbox", "excludedCommands"], &excluded)?;
     if weaker_isolation(os, gh) {
         jsonc_set(
@@ -185,6 +199,21 @@ mod tests {
             assert!(excluded.contains(&json!(command)), "{command} missing");
         }
         assert!(!excluded.contains(&json!("relaxkit status")));
+        // The rlx alias is how the owner types the same commands, so it is excluded the same way.
+        for command in [
+            "rlx setup",
+            "rlx update",
+            "rlx config",
+            "rlx preset",
+            "rlx privacy",
+            "rlx login",
+            "rlx undo",
+            "rlx uninstall",
+            "rlx doctor",
+        ] {
+            assert!(excluded.contains(&json!(command)), "{command} missing");
+        }
+        assert!(!excluded.contains(&json!("rlx status")));
     }
 
     #[test]
