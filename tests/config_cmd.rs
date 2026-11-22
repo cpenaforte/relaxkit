@@ -160,6 +160,29 @@ fn unknown_opencode_model_is_rejected_with_closest_matches() {
 }
 
 #[test]
+fn opencode_pin_without_opencode_warns_and_is_still_stored() {
+    // K109 / F23-4: with no OpenCode installed, its pin cannot be checked, so the pin is stored with a warning.
+    let scratch = Scratch::claude_only();
+
+    let assert = scratch
+        .relaxkit()
+        .args(["config", "set", "implementer", "anthropic/claude-hiku-5-5"])
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains(
+            "OpenCode is not installed, so `anthropic/claude-hiku-5-5` is not checked against its model list"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        read(&config_toml(scratch.home())).contains("claude-hiku-5-5"),
+        "the pin is stored"
+    );
+}
+
+#[test]
 fn unknown_opencode_model_is_accepted_with_a_warning_when_the_list_is_unreadable() {
     // No listing file: the stub `opencode models` exits 1, so the list cannot be read.
     let scratch = Scratch::new();

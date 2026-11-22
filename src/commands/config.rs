@@ -378,21 +378,28 @@ fn check_pin(
     spec: &ModelSpec,
     value: &str,
 ) -> Result<()> {
-    if targets.contains(&HostKind::Opencode)
-        && let Some(host) = hosts
+    if targets.contains(&HostKind::Opencode) {
+        match hosts
             .iter()
             .find(|host| host.info().kind == HostKind::Opencode)
-    {
-        let id = format!("{}/{}", spec.provider, spec.model);
-        match listing(ctx, host.as_ref()) {
+        {
+            // K109 / F23-4: the pin is still stored, since OpenCode may be installed later.
             None => ctx.out.warn(&format!(
-                "could not read `opencode models`, so `{value}` is accepted without a check"
+                "OpenCode is not installed, so `{value}` is not checked against its model list"
             )),
-            Some(ids) if ids.contains(&id) => {}
-            Some(ids) => bail!(
-                "`{value}` is not a model OpenCode lists. Closest matches: {}. `opencode models` prints the full list",
-                closest(&id, &ids).join(", ")
-            ),
+            Some(host) => {
+                let id = format!("{}/{}", spec.provider, spec.model);
+                match listing(ctx, host.as_ref()) {
+                    None => ctx.out.warn(&format!(
+                        "could not read `opencode models`, so `{value}` is accepted without a check"
+                    )),
+                    Some(ids) if ids.contains(&id) => {}
+                    Some(ids) => bail!(
+                        "`{value}` is not a model OpenCode lists. Closest matches: {}. `opencode models` prints the full list",
+                        closest(&id, &ids).join(", ")
+                    ),
+                }
+            }
         }
     }
     if targets.contains(&HostKind::Claude) && spec.provider == "anthropic" {
