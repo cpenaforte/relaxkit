@@ -244,6 +244,10 @@ pub fn ensure_node(ctx: &Ctx, run: &RunId) -> Result<NodeInstall> {
 pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NodeInstall> {
     let reused = find_nvm_in(ctx, search).is_some();
     let nvm = ensure_nvm_in(ctx, run, search)?;
+    // A Node 24 that nvm already holds is reused as it is, so a rerun makes no nvm call (spec 4, item 2).
+    if let Some(node) = installed_node(&nvm.dir) {
+        return Ok(node);
+    }
     let action = format!("nvm install {NODE_MAJOR}");
     if ctx.dry_run {
         ctx.out.info(&format!("would run {action}"));
@@ -339,20 +343,49 @@ pub fn other_nodes(ctx: &Ctx) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
+/// The minor and patch numbers of a `v24.x.y` version, or `None` for any other text.
+fn node24_numbers(token: &str) -> Option<Vec<u64>> {
+    let rest = token.strip_prefix(format!("v{NODE_MAJOR}.").as_str())?;
+    let numbers: Vec<u64> = rest
+        .split('.')
+        .map(|part| {
+            (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| part.parse().ok())
+                .flatten()
+        })
+        .collect::<Option<_>>()?;
+    (numbers.len() == 2).then_some(numbers)
+}
+
+/// The newest Node 24 under `nvm_dir/versions/node` whose `bin/node` is a file, or `None` when there is none.
+fn installed_node(nvm_dir: &std::path::Path) -> Option<NodeInstall> {
+    let versions = nvm_dir.join("versions").join("node");
+    let mut best: Option<(Vec<u64>, String)> = None;
+    for entry in fs::read_dir(&versions).ok()?.flatten() {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Some(numbers) = node24_numbers(&name) else {
+            continue;
+        };
+        if !entry.path().join("bin").join("node").is_file() {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(held, _)| numbers > *held) {
+            best = Some((numbers, name));
+        }
+    }
+    best.map(|(_, version)| NodeInstall {
+        root: versions.join(&version),
+        version,
+    })
+}
+
 /// The first `v24.x.y` token in nvm's output.
 fn parse_node_version(text: &str) -> Option<String> {
-    let prefix = format!("v{NODE_MAJOR}.");
     text.split(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '(' | ')' | ','))
         .map(|token| token.trim_end_matches('.'))
-        .find(|token| {
-            token.strip_prefix(prefix.as_str()).is_some_and(|rest| {
-                let parts: Vec<&str> = rest.split('.').collect();
-                parts.len() == 2
-                    && parts
-                        .iter()
-                        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-            })
-        })
+        .find(|token| node24_numbers(token).is_some())
         .map(str::to_owned)
 }
 
@@ -468,9 +501,9 @@ mod tests {
 
         assert_eq!(node.version, "v24.22.3");
         assert_eq!(node.root, version);
+        // A Node 24 that nvm already holds is reused without any nvm call (spec 4, item 2; ruling K55).
         let lines = runner.lines();
-        assert_eq!(lines.len(), 1, "commands: {lines:?}");
-        assert!(lines[0].contains("nvm install 24"), "{lines:?}");
+        assert!(lines.is_empty(), "commands: {lines:?}");
         assert!(
             lines
                 .iter()

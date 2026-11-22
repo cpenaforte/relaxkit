@@ -26,8 +26,9 @@ const STEP_NAMES: [&str; 7] = [
 ];
 
 /// Host commands the stubs answer. A line starting with one of these names is a call to a host or tool.
-const TOOLS: [&str; 11] = [
+const TOOLS: [&str; 12] = [
     "claude", "opencode", "gh", "brew", "uv", "rtk", "npm", "npx", "serena", "caveman", "sudo",
+    "nvm",
 ];
 
 /// Argument words that change something on the machine. A call with one of them is mutating.
