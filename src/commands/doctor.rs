@@ -233,7 +233,12 @@ fn opencode_checks(ctx: &Ctx, host: &dyn Host, checks: &mut Vec<Check>) -> Resul
 fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>) -> Result<()> {
     let kind = host.info().kind.product_name();
     if ctx.dry_run {
-        checks.push(Check::ok(id, format!("{kind}: not run in a dry run")));
+        // A dry run runs no self-test, so nothing is verified: a warn, never an ok (ruling R2-5).
+        checks.push(Check::warn(
+            id,
+            format!("{kind}: not run in a dry run"),
+            "run relaxkit doctor without --dry-run to run the sandbox self-test",
+        ));
         return Ok(());
     }
     let results = selftest(ctx, host);

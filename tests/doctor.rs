@@ -595,6 +595,26 @@ fn doctor_probes_run_on_the_engine_search_path() {
 }
 
 #[test]
+fn doctor_dry_run_warns_that_the_selftests_did_not_run() {
+    // R2-5: a dry run does not run the sandbox self-test, so each self-test id is a warn, never an ok.
+    let root = tempfile::tempdir().unwrap();
+    let mut context = ctx(root.path(), FakeRunner::new(), FakeNet::new());
+    context.dry_run = true;
+
+    let checks = doctor::checks_for(
+        &context,
+        &[claude(root.path()), opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+
+    for id in ["claude.sandbox.selftest", "opencode.sandbox.selftest"] {
+        let check = find(&checks, id);
+        assert_eq!(check.status, CheckStatus::Warn, "{check:?}");
+        assert!(check.message.contains("not run in a dry run"), "{check:?}");
+    }
+}
+
+#[test]
 fn doctor_exits_nonzero_when_a_check_fails() {
     let scratch = Scratch::claude_only();
     fs::create_dir_all(scratch.home().join(".claude")).unwrap();
