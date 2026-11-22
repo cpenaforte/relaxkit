@@ -87,6 +87,7 @@ fn remove_mcp_entries(
 }
 
 /// The Claude Code keys the pack wrote, the roles block in CLAUDE.md, and the compaction threshold when one was set.
+/// CLAUDE.md itself goes when relaxkit created it and nothing else is left in it.
 fn remove_claude(
     ctx: &Ctx,
     run: &RunId,
@@ -115,7 +116,23 @@ fn remove_claude(
     let instructions = host.instructions_file(ctx);
     let old = read_or_empty(&instructions)?;
     let new = block_remove(&old, claude::ROLES_BLOCK);
-    write_changed(ctx, run, &instructions, &old, &new)?;
+    // relaxkit created the file and nothing else is in it: back it up, so undo restores it, then remove it. A file
+    // that is already gone has nothing to back up.
+    let created_and_empty = instructions.exists()
+        && new.trim().is_empty()
+        && matches!(
+            original_text(ctx, run, &instructions)?,
+            OriginalText::Created
+        );
+    if created_and_empty {
+        record_backup(ctx, run, &instructions)?;
+        if !ctx.dry_run {
+            fs::remove_file(&instructions)
+                .with_context(|| format!("cannot remove {}", instructions.display()))?;
+        }
+    } else {
+        write_changed(ctx, run, &instructions, &old, &new)?;
+    }
     if settings_done {
         lines.push(removal(
             ctx,
@@ -127,6 +144,19 @@ fn remove_claude(
             ctx.out.palette(),
             Mark::Warn,
             "left the Claude Code settings alone: no earlier run journaled them, so there is nothing to revert; removed its roles block",
+        ));
+    }
+    if created_and_empty {
+        lines.push(removal(
+            ctx,
+            &format!(
+                "removed {}, which relaxkit created and left empty",
+                instructions.display()
+            ),
+            &format!(
+                "would remove {}, which relaxkit created and left empty",
+                instructions.display()
+            ),
         ));
     }
     Ok(())

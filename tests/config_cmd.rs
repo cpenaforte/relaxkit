@@ -852,6 +852,69 @@ fn uninstall_keeps_a_compact_window_the_owner_changed_by_hand() {
     );
 }
 
+#[test]
+fn uninstall_removes_the_claude_md_setup_created_and_undo_brings_it_back() {
+    // Task 8: setup created CLAUDE.md and wrote only the roles block into it, so uninstall removes the file, after
+    // backing it up, and undo restores it.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    assert!(claude_md(scratch.home()).exists());
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+    assert!(
+        !claude_md(scratch.home()).exists(),
+        "the file setup created is removed when nothing else is left in it"
+    );
+
+    scratch.relaxkit().arg("undo").assert().success();
+    assert!(
+        read(&claude_md(scratch.home())).contains("<!-- relaxkit:begin roles -->"),
+        "undo brings the file back with the roles block it held"
+    );
+}
+
+#[test]
+fn uninstall_keeps_a_claude_md_the_owner_wrote_byte_for_byte() {
+    // Task 8: the owner wrote CLAUDE.md before setup, so its text stays exactly as written.
+    let scratch = Scratch::claude_only();
+    let owner = "# my notes\n\nkeep this line\n";
+    fs::create_dir_all(claude_md(scratch.home()).parent().unwrap()).unwrap();
+    fs::write(claude_md(scratch.home()), owner).unwrap();
+    scratch.relaxkit().arg("setup").assert().success();
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+
+    assert_eq!(read(&claude_md(scratch.home())), owner);
+}
+
+#[test]
+fn a_second_uninstall_after_the_claude_md_is_gone_succeeds() {
+    // Task 8: the file is already gone, so there is nothing to back up or remove.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    scratch.relaxkit().arg("uninstall").assert().success();
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+
+    assert!(!claude_md(scratch.home()).exists());
+}
+
+#[test]
+fn a_dry_run_uninstall_keeps_the_claude_md_setup_created() {
+    // Task 8: a dry run reports the removal and changes nothing.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    let before = read(&claude_md(scratch.home()));
+
+    scratch
+        .relaxkit()
+        .args(["uninstall", "--dry-run"])
+        .assert()
+        .success();
+
+    assert_eq!(read(&claude_md(scratch.home())), before);
+}
+
 /// The home tree without the run lock: taking the lock creates `run.lock`, which is not a configuration write.
 fn tree_without_run_lock(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut out = tree(root);
