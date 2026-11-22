@@ -1,6 +1,7 @@
 //! Claude Code configuration: the compact threshold, the advisory model roles in CLAUDE.md, and the privacy
 //! environment. Each function edits one file through `state::safe_write`, and a second run changes nothing.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -17,21 +18,19 @@ use crate::state::{RunId, safe_write};
 /// The CLAUDE.md block that names the model for each subagent role.
 const ROLES_BLOCK: &str = "roles";
 
-/// Sets Claude Code's compact threshold: the global `autoCompactWindow`, and the same value under every
-/// `modelSettings.<model>` entry that already sets one.
-pub fn apply_compact(ctx: &Ctx, run: &RunId, host: &dyn Host, tokens: u64) -> Result<()> {
+/// Sets Claude Code's compact threshold (spec 6.2): `autoCompactWindow` under `modelSettings.<model>` for each Claude
+/// model the roles resolve to. Missing entries are created. Nothing else in the file changes.
+pub fn apply_compact(
+    ctx: &Ctx,
+    run: &RunId,
+    host: &dyn Host,
+    config: &KitConfig,
+    tokens: u64,
+) -> Result<()> {
     let path = host.config_file(ctx);
     let old = read_text(&path)?;
-    let mut text = json_set(&old, &["autoCompactWindow"], &json!(tokens))?;
-    let models: Vec<String> = match json_get(&text, &["modelSettings"])? {
-        Some(Value::Object(map)) => map
-            .iter()
-            .filter(|(_, entry)| entry.get("autoCompactWindow").is_some())
-            .map(|(model, _)| model.clone())
-            .collect(),
-        _ => Vec::new(),
-    };
-    for model in models {
+    let mut text = old.clone();
+    for model in claude_models(config) {
         text = json_set(
             &text,
             &["modelSettings", &model, "autoCompactWindow"],
@@ -49,6 +48,25 @@ fn claude_alias(config: &KitConfig, role: Role) -> Option<String> {
         tiered.roles.remove(&role);
         resolve_claude(&effective(&tiered, role))
     })
+}
+
+/// The Claude model ids the roles resolve to, in order. A tier writes its family's current model id.
+fn claude_models(config: &KitConfig) -> BTreeSet<String> {
+    Role::ALL
+        .into_iter()
+        .filter_map(|role| claude_alias(config, role))
+        .map(|alias| claude_model_id(&alias))
+        .collect()
+}
+
+/// The model id behind a Claude Code alias. A family alias maps to its current model; anything else is already an id.
+fn claude_model_id(alias: &str) -> String {
+    match alias {
+        "haiku" => "claude-haiku-5-5".to_string(),
+        "sonnet" => "claude-sonnet-5-5".to_string(),
+        "opus" => "claude-opus-5-5".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Writes the `roles` block into CLAUDE.md: the model each subagent role should use, as Claude Code aliases.
@@ -207,7 +225,32 @@ mod tests {
     }
 
     #[test]
-    fn compact_sets_the_global_key_and_every_existing_model_entry() {
+    fn compact_writes_each_resolved_model_and_no_global_key() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = ctx(root.path());
+
+        apply_compact(
+            &ctx,
+            &ctx.run,
+            &host(root.path()),
+            &KitConfig::default(),
+            256_000,
+        )
+        .unwrap();
+
+        let value = read_json(&settings_path(root.path()));
+        assert!(value.get("autoCompactWindow").is_none(), "{value}");
+        for model in ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"] {
+            assert_eq!(
+                value["modelSettings"][model]["autoCompactWindow"],
+                json!(256_000),
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_keeps_existing_keys_hooks_and_permissions_in_order() {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir_all(root.path().join(".claude")).unwrap();
         fs::write(
@@ -216,24 +259,34 @@ mod tests {
   "effortLevel": "high",
   "hooks": {"Stop": []},
   "permissions": {"allow": ["Bash(ls)"]},
-  "modelSettings": {"claude-haiku-5-5": {"autoCompactWindow": 400000}}
+  "modelSettings": {"claude-haiku-5-5": {"effort": "low"}}
 }
 "#,
         )
         .unwrap();
         let ctx = ctx(root.path());
 
-        apply_compact(&ctx, &ctx.run, &host(root.path()), 256_000).unwrap();
+        apply_compact(
+            &ctx,
+            &ctx.run,
+            &host(root.path()),
+            &KitConfig::default(),
+            256_000,
+        )
+        .unwrap();
 
         let value = read_json(&settings_path(root.path()));
-        assert_eq!(value["autoCompactWindow"], json!(256_000));
+        assert_eq!(value["effortLevel"], json!("high"));
+        assert_eq!(value["hooks"], json!({"Stop": []}));
+        assert_eq!(value["permissions"], json!({"allow": ["Bash(ls)"]}));
+        assert_eq!(
+            value["modelSettings"]["claude-haiku-5-5"]["effort"],
+            json!("low")
+        );
         assert_eq!(
             value["modelSettings"]["claude-haiku-5-5"]["autoCompactWindow"],
             json!(256_000)
         );
-        assert_eq!(value["effortLevel"], json!("high"));
-        assert_eq!(value["hooks"], json!({"Stop": []}));
-        assert_eq!(value["permissions"], json!({"allow": ["Bash(ls)"]}));
         let keys: Vec<&str> = value
             .as_object()
             .unwrap()
@@ -241,9 +294,8 @@ mod tests {
             .map(String::as_str)
             .collect();
         assert_eq!(
-            &keys[..4],
-            &["effortLevel", "hooks", "permissions", "modelSettings"],
-            "key order must survive"
+            keys,
+            vec!["effortLevel", "hooks", "permissions", "modelSettings"]
         );
     }
 
