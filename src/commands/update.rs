@@ -18,6 +18,7 @@ use crate::fsx::write_atomic;
 use crate::host::{Host, HostCheck, HostKind, check_minimum, detect_hosts};
 use crate::net::Net;
 use crate::recipe::{Recipe, VersionSource, load_all};
+use crate::runtime::gh;
 use crate::runtime::nvm::{
     NodeInstall, NvmSearch, current_node, latest_node_24, link_node, update_node_in,
 };
@@ -221,6 +222,7 @@ pub fn run_with_hosts(
                 let (row, restart) = match plan.id {
                     "node" => node_flow(ctx, search, hosts, &plan, &mut report),
                     "rtk" => rtk_flow(&engine, &plan, lock.as_ref(), &mut report),
+                    "gh" => gh_flow(ctx, &plan, &mut report),
                     _ => tool_flow(&engine, hosts, &plan, lock.as_ref(), &mut report),
                 };
                 for kind in restart {
@@ -268,11 +270,25 @@ fn plan<'r>(
         }
         "gh" => {
             plan.installed = locked.map(|entry| entry.version.clone());
-            plan.skip = Some(RowResult::NotTouched(if locked.is_some() {
-                "gh is updated by its own route, which this build does not drive".to_string()
+            if locked.is_none() {
+                plan.skip = Some(RowResult::NotTouched(
+                    "not installed by relaxkit".to_string(),
+                ));
             } else {
-                "not installed by relaxkit (no lock entry)".to_string()
-            }));
+                match gh::latest_version(net) {
+                    Err(err) => {
+                        plan.skip = Some(RowResult::NewestUnknown);
+                        plan.note = Some(format!("{err:#}"));
+                    }
+                    Ok(newest) => {
+                        plan.needs = plan.installed.as_deref() != Some(newest.as_str());
+                        plan.newest = Some(newest);
+                        if !plan.needs {
+                            plan.skip = Some(RowResult::Current);
+                        }
+                    }
+                }
+            }
         }
         "node" => match node {
             None => {
@@ -476,6 +492,64 @@ fn node_flow(
                 row(RowResult::RolledBack, Some(format!("{err:#}"))),
                 Vec::new(),
             )
+        }
+    }
+}
+
+/// The gh row (K84): the pack copy, which relaxkit installed and the lock records, moves to the newest release. The
+/// release is verified before anything is written. The previous copy is journaled before the write, and it is put back
+/// when the new copy fails its probe or the lock cannot be written. A brew or system gh is never touched.
+fn gh_flow(ctx: &Ctx, plan: &Plan<'_>, report: &mut UpdateReport) -> (UpdateRow, Vec<HostKind>) {
+    let row = |result: RowResult, note: Option<String>| UpdateRow {
+        tool: plan.id.to_string(),
+        installed: plan.installed.clone(),
+        newest: plan.newest.clone(),
+        result,
+        note,
+    };
+    let bin = ctx.dirs.bin.join("gh");
+    let before = match FileState::capture(&bin) {
+        Ok(before) => before,
+        Err(err) => {
+            report.failed.push(plan.id.to_string());
+            return (
+                row(RowResult::NotTouched(format!("{err:#}")), None),
+                Vec::new(),
+            );
+        }
+    };
+    let fetched = match gh::fetch_latest(ctx, &ctx.run) {
+        Ok(fetched) => fetched,
+        Err(err) => {
+            // Nothing was written: the release failed its checksum or could not be fetched.
+            report.failed.push(plan.id.to_string());
+            return (
+                row(RowResult::NotTouched(format!("{err:#}")), None),
+                Vec::new(),
+            );
+        }
+    };
+    let outcome = record_backup(ctx, &ctx.run, &bin)
+        .and_then(|()| gh::place(ctx, &fetched.body))
+        .and_then(|()| gh::probe(ctx, &bin, &fetched.version))
+        .and_then(|()| gh::record_version(ctx, &ctx.run, &fetched.version));
+    match outcome {
+        Ok(()) => (row(RowResult::Updated, None), Vec::new()),
+        Err(err) => {
+            report.failed.push(plan.id.to_string());
+            match before.restore(&bin) {
+                Ok(()) => (
+                    row(RowResult::RolledBack, Some(format!("{err:#}"))),
+                    Vec::new(),
+                ),
+                Err(restore) => (
+                    row(
+                        RowResult::RollbackFailed(format!("gh could not be restored: {restore:#}")),
+                        Some(format!("{err:#}")),
+                    ),
+                    Vec::new(),
+                ),
+            }
         }
     }
 }

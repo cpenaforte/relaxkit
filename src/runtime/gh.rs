@@ -10,7 +10,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::fsx::write_atomic;
-use crate::net::github_latest_tag;
+use crate::net::{Net, github_latest_tag};
 use crate::platform::{Arch, Os, current_arch, current_os, is_executable};
 use crate::runtime::{checksum_for, download_dir, fresh_dir, sha256_hex, utf8};
 use crate::state::RunId;
@@ -125,6 +125,61 @@ fn ensure_gh_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<GhInstall
 /// against the checksums file, and only then unpacks it and copies `bin/gh` into the pack bin directory.
 /// A mismatch stops before anything is unpacked or written.
 fn install_private_copy(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<()> {
+    let fetched = fetch_verified(ctx, run, os, arch)?;
+    place(ctx, &fetched.body)
+}
+
+/// The newest release, verified and unpacked, ready to place. Nothing is written into the pack bin directory.
+pub struct Fetched {
+    pub version: String,
+    pub body: Vec<u8>,
+}
+
+/// The newest release of gh for this platform, verified against its checksums (K84).
+pub fn fetch_latest(ctx: &Ctx, run: &RunId) -> Result<Fetched> {
+    fetch_verified(ctx, run, current_os()?, current_arch()?)
+}
+
+/// The newest gh release, without its leading `v`.
+pub fn latest_version(net: &dyn Net) -> Result<String> {
+    let tag = github_latest_tag(net, GH_REPO)?;
+    tag.strip_prefix('v')
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("release tag {tag} does not start with v"))
+}
+
+/// Writes `body` as the pack copy of gh, executable.
+pub fn place(ctx: &Ctx, body: &[u8]) -> Result<()> {
+    fs::create_dir_all(&ctx.dirs.bin)
+        .with_context(|| format!("cannot create {}", ctx.dirs.bin.display()))?;
+    let bin = ctx.dirs.bin.join("gh");
+    write_atomic(&bin, body)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("cannot make {} executable", bin.display()))?;
+    }
+    Ok(())
+}
+
+/// Runs `gh --version` on the copy at `path` and checks that it reports `version`.
+pub fn probe(ctx: &Ctx, path: &Path, version: &str) -> Result<()> {
+    let cmd = Cmd::new(&path.display().to_string()).arg("--version");
+    let out = ctx
+        .runner
+        .run(&cmd)
+        .with_context(|| format!("the new gh at {} did not run", path.display()))?;
+    if out.code != 0 || parse_version(&out.stdout).as_deref() != Some(version) {
+        bail!(
+            "the new gh at {} did not report version {version}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn fetch_verified(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<Fetched> {
     let tag = github_latest_tag(ctx.net.as_ref(), GH_REPO)?;
     let version = tag
         .strip_prefix('v')
@@ -172,18 +227,10 @@ fn install_private_copy(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<()
         .ok_or_else(|| anyhow!("unexpected archive name {archive_name}"))?;
     let built = extract.join(stem).join("bin").join("gh");
     let body = fs::read(&built).with_context(|| format!("{archive_name} has no bin/gh"))?;
-
-    fs::create_dir_all(&ctx.dirs.bin)
-        .with_context(|| format!("cannot create {}", ctx.dirs.bin.display()))?;
-    let bin = ctx.dirs.bin.join("gh");
-    write_atomic(&bin, &body)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755))
-            .with_context(|| format!("cannot make {} executable", bin.display()))?;
-    }
-    Ok(())
+    Ok(Fetched {
+        version: version.to_string(),
+        body,
+    })
 }
 
 /// The release archive for `version` (no leading `v`), named as the release publishes it.

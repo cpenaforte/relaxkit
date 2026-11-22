@@ -1926,6 +1926,233 @@ fn gh_is_not_reported_as_a_tool_without_a_recipe() {
     );
 }
 
+/// The gh release archive for this platform, named as the release publishes it (K84).
+fn gh_archive(version: &str) -> String {
+    match (current_os().unwrap(), current_arch().unwrap()) {
+        (Os::MacOs, Arch::Aarch64) => format!("gh_{version}_macOS_arm64.zip"),
+        (Os::MacOs, Arch::X86_64) => format!("gh_{version}_macOS_amd64.zip"),
+        (Os::Linux, Arch::X86_64) => format!("gh_{version}_linux_amd64.tar.gz"),
+        (Os::Linux, Arch::Aarch64) => format!("gh_{version}_linux_arm64.tar.gz"),
+    }
+}
+
+/// Serves gh's newest release: its tag, the archive (with `digest` as its checksums line, or the real digest when
+/// none is given), and a `tar -xf` that unpacks `binary` as the release's `bin/gh`.
+fn serve_gh(fx: &Fixture, version: &str, archive: &[u8], digest: Option<String>, binary: &str) {
+    fx.serve(
+        "https://api.github.com/repos/cli/cli/releases/latest",
+        &format!(r#"{{"tag_name":"v{version}"}}"#),
+    );
+    let name = gh_archive(version);
+    let base = format!("https://github.com/cli/cli/releases/download/v{version}");
+    let digest = digest.unwrap_or_else(|| {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(archive)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    });
+    fx.net.clone().with(
+        &format!("{base}/gh_{version}_checksums.txt"),
+        &format!("{digest}  {name}\n"),
+    );
+    fx.net
+        .clone()
+        .with_bytes(&format!("{base}/{name}"), archive.to_vec());
+    let stem = name
+        .trim_end_matches(".tar.gz")
+        .trim_end_matches(".zip")
+        .to_string();
+    let binary = binary.to_string();
+    fx.shell.effect(
+        "tar -xf",
+        Arc::new(move |cmd| {
+            let args = cmd.argv();
+            let dir = PathBuf::from(&args[args.iter().position(|a| a == "-C").unwrap() + 1]);
+            let bin_dir = dir.join(&stem).join("bin");
+            fs::create_dir_all(&bin_dir).unwrap();
+            fs::write(bin_dir.join("gh"), &binary).unwrap();
+        }),
+    );
+    fx.shell.on("tar -xf", Output::ok(""));
+}
+
+/// The pack copy of gh, as it sits in the pack bin directory before an update.
+fn pack_gh(fx: &Fixture) -> PathBuf {
+    let bin = KitDirs::rooted(fx.root()).bin;
+    fs::create_dir_all(&bin).unwrap();
+    let gh = bin.join("gh");
+    fs::write(&gh, "#!/bin/sh\necho gh version 9.9.8\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    gh
+}
+
+#[test]
+fn gh_at_the_newest_release_is_current_with_no_download() {
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.9", "release", &[])]);
+    serve_gh(&fx, "9.9.9", b"archive", None, "");
+
+    let report = fx.run(false, Some("gh")).unwrap();
+
+    assert!(
+        matches!(row(&report, "gh").result, RowResult::Current),
+        "{:?}",
+        row(&report, "gh")
+    );
+    assert!(
+        fx.shell.lines().iter().all(|line| !line.starts_with("tar")),
+        "{:?}",
+        fx.shell.lines()
+    );
+    assert!(report.failed.is_empty());
+}
+
+#[test]
+fn gh_is_moved_to_the_newest_release_and_recorded_with_the_archive_for_this_platform() {
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.8", "release", &[])]);
+    let bin = pack_gh(&fx);
+    serve_gh(
+        &fx,
+        "9.9.9",
+        b"archive",
+        None,
+        "#!/bin/sh\necho gh version 9.9.9\n",
+    );
+    fx.shell.on(
+        &format!("{} --version", bin.display()),
+        Output::ok("gh version 9.9.9 (2026-01-01)\n"),
+    );
+
+    let report = fx.run(false, Some("gh")).unwrap();
+
+    let archive = gh_archive("9.9.9");
+    let lines = fx.shell.lines();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("tar -xf") && line.contains(&archive)),
+        "the archive for this platform was not unpacked: {lines:?}"
+    );
+    assert!(
+        matches!(row(&report, "gh").result, RowResult::Updated),
+        "{:?}",
+        row(&report, "gh")
+    );
+    assert_eq!(
+        fs::read_to_string(&bin).unwrap(),
+        "#!/bin/sh\necho gh version 9.9.9\n"
+    );
+    let entry = &fx.read_lock().tools["gh"];
+    assert_eq!(entry.version, "9.9.9");
+    assert_eq!(entry.route, "release");
+    assert!(report.failed.is_empty());
+}
+
+#[test]
+fn a_gh_checksum_mismatch_writes_nothing_and_keeps_the_lock() {
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.8", "release", &[])]);
+    let bin = pack_gh(&fx);
+    let before_bin = fs::read(&bin).unwrap();
+    let lock_path = KitDirs::rooted(fx.root()).config.join("lock.toml");
+    let before_lock = fs::read(&lock_path).unwrap();
+    serve_gh(
+        &fx,
+        "9.9.9",
+        b"archive",
+        Some("0".repeat(64)),
+        "#!/bin/sh\necho gh version 9.9.9\n",
+    );
+
+    let report = fx.run(false, Some("gh")).unwrap();
+
+    assert!(
+        fx.shell.lines().iter().all(|line| !line.starts_with("tar")),
+        "an unverified archive was unpacked: {:?}",
+        fx.shell.lines()
+    );
+    assert_eq!(fs::read(&bin).unwrap(), before_bin, "the pack copy changed");
+    assert_eq!(
+        fs::read(&lock_path).unwrap(),
+        before_lock,
+        "the lock changed"
+    );
+    let reason = match &row(&report, "gh").result {
+        RowResult::NotTouched(reason) => reason.clone(),
+        other => panic!("expected NotTouched, got {other:?}"),
+    };
+    assert!(reason.contains("checksum mismatch"), "{reason}");
+    assert_eq!(report.failed, vec!["gh".to_string()]);
+}
+
+#[test]
+fn a_failed_gh_probe_restores_the_previous_copy_and_is_rolled_back() {
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.8", "release", &[])]);
+    let bin = pack_gh(&fx);
+    let before_bin = fs::read(&bin).unwrap();
+    let lock_path = KitDirs::rooted(fx.root()).config.join("lock.toml");
+    let before_lock = fs::read(&lock_path).unwrap();
+    serve_gh(&fx, "9.9.9", b"archive", None, "#!/bin/sh\nbroken\n");
+    fx.shell.on(
+        &format!("{} --version", bin.display()),
+        Output::fail(1, "broken"),
+    );
+
+    let report = fx.run(false, Some("gh")).unwrap();
+
+    assert!(
+        matches!(row(&report, "gh").result, RowResult::RolledBack),
+        "{:?}",
+        row(&report, "gh")
+    );
+    assert_eq!(
+        fs::read(&bin).unwrap(),
+        before_bin,
+        "the previous copy was not restored"
+    );
+    assert_eq!(
+        fs::read(&lock_path).unwrap(),
+        before_lock,
+        "the lock changed"
+    );
+    assert_eq!(report.failed, vec!["gh".to_string()]);
+}
+
+#[test]
+fn a_brew_gh_is_never_touched_by_an_update() {
+    // The lock records the pack copy; the gh on the PATH is Homebrew's. Only the pack copy is written (K84).
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.8", "release", &[])]);
+    fx.shell.program("gh", Path::new("/opt/homebrew/bin/gh"));
+    serve_gh(
+        &fx,
+        "9.9.9",
+        b"archive",
+        None,
+        "#!/bin/sh\necho gh version 9.9.9\n",
+    );
+    let bin = KitDirs::rooted(fx.root()).bin.join("gh");
+    fx.shell.on(
+        &format!("{} --version", bin.display()),
+        Output::ok("gh version 9.9.9 (2026-01-01)\n"),
+    );
+
+    fx.run(false, Some("gh")).unwrap();
+
+    assert!(
+        fx.shell
+            .lines()
+            .iter()
+            .all(|line| !line.contains("/opt/homebrew")),
+        "{:?}",
+        fx.shell.lines()
+    );
+}
+
 #[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
