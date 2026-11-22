@@ -224,14 +224,21 @@ pub(crate) fn family_version(model: &str, family: &str) -> Option<Vec<u64>> {
         .unwrap_or(model)
         .to_ascii_lowercase();
     let at = model.find(family)?;
-    let rest = &model[at + family.len()..];
     // Runs of eight or more digits are date stamps (`20250929`), not version parts.
-    let version: Vec<u64> = rest
-        .split(|c: char| !c.is_ascii_digit())
-        .filter(|digits| !digits.is_empty() && digits.len() < 8)
-        .filter_map(|digits| digits.parse::<u64>().ok())
-        .collect();
-    // F23-20: an id with no version (`claude-sonnet-latest`) is not a member of the family.
+    let parts = |text: &str| -> Vec<u64> {
+        text.split(|c: char| !c.is_ascii_digit())
+            .filter(|digits| !digits.is_empty() && digits.len() < 8)
+            .filter_map(|digits| digits.parse::<u64>().ok())
+            .collect()
+    };
+    // The version follows the family word (`claude-sonnet-5-5`) or, for old-style ids, precedes it
+    // (`claude-3-5-sonnet-20241022`). No digits at all, as in `claude-sonnet-latest`, is no family (F23-20, F23-23).
+    let after = parts(&model[at + family.len()..]);
+    let version = if after.is_empty() {
+        parts(&model[..at])
+    } else {
+        after
+    };
     if version.is_empty() {
         return None;
     }
@@ -408,6 +415,16 @@ mod tests {
         assert_eq!(
             family_version("claude-sonnet-5-5", "sonnet"),
             Some(vec![5, 5])
+        );
+        // F23-23: an old-style id has its version before the family word, and the date stamp is not a version.
+        assert_eq!(
+            family_version("claude-3-5-sonnet-20241022", "sonnet"),
+            Some(vec![3, 5])
+        );
+        let listed = ["anthropic/claude-3-5-sonnet-20241022".to_string()];
+        assert_eq!(
+            resolve_opencode(&RoleSetting::Tier(Tier::Standard), &listed),
+            Some("anthropic/claude-3-5-sonnet-20241022".to_string())
         );
     }
 }
