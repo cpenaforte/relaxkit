@@ -359,15 +359,28 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
     ));
     if let Some(lock) = Lockfile::load(ctx)? {
         for (name, tool) in &lock.tools {
-            lines.push(detail(
-                palette,
-                Mark::Skip,
-                &format!(
-                    "plugin or tool {name} {} on {}: remove it with its host's own command",
-                    tool.version,
-                    tool.hosts.join(", ")
-                ),
-            ));
+            if tool.host_versions_differ() {
+                for host in &tool.hosts {
+                    lines.push(detail(
+                        palette,
+                        Mark::Skip,
+                        &format!(
+                            "plugin or tool {name} {} on {host}: remove it with its host's own command",
+                            tool.version_for(host)
+                        ),
+                    ));
+                }
+            } else {
+                lines.push(detail(
+                    palette,
+                    Mark::Skip,
+                    &format!(
+                        "plugin or tool {name} {} on {}: remove it with its host's own command",
+                        tool.installed_text(),
+                        tool.hosts.join(", ")
+                    ),
+                ));
+            }
         }
     }
     for host in detect_hosts(ctx) {
@@ -435,6 +448,7 @@ fn write_changed(ctx: &Ctx, run: &RunId, path: &Path, old: &str, new: &str) -> R
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -448,10 +462,51 @@ mod tests {
     use crate::net::FakeNet;
     use crate::platform::Os;
     use crate::sandbox::GhPath;
+    use crate::state::lockfile::LockedTool;
     use crate::state::safe_write;
 
     fn get(text: &str, path: &[&str]) -> Option<Value> {
         jsonc_get(text, path).unwrap()
+    }
+
+    #[test]
+    fn a_tool_whose_hosts_differ_is_listed_once_per_host_at_its_own_version() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+        let tools = BTreeMap::from([(
+            "superpowers".to_string(),
+            LockedTool {
+                version: "7.0.2-22f0b463e7a5".to_string(),
+                route: "claude-plugin:anthropic-plugin-directory".to_string(),
+                hosts: vec!["claude".to_string(), "opencode".to_string()],
+                host_versions: BTreeMap::from([
+                    ("claude".to_string(), "7.0.2-22f0b463e7a5".to_string()),
+                    ("opencode".to_string(), "7.0.2".to_string()),
+                ]),
+            },
+        )]);
+        let lock = Lockfile {
+            relaxkit: "0.1.0".to_string(),
+            tools,
+        };
+        lock.save(&ctx, &RunId::new()).unwrap();
+
+        let mut lines = Vec::new();
+        leftovers(&ctx, &mut lines).unwrap();
+
+        let text = lines.join("\n");
+        assert!(
+            text.contains(
+                "plugin or tool superpowers 7.0.2-22f0b463e7a5 on claude: remove it with its host's own command"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "plugin or tool superpowers 7.0.2 on opencode: remove it with its host's own command"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

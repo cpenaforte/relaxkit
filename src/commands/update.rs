@@ -338,7 +338,7 @@ fn plan<'r>(
                 ));
                 return plan;
             };
-            plan.installed = Some(entry.version.clone());
+            plan.installed = Some(entry.installed_text());
             let present = present_hosts(recipe, entry, hosts);
             if present.is_empty() {
                 plan.skip = Some(RowResult::NotTouched(

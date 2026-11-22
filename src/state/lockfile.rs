@@ -39,6 +39,32 @@ impl LockedTool {
             .unwrap_or(&self.version)
     }
 
+    /// Whether the hosts of this tool report different versions. A tool with no hosts does not differ.
+    pub fn host_versions_differ(&self) -> bool {
+        let mut versions = self.hosts.iter().map(|host| self.version_for(host));
+        let Some(first) = versions.next() else {
+            return false;
+        };
+        versions.any(|version| version != first)
+    }
+
+    /// What a line shows for the whole tool: the one version when every host is at it, else each host's own version as
+    /// `host version` pairs in `hosts` order. A tool with no hosts shows its top-level version.
+    pub fn installed_text(&self) -> String {
+        if !self.host_versions_differ() {
+            return self
+                .hosts
+                .first()
+                .map_or(self.version.as_str(), |host| self.version_for(host))
+                .to_string();
+        }
+        self.hosts
+            .iter()
+            .map(|host| format!("{host} {}", self.version_for(host)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// The entry after `updated` hosts moved to `version` by `route`. Every other host keeps the version it had, so a
     /// partial update never moves a host it did not touch (ruling K73). `version` is the version the move wrote, and
     /// `host_versions` records every host's own version, so no host's version is inferred from another's.

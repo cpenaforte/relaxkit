@@ -363,7 +363,7 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             let Some((program, args)) = probe.argv.split_first() else {
                 continue;
             };
-            let shown = shown_argv(&probe.argv, &tool.version);
+            let shown = shown_argv(&probe.argv, tool.version_for(host_name));
             if program.starts_with('{') {
                 // Not run is never an ok: the probe is unverified until someone runs it (ruling Important item 6).
                 checks.push(Check::warn(
@@ -772,9 +772,80 @@ pub fn to_json(checks: &[Check]) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
     use super::*;
+    use crate::exec::FakeRunner;
+    use crate::host::HostInfo;
+    use crate::host::claude::ClaudeHost;
+    use crate::host::opencode::OpencodeHost;
+    use crate::net::FakeNet;
     use crate::platform::{Os, prerequisite_plan};
+    use crate::state::RunId;
+    use crate::state::lockfile::{LockedTool, Lockfile};
     use crate::ui::Palette;
+
+    #[test]
+    fn a_probe_shown_for_each_host_names_that_hosts_locked_version() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+        let tools = BTreeMap::from([(
+            "ccusage".to_string(),
+            LockedTool {
+                version: "20.0.51".to_string(),
+                route: "npm".to_string(),
+                hosts: vec!["claude".to_string(), "opencode".to_string()],
+                host_versions: BTreeMap::from([
+                    ("claude".to_string(), "20.0.51".to_string()),
+                    ("opencode".to_string(), "20.0.52".to_string()),
+                ]),
+            },
+        )]);
+        let lock = Lockfile {
+            relaxkit: "0.1.0".to_string(),
+            tools,
+        };
+        lock.save(&ctx, &RunId::new()).unwrap();
+        let hosts: Vec<Box<dyn Host>> = vec![
+            Box::new(ClaudeHost::new(
+                HostInfo {
+                    kind: HostKind::Claude,
+                    binary: PathBuf::from("/usr/local/bin/claude"),
+                    version: "2.1.330".to_string(),
+                },
+                root.path().join(".claude"),
+                root.path().join(".claude.json"),
+            )),
+            Box::new(OpencodeHost::new(
+                HostInfo {
+                    kind: HostKind::Opencode,
+                    binary: PathBuf::from("/usr/local/bin/opencode"),
+                    version: "2.2.6".to_string(),
+                },
+                root.path().join(".config/opencode"),
+            )),
+        ];
+
+        let mut checks = Vec::new();
+        tool_probe_checks(&ctx, &hosts, &mut checks).unwrap();
+
+        let fix = |id: &str| {
+            checks
+                .iter()
+                .find(|check| check.id == id)
+                .and_then(|check| check.fix.clone())
+                .unwrap_or_default()
+        };
+        assert!(
+            fix("tool.ccusage.claude").contains("ccusage@20.0.51"),
+            "{checks:?}"
+        );
+        assert!(
+            fix("tool.ccusage.opencode").contains("ccusage@20.0.52"),
+            "{checks:?}"
+        );
+    }
 
     #[test]
     fn a_probe_shown_to_a_person_has_its_placeholders_filled_in() {

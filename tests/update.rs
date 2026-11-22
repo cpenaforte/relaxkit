@@ -343,6 +343,35 @@ fn check_reports_installed_and_newest_and_changes_nothing() {
 }
 
 #[test]
+fn a_tool_whose_hosts_differ_shows_each_hosts_own_version_as_installed() {
+    let fx = Fixture::new();
+    let tools = BTreeMap::from([(
+        "superpowers".to_string(),
+        LockedTool {
+            version: "7.0.2-22f0b463e7a5".to_string(),
+            route: "claude-plugin:anthropic-plugin-directory".to_string(),
+            hosts: vec!["claude".to_string(), "opencode".to_string()],
+            host_versions: BTreeMap::from([
+                ("claude".to_string(), "7.0.2-22f0b463e7a5".to_string()),
+                ("opencode".to_string(), "7.0.2".to_string()),
+            ]),
+        },
+    )]);
+    let lock = Lockfile {
+        relaxkit: "0.1.0".to_string(),
+        tools,
+    };
+    lock.save(&fx.ctx(), &RunId::new()).unwrap();
+
+    let report = fx.run(true, Some("superpowers")).unwrap();
+
+    assert_eq!(
+        row(&report, "superpowers").installed.as_deref(),
+        Some("claude 7.0.2-22f0b463e7a5, opencode 7.0.2")
+    );
+}
+
+#[test]
 fn each_tool_updates_by_its_own_route() {
     let fx = Fixture::new();
     fx.lock(&[
