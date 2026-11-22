@@ -3,6 +3,7 @@
 
 mod support;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
@@ -849,6 +850,93 @@ fn uninstall_keeps_a_compact_window_the_owner_changed_by_hand() {
         json!(200_000),
         "a value the owner set stays"
     );
+}
+
+/// The home tree without the run lock: taking the lock creates `run.lock`, which is not a configuration write.
+fn tree_without_run_lock(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut out = tree(root);
+    out.retain(|path, _| !path.ends_with("run.lock"));
+    out
+}
+
+// ---- unreadable OpenCode list (K123) ----------------------------------------------------------------------------
+
+#[test]
+fn a_tier_change_is_refused_when_the_opencode_list_is_unreadable() {
+    // K123 / F23-21: a tier cannot be applied to OpenCode without its list, so the change is refused before any write.
+    let scratch = Scratch::new();
+    let before = tree_without_run_lock(scratch.home());
+
+    let assert = scratch
+        .relaxkit()
+        .args(["config", "set", "implementer", "standard"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("could not be read, so a tier cannot be applied to OpenCode now"),
+        "{stderr}"
+    );
+    assert_eq!(
+        tree_without_run_lock(scratch.home()),
+        before,
+        "a refused change writes nothing"
+    );
+}
+
+#[test]
+fn an_unset_that_leaves_a_tier_is_refused_when_the_opencode_list_is_unreadable() {
+    let scratch = Scratch::new();
+    let before = tree_without_run_lock(scratch.home());
+
+    scratch
+        .relaxkit()
+        .args(["config", "unset", "implementer"])
+        .assert()
+        .failure();
+    assert_eq!(
+        tree_without_run_lock(scratch.home()),
+        before,
+        "a refused unset writes nothing"
+    );
+}
+
+#[test]
+fn a_preset_is_refused_when_the_opencode_list_is_unreadable_and_it_sets_tiers() {
+    let scratch = Scratch::new();
+    let before = tree_without_run_lock(scratch.home());
+
+    scratch
+        .relaxkit()
+        .args(["preset", "lean"])
+        .assert()
+        .failure();
+    assert_eq!(
+        tree_without_run_lock(scratch.home()),
+        before,
+        "a refused preset writes nothing"
+    );
+}
+
+#[test]
+fn a_pin_still_works_when_the_opencode_list_is_unreadable() {
+    // K123: pins need no list, so they are not refused. The row names the pin, not the host default.
+    let scratch = Scratch::new();
+
+    let assert = scratch
+        .relaxkit()
+        .args([
+            "config",
+            "set",
+            "implementer",
+            "anthropic/claude-sonnet-5-5",
+        ])
+        .assert()
+        .success();
+    assert!(config_toml(scratch.home()).exists());
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(stdout.contains("anthropic/claude-sonnet-5-5"), "{stdout}");
+    assert!(!stdout.contains("inherits the host default"), "{stdout}");
 }
 
 // ---- uninstall -------------------------------------------------------------------------------------------------

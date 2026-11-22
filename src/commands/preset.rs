@@ -4,13 +4,13 @@
 
 use anyhow::Result;
 
-use crate::commands::config::apply_roles;
+use crate::commands::config::{apply_roles, refuse_tier_without_list};
 use crate::config::KitConfig;
 use crate::config_apply::voice;
 use crate::ctx::Ctx;
-use crate::host::detect_hosts;
+use crate::host::{HostKind, detect_hosts};
 use crate::presets::Preset;
-use crate::roles::RoleSetting;
+use crate::roles::{Role, RoleSetting};
 use crate::state::{RunId, with_run_lock};
 
 /// Applies `preset` to `config.toml` and to each detected host's roles and voice.
@@ -20,6 +20,13 @@ pub fn run(ctx: &Ctx, preset: Preset) -> Result<()> {
         config.preset = preset;
         config.voice = None;
         keep_pins(&mut config);
+        refuse_tier_without_list(
+            ctx,
+            &detect_hosts(ctx),
+            &[HostKind::Claude, HostKind::Opencode],
+            &config,
+            &Role::ALL,
+        )?;
         config.save(ctx, run)?;
         voice::apply(ctx, run, preset.voice(), false)?;
         apply_roles(ctx, run, &detect_hosts(ctx), &config, None)?;

@@ -178,6 +178,36 @@ fn save_global(ctx: &Ctx, run: &RunId, config: &KitConfig) -> Result<()> {
     Ok(())
 }
 
+/// K123: a tier on OpenCode needs the model list. When the list cannot be read, a change that leaves one of `roles` as
+/// a tier on OpenCode is refused before any write. Pins need no list, so they are not refused.
+pub(crate) fn refuse_tier_without_list(
+    ctx: &Ctx,
+    hosts: &[Box<dyn Host>],
+    targets: &[HostKind],
+    config: &KitConfig,
+    roles: &[Role],
+) -> Result<()> {
+    if !targets.contains(&HostKind::Opencode) {
+        return Ok(());
+    }
+    let Some(host) = hosts
+        .iter()
+        .find(|host| host.info().kind == HostKind::Opencode)
+    else {
+        return Ok(());
+    };
+    let own = config.for_host(HostKind::Opencode);
+    let tier_left = roles
+        .iter()
+        .any(|role| matches!(effective(&own, *role), RoleSetting::Tier(_)));
+    if !tier_left || listing(ctx, host.as_ref()).is_some() {
+        return Ok(());
+    }
+    bail!(
+        "OpenCode's model list could not be read, so a tier cannot be applied to OpenCode now: pin an exact model (provider/model) or retry when `opencode models` works"
+    )
+}
+
 fn set_role(
     ctx: &Ctx,
     run: &RunId,
@@ -193,6 +223,7 @@ fn set_role(
     }
     let mut config = KitConfig::load(&ctx.dirs)?;
     put_role(&mut config, role, setting, host);
+    refuse_tier_without_list(ctx, &hosts, &targets, &config, &[role])?;
     save_global(ctx, run, &config)?;
     apply_roles(ctx, run, &hosts, &config, host)?;
     let row = View::build(ctx, config).row(role);
@@ -210,8 +241,10 @@ fn set_role(
 
 fn unset_role(ctx: &Ctx, run: &RunId, role: Role, host: Option<HostKind>) -> Result<()> {
     let hosts = scoped_hosts(ctx)?;
+    let targets: Vec<HostKind> = host.map_or_else(|| HOSTS.to_vec(), |kind| vec![kind]);
     let mut config = KitConfig::load(&ctx.dirs)?;
     remove_role(&mut config, role, host);
+    refuse_tier_without_list(ctx, &hosts, &targets, &config, &[role])?;
     save_global(ctx, run, &config)?;
     apply_roles(ctx, run, &hosts, &config, host)?;
     let view = View::build(ctx, config);
@@ -713,19 +746,21 @@ impl View {
                 note: "(OpenCode not found)".to_string(),
             };
         }
-        let Some(models) = &self.models else {
-            return HostCell {
-                setting: setting_text,
-                model: None,
-                note: "inherits the host default (the model list cannot be read)".to_string(),
-            };
-        };
         let mode = if role == Role::Planner {
             "advisory"
         } else {
             "enforced per agent"
         };
-        match resolve_opencode(&setting, models) {
+        // A pin names its model without the list; a tier needs the list, so without it the note says so.
+        let models = self.models.clone().unwrap_or_default();
+        if self.models.is_none() && !matches!(setting, RoleSetting::Pin(_)) {
+            return HostCell {
+                setting: setting_text,
+                model: None,
+                note: "inherits the host default (the model list cannot be read)".to_string(),
+            };
+        }
+        match resolve_opencode(&setting, &models) {
             Some(model) => HostCell {
                 setting: setting_text,
                 model: Some(model.clone()),
