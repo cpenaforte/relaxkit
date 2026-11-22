@@ -56,7 +56,7 @@ impl Tier {
     }
 
     /// The Claude Code alias for this tier.
-    fn claude_alias(self) -> &'static str {
+    pub(crate) fn claude_alias(self) -> &'static str {
         match self {
             Tier::Cheap => "haiku",
             Tier::Standard => "sonnet",
@@ -217,7 +217,7 @@ pub fn resolve_opencode(setting: &RoleSetting, available: &[String]) -> Option<S
 
 /// The numeric version after `family` in `model`, or `None` when `model` is not in that family.
 /// `claude-opus-5-10` gives `[5, 10]`, so 5-10 sorts after 5-9.
-fn family_version(model: &str, family: &str) -> Option<Vec<u64>> {
+pub(crate) fn family_version(model: &str, family: &str) -> Option<Vec<u64>> {
     let model = model
         .split('#')
         .next()

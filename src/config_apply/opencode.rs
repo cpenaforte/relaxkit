@@ -11,11 +11,9 @@ use serde_json::{Value, json};
 
 use crate::config::{KitConfig, effective};
 use crate::ctx::Ctx;
-use crate::edit::{
-    block_remove, block_upsert, jsonc_get, jsonc_remove, jsonc_restore_if, jsonc_set,
-};
+use crate::edit::{block_remove, block_upsert, jsonc_get, jsonc_remove, jsonc_restore, jsonc_set};
 use crate::host::{Host, HostKind};
-use crate::roles::{Role, resolve_opencode};
+use crate::roles::{Role, Tier, family_version, resolve_opencode, tier_of};
 use crate::state::{OriginalText, RunId, original_text, safe_write};
 
 /// The managed block in AGENTS.md that routes each kind of prompt to its agent.
@@ -159,6 +157,45 @@ pub fn unset_roles(
     write_if_changed(ctx, run, &agents_path, &agents_old, &agents_new)
 }
 
+/// The role an agent runs with: the planner's, or a subagent's.
+fn role_of(id: &str) -> Option<Role> {
+    if id == PLANNER_AGENT {
+        return Some(Role::Planner);
+    }
+    SUBAGENTS
+        .iter()
+        .find(|(agent, _, _)| *agent == id)
+        .map(|(_, role, _)| *role)
+}
+
+/// Whether the managed key should be restored to its original value (K118, K121). An absent key is restored. A key
+/// with a known expected value is restored only when it holds that value. When the expected model is unknown (the
+/// list is empty or unreadable), a model is restored only when it is an `anthropic/` id of the family relaxkit would
+/// have written for the role's tier. Any other value is the owner's and stays.
+fn key_restores(
+    text: &str,
+    config: &KitConfig,
+    available: &[String],
+    id: &str,
+    key: &str,
+) -> Result<bool> {
+    let Some(current) = jsonc_get(text, &["agents", id, key])? else {
+        return Ok(true);
+    };
+    if let Some(expected) = written_value(config, available, id, key) {
+        return Ok(current == expected);
+    }
+    let Some(role) = role_of(id) else {
+        return Ok(false);
+    };
+    let tier: Tier = tier_of(&effective(config, role));
+    let is_family_id = current
+        .as_str()
+        .and_then(|model| model.strip_prefix("anthropic/"))
+        .is_some_and(|model| family_version(model, tier.claude_alias()).is_some());
+    Ok(key == "model" && is_family_id)
+}
+
 /// The value setup wrote under `agents.<id>.<key>`, or `None` when setup writes no such key (a model no listed id
 /// matches gets no `model` key, so the agent inherits the host default).
 fn written_value(config: &KitConfig, available: &[String], id: &str, key: &str) -> Option<Value> {
@@ -196,8 +233,8 @@ fn strip_managed_agents(
             &["mode", "description", "model"]
         };
         for key in keys {
-            if let Some(written) = written_value(config, available, id, key) {
-                text = jsonc_restore_if(&text, original, &["agents", id, key], &written)?;
+            if key_restores(&text, config, available, id, key)? {
+                text = jsonc_restore(&text, original, &["agents", id, key])?;
             }
         }
         let emptied = jsonc_get(&text, &["agents", id])?
@@ -690,6 +727,86 @@ mod tests {
             get(&text, &["agents", "plan", "model"]),
             Some(json!("anthropic/claude-haiku-5-5")),
             "{text}"
+        );
+    }
+
+    fn plan_model(text: &str) -> Option<Value> {
+        get(text, &["agents", "plan", "model"])
+    }
+
+    #[test]
+    fn empty_list_at_uninstall_restores_the_user_model_when_relaxkit_wrote_its_family() {
+        // F23-16 / K121 (a): the list is empty at uninstall, relaxkit wrote opus, and the user had sonnet before setup.
+        let root = tempfile::tempdir().unwrap();
+        let before = jsonc_set(
+            FIXTURE,
+            &["agents", "plan", "model"],
+            &json!("anthropic/claude-sonnet-5-5"),
+        )
+        .unwrap();
+        seed(root.path(), &before);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+        apply_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+        assert_eq!(
+            plan_model(&read(&config_path(root.path()))),
+            Some(json!("anthropic/claude-opus-5-5"))
+        );
+
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &[]).unwrap();
+
+        assert_eq!(
+            plan_model(&read(&config_path(root.path()))),
+            Some(json!("anthropic/claude-sonnet-5-5"))
+        );
+    }
+
+    #[test]
+    fn empty_list_at_uninstall_keeps_a_hand_set_model_from_another_provider() {
+        // F23-16 / K121 (b): an id from another provider is the owner's, whatever the list says.
+        let root = tempfile::tempdir().unwrap();
+        seed(root.path(), FIXTURE);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+        apply_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+        let by_hand = jsonc_set(
+            &read(&config_path(root.path())),
+            &["agents", "plan", "model"],
+            &json!("openai/gpt-x"),
+        )
+        .unwrap();
+        fs::write(config_path(root.path()), &by_hand).unwrap();
+
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &[]).unwrap();
+
+        assert_eq!(
+            plan_model(&read(&config_path(root.path()))),
+            Some(json!("openai/gpt-x"))
+        );
+    }
+
+    #[test]
+    fn an_absent_model_key_is_restored_to_the_original_when_the_list_was_unreadable_at_setup() {
+        // F23-16 / K121 (c): setup removed the user's model while the list was empty; uninstall, with a readable list,
+        // puts it back.
+        let root = tempfile::tempdir().unwrap();
+        let before = jsonc_set(
+            FIXTURE,
+            &["agents", "plan", "model"],
+            &json!("anthropic/claude-sonnet-5-5"),
+        )
+        .unwrap();
+        seed(root.path(), &before);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+        apply_roles(&ctx, &RunId::new(), &host, &balanced(), &[]).unwrap();
+        assert_eq!(plan_model(&read(&config_path(root.path()))), None);
+
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+
+        assert_eq!(
+            plan_model(&read(&config_path(root.path()))),
+            Some(json!("anthropic/claude-sonnet-5-5"))
         );
     }
 }
