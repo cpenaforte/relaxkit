@@ -153,6 +153,12 @@ impl<'a> Engine<'a> {
             };
             return Ok(Some((version, route)));
         }
+        self.probed_binary(recipe, kind)
+    }
+
+    /// The version and route of the recipe's binary when it is on the PATH and reports a version: the probe's first
+    /// word is looked up, then `--version` is read from it. Nothing is returned for a missing or silent binary.
+    fn probed_binary(&self, recipe: &Recipe, kind: HostKind) -> Result<Option<(String, Route)>> {
         let Some(probe) = recipe.probe.get(&kind) else {
             return Ok(None);
         };
@@ -232,9 +238,16 @@ impl<'a> Engine<'a> {
                 }
                 Plan::Install => {
                     let vars = self.run_steps(recipe, host)?;
-                    let version = self.installed_version(recipe, host)?;
-                    let marketplace = plugin_marketplace(recipe, kind, &vars);
-                    let route = install_route(recipe, kind, &marketplace);
+                    // A binary or npm tool records the version its binary reports after the steps ran, and that
+                    // binary's route. Only when nothing is reported does it fall back to the pin or the plugin rule.
+                    let (version, route) = match self.binary_after_steps(recipe, kind)? {
+                        Some(found) => found,
+                        None => {
+                            let version = self.installed_version(recipe, host)?;
+                            let marketplace = plugin_marketplace(recipe, kind, &vars);
+                            (version, install_route(recipe, kind, &marketplace))
+                        }
+                    };
                     rows.push((kind, version.clone(), route.clone()));
                     outcomes.push((kind, Outcome::Installed { version }));
                 }
@@ -264,6 +277,19 @@ impl<'a> Engine<'a> {
             .pin
             .clone()
             .unwrap_or_else(|| UNVERSIONED.to_string()))
+    }
+
+    /// The probed binary of a binary or npm recipe, read after its steps ran. Plugin and MCP recipes have no binary
+    /// version of their own, so they return nothing here.
+    fn binary_after_steps(
+        &self,
+        recipe: &Recipe,
+        kind: HostKind,
+    ) -> Result<Option<(String, Route)>> {
+        if !matches!(recipe.kind, Kind::Binary | Kind::Npm) || plugin_spec(recipe, kind).is_some() {
+            return Ok(None);
+        }
+        self.probed_binary(recipe, kind)
     }
 
     /// Decides what happens on one host without changing anything: skip, adopt, or install.
@@ -813,6 +839,53 @@ exec = ["caveman", "telemetry", "off"]
             "{:?}",
             runner.lines()
         );
+    }
+
+    #[test]
+    fn rtk_on_the_path_records_its_own_version_and_its_opencode_wiring_still_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let rtk = load_all()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == "rtk")
+            .unwrap();
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .with_program("rtk", Path::new("/opt/homebrew/bin/rtk"))
+                .reply("rtk --version", Output::ok("rtk 1.1.0\n"))
+                .reply("rtk init -g --opencode", Output::ok(""))
+                .reply("rtk telemetry disable", Output::ok("")),
+        );
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let hosts = vec![opencode(root.path())];
+        let node_install = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node_install);
+
+        let outcomes = eng.install(&rtk).unwrap();
+
+        // The wiring is a plugin file that detect does not see, so the install path runs its steps.
+        assert!(
+            outcomes.contains(&(
+                HostKind::Opencode,
+                Outcome::Installed {
+                    version: "1.1.0".to_string()
+                }
+            )),
+            "{outcomes:?}"
+        );
+        let lines = runner.lines();
+        assert!(
+            lines.contains(&"rtk init -g --opencode".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"rtk telemetry disable".to_string()),
+            "{lines:?}"
+        );
+        let lock = Lockfile::load(&ctx).unwrap().unwrap();
+        assert_eq!(lock.tools["rtk"].version, "1.1.0");
+        assert_eq!(lock.tools["rtk"].route, "brew");
     }
 
     #[test]
