@@ -4,3 +4,6 @@
 # Design docs from the superpowers workflow stay on disk, out of the repository.
 /docs/superpowers/
 node_modules/
+
+# Spike notes from the superpowers workflow stay on disk, out of the repository.
+/docs/spikes/
