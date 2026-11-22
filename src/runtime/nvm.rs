@@ -168,15 +168,13 @@ pub fn ensure_nvm_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NvmIn
 }
 
 /// Runs the latest installer over an existing nvm without touching the shell profile.
-/// A Homebrew nvm is left to Homebrew, since its script is not one relaxkit can replace.
+/// A Homebrew nvm is not updated here, and that is an error, so nothing reports a false success.
 pub fn update_nvm_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NvmInstall> {
     let Some(found) = find_nvm_in(ctx, search) else {
         bail!("nvm is not installed; run `relaxkit setup` first");
     };
     if found.script != found.dir.join("nvm.sh") {
-        ctx.out
-            .info("nvm comes from Homebrew, so it is not updated here");
-        return Ok(found);
+        bail!("nvm is managed by Homebrew and was not updated; update it with `brew upgrade nvm`");
     }
     if ctx.dry_run {
         ctx.out.info("would update nvm from its latest release");
@@ -786,6 +784,25 @@ mod tests {
                 .is_err(),
             "the temp link was renamed away"
         );
+    }
+
+    #[test]
+    fn a_homebrew_nvm_update_reports_that_it_did_not_run() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let brew = home.join("brew");
+        nvm_at(&brew.join("opt/nvm"));
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(home, &runner, FakeNet::new());
+        let search = NvmSearch {
+            brew_prefixes: vec![brew],
+            ..pinned()
+        };
+
+        let err = update_nvm_in(&ctx, &RunId::new(), &search).unwrap_err();
+
+        assert!(format!("{err:#}").contains("Homebrew"), "{err:#}");
+        assert!(runner.lines().is_empty(), "{:?}", runner.lines());
     }
 
     #[test]
