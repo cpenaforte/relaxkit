@@ -7,8 +7,52 @@ import { formatFailure, runProcess } from "./process.js";
  * @typedef {typeof nodeSpawn} SpawnFn
  */
 
-/** Subcommands that are refused: alias and extension run code, config and auth touch credentials. */
-export const GH_REFUSED = ["alias", "extension", "config", "auth"];
+/**
+ * The first argument must be one of these. Taken from `gh --help` (gh version 2.105.0):
+ * the CORE COMMANDS, GITHUB ACTIONS COMMANDS and ADDITIONAL COMMANDS sections, plus
+ * `help` and `version`. Then `alias`, `config`, `extension` and `auth` are removed,
+ * because they are always refused. The list is a snapshot: when gh adds or renames a
+ * built-in command, update this list. `gh <name>` for a name that is not built in
+ * runs an installed alias or extension outside the sandbox, so unknown names are refused.
+ */
+export const GH_BUILTIN_COMMANDS = [
+  // CORE COMMANDS (auth removed)
+  "browse",
+  "codespace",
+  "discussion",
+  "gist",
+  "issue",
+  "org",
+  "pr",
+  "project",
+  "release",
+  "repo",
+  "skill",
+  // GITHUB ACTIONS COMMANDS
+  "cache",
+  "run",
+  "workflow",
+  // ADDITIONAL COMMANDS (alias, config, extension removed)
+  "agent-task",
+  "api",
+  "attestation",
+  "completion",
+  "copilot",
+  "event",
+  "gpg-key",
+  "label",
+  "licenses",
+  "preview",
+  "ruleset",
+  "search",
+  "secret",
+  "ssh-key",
+  "status",
+  "variable",
+  // help and version
+  "help",
+  "version",
+];
 
 export const GH_DESCRIPTION =
   "Run the GitHub CLI (gh) with the given arguments. Use this tool instead of gh in the shell: shell gh runs inside the sandbox and cannot reach GitHub.";
@@ -39,8 +83,10 @@ export function createGhTool({ spawn = nodeSpawn, permission, cwd }) {
         return { content: "Refused: gh needs at least one argument." };
       }
       const subcommand = /** @type {string} */ (args[0]);
-      if (GH_REFUSED.includes(subcommand)) {
-        return { content: `Refused: "gh ${subcommand}" is not available through this tool.` };
+      if (!GH_BUILTIN_COMMANDS.includes(subcommand)) {
+        return {
+          content: `Refused: "gh ${subcommand}" is not a built-in gh command, so this tool does not run it.`,
+        };
       }
       // A denial rethrows here, so it ends the step. It is not returned as tool output.
       await permission.assert({

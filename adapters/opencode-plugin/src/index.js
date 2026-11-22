@@ -26,6 +26,7 @@ async function setup(ctx, deps = {}) {
   const sandbox = await createSandbox({
     config,
     directory,
+    worktree,
     manager: deps.SandboxManager,
     prepareTmp: deps.prepareTmp,
   });

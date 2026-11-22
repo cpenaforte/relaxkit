@@ -87,7 +87,8 @@ async function initialize(manager, config, prepareTmp) {
 /**
  * @typedef {object} SandboxOptions
  * @property {import("./config.js").SandboxConfig} config
- * @property {string} directory The project location; relative config entries resolve against it.
+ * @property {string} directory The location directory (ctx.location.directory).
+ * @property {string} [worktree] The project root (ctx.location.project.directory). Defaults to directory.
  * @property {any} [manager] SandboxManager. Injected in tests.
  * @property {() => Promise<void>} [prepareTmp] Injected in tests. Defaults to ensureClaudeTmpDir.
  * @property {string} [platform] Defaults to process.platform.
@@ -103,20 +104,32 @@ async function initialize(manager, config, prepareTmp) {
 export async function createSandbox({
   config,
   directory,
+  worktree = directory,
   manager = NodeSandboxManager,
   prepareTmp = () => ensureClaudeTmpDir(),
   platform = process.platform,
 }) {
-  // Upstream setup (402-405): relative entries resolve against the project directory.
-  /** @param {string} p */
-  const resolvePath = (p) => (p.startsWith("~") || path.isAbsolute(p) ? p : path.resolve(directory, p));
+  // Relative entries resolve against both the location directory and the project root.
+  // Absolute and ~ entries stay as they are. Duplicates are removed.
+  /** @param {string[]} entries */
+  const resolveEntries = (entries) => {
+    const out = [];
+    for (const p of entries) {
+      if (p.startsWith("~") || path.isAbsolute(p)) {
+        out.push(p);
+        continue;
+      }
+      for (const base of [directory, worktree]) out.push(path.resolve(base, p));
+    }
+    return [...new Set(out)];
+  };
   /** @type {SandboxRuntimeConfig} */
   const runtimeConfig = /** @type {any} */ ({
     filesystem: {
-      denyRead: config.filesystem.denyRead.map(resolvePath),
-      allowRead: config.filesystem.allowRead.map(resolvePath),
-      allowWrite: config.filesystem.allowWrite.map(resolvePath),
-      denyWrite: config.filesystem.denyWrite.map(resolvePath),
+      denyRead: resolveEntries(config.filesystem.denyRead),
+      allowRead: resolveEntries(config.filesystem.allowRead),
+      allowWrite: resolveEntries(config.filesystem.allowWrite),
+      denyWrite: resolveEntries(config.filesystem.denyWrite),
     },
     network: config.network,
   });

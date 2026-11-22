@@ -135,6 +135,21 @@ test("a successful run delivers its stdout as the command output", async () => {
   assert.equal(synthetic[0].sessionID, "ses_1");
 });
 
+test("a run that exits 0 with only a stderr line delivers that line", async () => {
+  const { ctx, commands, synthetic } = fakeCtx();
+  await registerCommands(/** @type {any} */ (ctx), fakeSpawn({ stderr: "warning: finish login in a browser\n", code: 0 }).spawn);
+  await commandNamed(commands, "login").execute(invocation);
+  assert.equal(synthetic.length, 1);
+  assert.equal(synthetic[0].text, "warning: finish login in a browser\n");
+});
+
+test("a successful run delivers stdout then stderr, joined by a newline", async () => {
+  const { ctx, commands, synthetic } = fakeCtx();
+  await registerCommands(/** @type {any} */ (ctx), fakeSpawn({ stdout: "ok", stderr: "warn\n", code: 0 }).spawn);
+  await commandNamed(commands, "status").execute(invocation);
+  assert.equal(synthetic[0].text, "ok\nwarn\n");
+});
+
 test("a failing run delivers stderr and the exit code", async () => {
   const { ctx, commands, synthetic } = fakeCtx();
   await registerCommands(/** @type {any} */ (ctx), fakeSpawn({ stderr: "no such preset\n", code: 3 }).spawn);

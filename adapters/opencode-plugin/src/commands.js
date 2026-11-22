@@ -38,8 +38,10 @@ export function splitArgs(text) {
 }
 
 /**
- * Runs `relaxkit <subcommand> ...args` and returns the text to show. Stdout on
- * success; stderr and the exit code otherwise.
+ * Runs `relaxkit <subcommand> ...args` and returns the text to show. On exit 0 it is
+ * stdout then stderr, joined by a newline when both are non-empty. relaxkit's warn()
+ * writes to stderr, so a success can have its only output there (login's manual step).
+ * Otherwise it is stderr and the exit code.
  * @param {string} subcommand
  * @param {string[]} args
  * @param {{ spawn: SpawnFn, cwd: string }} deps
@@ -47,7 +49,8 @@ export function splitArgs(text) {
  */
 export async function runRelaxkit(subcommand, args, { spawn, cwd }) {
   const result = await runProcess(spawn, "relaxkit", [subcommand, ...args], { shell: false, cwd });
-  return result.code === 0 ? result.stdout : formatFailure(result);
+  if (result.code !== 0) return formatFailure(result);
+  return [result.stdout, result.stderr].filter((part) => part.length > 0).join("\n");
 }
 
 /**

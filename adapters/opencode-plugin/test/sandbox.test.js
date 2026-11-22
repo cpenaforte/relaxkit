@@ -12,12 +12,14 @@ function fakeManager(opts = {}) {
   const initializeError = opts.initializeError;
   const manager = {
     initializeCalls: 0,
+    initConfig: /** @type {any} */ (null),
     cleanupCalls: 0,
     wrapCalls: /** @type {string[]} */ ([]),
     order: /** @type {string[]} */ ([]),
-    /** @param {any} _config */
-    async initialize(_config) {
+    /** @param {any} config */
+    async initialize(config) {
       manager.initializeCalls++;
+      manager.initConfig = config;
       if (initializeError) throw initializeError;
     },
     /** @param {string} command */
@@ -67,6 +69,28 @@ test("when initialize fails the command is blocked with the enforce error", asyn
   try {
     await assert.rejects(() => sandbox.wrap(shellEvent("echo hi")), { message: ENFORCEMENT_ERROR });
     assert.deepEqual(manager.wrapCalls, []);
+  } finally {
+    await sandbox.dispose();
+  }
+});
+
+test("relative denyWrite entries resolve against the location directory and the project root", async () => {
+  const manager = fakeManager();
+  const sandbox = await createSandbox({
+    config,
+    directory: "/root/sub",
+    worktree: "/root",
+    manager,
+    prepareTmp: async () => {},
+  });
+  try {
+    await sandbox.wrap(shellEvent("echo hi"));
+    const denyWrite = manager.initConfig.filesystem.denyWrite;
+    assert.ok(denyWrite.includes("/root/.opencode"));
+    assert.ok(denyWrite.includes("/root/opencode.json"));
+    assert.ok(denyWrite.includes("/root/opencode.jsonc"));
+    assert.ok(denyWrite.includes("/root/sub/.opencode"));
+    assert.ok(denyWrite.includes("/home/u/.config/opencode"));
   } finally {
     await sandbox.dispose();
   }

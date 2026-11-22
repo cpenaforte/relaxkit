@@ -68,17 +68,36 @@ test("the tool is named gh and takes an args array", () => {
   assert.ok(tool.description.includes("shell gh runs inside the sandbox"));
 });
 
-for (const refused of ["alias", "extension", "config", "auth"]) {
-  test(`refuses args[0] = ${refused} without spawning`, async () => {
+const refusedCalls = [
+  ["myalias"],
+  ["myext"],
+  ["alias", "list"],
+  ["auth", "status"],
+  ["config", "get", "x"],
+  ["extension", "list"],
+];
+for (const args of refusedCalls) {
+  test(`refuses gh ${args.join(" ")} without spawning`, async () => {
     const fake = fakeSpawn();
     const { permission, asserts } = fakePermission();
     const tool = createGhTool({ spawn: fake.spawn, permission: /** @type {any} */ (permission), cwd: "/work/proj" });
-    const result = await run(tool, [refused, "list"]);
-    assert.ok(result.content.includes(refused));
+    const result = await run(tool, args);
+    assert.ok(result.content.includes(args[0]), "the refusal names the first argument");
     assert.equal(fake.calls.length, 0);
     assert.equal(asserts.length, 0);
   });
 }
+
+test("gh api user is allowed and spawns with shell false", async () => {
+  const fake = fakeSpawn({ stdout: "{}\n" });
+  const { permission } = fakePermission();
+  const tool = createGhTool({ spawn: fake.spawn, permission: /** @type {any} */ (permission), cwd: "/work/proj" });
+  const result = await run(tool, ["api", "user"]);
+  assert.equal(fake.calls.length, 1);
+  assert.deepEqual(fake.calls[0].args, ["api", "user"]);
+  assert.equal(fake.calls[0].options.shell, false);
+  assert.equal(result.content, "{}\n");
+});
 
 test("refuses empty args without spawning", async () => {
   const fake = fakeSpawn();
