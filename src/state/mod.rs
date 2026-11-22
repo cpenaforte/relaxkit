@@ -583,7 +583,6 @@ mod tests {
     }
 
     /// The names of everything under the backups directory, sorted.
-    #[cfg(unix)]
     fn backup_dir_names(ctx: &Ctx) -> Vec<String> {
         let mut names: Vec<String> = match fs::read_dir(&ctx.dirs.backups) {
             Ok(entries) => entries
@@ -604,8 +603,10 @@ mod tests {
         let newer = dir.path().join("newer.json");
         fs::write(&older, "orig").unwrap();
         fs::write(&newer, "orig").unwrap();
-        // Journal order is older then newer, so undo restores newer first and older last.
+        // Journal order is older, created, newer, so undo restores newer, created, then older.
         safe_write(&ctx, &run, &older, "setup").unwrap();
+        let created = dir.path().join("created.json");
+        safe_write(&ctx, &run, &created, "fresh").unwrap();
         safe_write(&ctx, &run, &newer, "setup").unwrap();
         let older_backup = journal::read(&ctx.dirs)
             .unwrap()
@@ -617,6 +618,7 @@ mod tests {
         let journal_file = ctx.dirs.data.join("journal.jsonl");
         let journal_before = fs::read(&journal_file).unwrap();
         let newer_before = fs::read(&newer).unwrap();
+        let backups_before = backup_dir_names(&ctx);
 
         let error = undo(&ctx, None).expect_err("undo ran with a missing backup");
 
@@ -634,6 +636,12 @@ mod tests {
             fs::read(&journal_file).unwrap(),
             journal_before,
             "the journal changed"
+        );
+        assert!(created.exists(), "the created file was removed");
+        assert_eq!(
+            backup_dir_names(&ctx),
+            backups_before,
+            "a keep backup was written"
         );
     }
 
