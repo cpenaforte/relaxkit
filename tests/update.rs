@@ -1829,6 +1829,65 @@ fn an_unversioned_entry_for_a_missing_tool_reports_not_found() {
 }
 
 #[test]
+fn a_rollback_never_pins_an_unversioned_locked_version() {
+    // Caveman is locked `unversioned` on OpenCode. Its update fails (the GitHub fetch has no stub here, so the failure
+    // is before the probe). The rollback must not call the install with `unversioned` as a pin: it returns
+    // RollbackFailed, names the tool, and leaves the lock byte-identical (F5-1).
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    fx.hosts.push(Box::new(OpencodeHost::new(
+        HostInfo {
+            kind: HostKind::Opencode,
+            binary: PathBuf::from("/usr/local/bin/opencode"),
+            version: "2.2.6".to_string(),
+        },
+        root.join(".config/opencode"),
+    )));
+    let mut tools = BTreeMap::new();
+    tools.insert(
+        "caveman".to_string(),
+        LockedTool {
+            version: "unversioned".to_string(),
+            route: "npm".to_string(),
+            hosts: vec!["opencode".to_string()],
+            host_versions: BTreeMap::from([("opencode".to_string(), "unversioned".to_string())]),
+        },
+    );
+    Lockfile {
+        relaxkit: "0.1.0".to_string(),
+        tools,
+    }
+    .save(&fx.ctx(), &fx.run)
+    .unwrap();
+    let lock_path = KitDirs::rooted(&root).config.join("lock.toml");
+    let before = fs::read(&lock_path).unwrap();
+    fx.serve(
+        "https://registry.npmjs.org/@caveman-ai%2fcli/latest",
+        r#"{"version":"4.2.0"}"#,
+    );
+    let npm = fx.npm();
+    fx.shell.on(
+        &format!("{npm} install -g @caveman-ai/cli@4.2.0"),
+        Output::ok(""),
+    );
+
+    let report = fx.run(false, Some("caveman")).unwrap();
+
+    let lines = fx.shell.lines();
+    assert!(
+        lines.iter().all(|l| !l.contains("unversioned")),
+        "the rollback pinned the unversioned placeholder: {lines:?}"
+    );
+    let row = row(&report, "caveman");
+    assert_eq!(row.tool, "caveman", "{row:?}");
+    assert!(
+        matches!(&row.result, RowResult::RollbackFailed(reason) if reason.contains("not recorded")),
+        "{row:?}"
+    );
+    assert_eq!(fs::read(&lock_path).unwrap(), before, "the lock changed");
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

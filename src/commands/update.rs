@@ -785,6 +785,19 @@ fn tool_flow(
                 return (row(RowResult::RollbackFailed(reason), note), changed);
             }
             let old = old_versions.into_iter().next().unwrap_or_default();
+            // The placeholder is never a pin: a rollback to an unrecorded version is refused, and nothing runs (F5-1).
+            if old == UNVERSIONED {
+                return (
+                    row(
+                        RowResult::RollbackFailed(
+                            "the locked version was not recorded, so it cannot be restored"
+                                .to_string(),
+                        ),
+                        note,
+                    ),
+                    changed,
+                );
+            }
             match engine.update(&scope, &old) {
                 Ok(_) => (row(RowResult::RolledBack, note), changed),
                 Err(again) => (
