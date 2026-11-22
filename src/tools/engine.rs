@@ -1211,7 +1211,7 @@ argv = ["fixture-pkg", "--help"]
 exec = ["fixture-pkg", "install"]
 
 [[install.opencode]]
-handler = "caveman_opencode"
+handler = "opencode_sandbox_config"
 "#;
         let recipe = fixture(text);
         let runner = Recorder::new(FakeRunner::new());
@@ -1223,7 +1223,10 @@ handler = "caveman_opencode"
 
         let err = eng.install(&recipe).unwrap_err();
 
-        assert!(format!("{err:#}").contains("caveman_opencode"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("opencode_sandbox_config"),
+            "{err:#}"
+        );
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
     }
 

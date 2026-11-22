@@ -20,6 +20,28 @@ pub fn jsonc_set(text: &str, path: &[&str], value: &Value) -> Result<String> {
     Ok(root.to_string())
 }
 
+/// Appends `value` to the array at `path`, creating the array when it is missing. Other elements and comments
+/// keep their places, so the array is not rewritten. Errors when the value at `path` is not an array.
+pub fn jsonc_append(text: &str, path: &[&str], value: &Value) -> Result<String> {
+    let (key, parents) = path.split_last().ok_or_else(|| anyhow!("empty path"))?;
+    let root = parse_root(text)?;
+    let object = object_at(root_object(&root)?, parents)?;
+    let input = to_input(value);
+    match object.get(key) {
+        Some(prop) => {
+            let array = prop
+                .value()
+                .and_then(|node| node.as_array())
+                .ok_or_else(|| anyhow!("`{}` exists and is not a list", path.join(".")))?;
+            array.append(input);
+        }
+        None => {
+            object.append(key, CstInputValue::Array(vec![input]));
+        }
+    }
+    Ok(root.to_string())
+}
+
 /// Removes the value at `path`. Missing paths leave the text unchanged.
 pub fn jsonc_remove(text: &str, path: &[&str]) -> Result<String> {
     let Some((key, parents)) = path.split_last() else {
@@ -134,6 +156,29 @@ mod tests {
 
     const WITH_COMMENT: &str =
         "{\n  // keep me\n  \"mcp\": { \"legacy\": { \"type\": \"local\" }, },\n}";
+
+    #[test]
+    fn jsonc_append_keeps_the_array_and_creates_a_missing_one() {
+        let text = "{\n  // keep me\n  \"plugins\": [\n    \"a\",\n  ],\n}\n";
+        let out = jsonc_append(text, &["plugins"], &json!("b")).unwrap();
+        assert!(out.contains("// keep me"), "{out}");
+        assert_eq!(
+            jsonc_get(&out, &["plugins"]).unwrap(),
+            Some(json!(["a", "b"]))
+        );
+
+        let created = jsonc_append("{}", &["plugins"], &json!("b")).unwrap();
+        assert_eq!(
+            jsonc_get(&created, &["plugins"]).unwrap(),
+            Some(json!(["b"]))
+        );
+    }
+
+    #[test]
+    fn jsonc_append_refuses_a_value_that_is_not_a_list() {
+        let err = jsonc_append("{\"plugins\": \"x\"}", &["plugins"], &json!("b")).unwrap_err();
+        assert!(format!("{err:#}").contains("not a list"), "{err:#}");
+    }
 
     #[test]
     fn jsonc_set_preserves_comments_and_trailing_commas() {

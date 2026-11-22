@@ -1,5 +1,5 @@
 //! The named code paths a recipe's `handler` steps run. Each one does a step that data alone cannot express.
-//! Handlers that belong to later tasks (caveman_opencode, opencode_sandbox_config) are not here,
+//! Handlers that belong to later tasks (opencode_sandbox_config) are not here,
 //! so the engine refuses them by name before any command runs.
 
 use std::path::Path;
@@ -7,6 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
+use crate::config_apply::caveman;
 use crate::config_apply::claude::{apply_rtk_hook, link_pack_rtk};
 use crate::exec::{Cmd, Output};
 use crate::host::{Host, HostKind};
@@ -25,6 +26,7 @@ pub fn lookup(name: &str) -> Option<HandlerFn> {
     match name {
         "chromium" => Some(install_chromium),
         "caveman_cli" => Some(caveman_cli),
+        "caveman_opencode" => Some(caveman_opencode),
         "serena_init" => Some(serena_init),
         "claude_marketplace" => Some(claude_marketplace),
         "rtk_claude_hook" => Some(rtk_claude_hook),
@@ -68,6 +70,18 @@ fn caveman_cli(
     ];
     let cmd = engine.command(&argv)?;
     engine.run_checked(host, &cmd)
+}
+
+/// Copies caveman's OpenCode files and writes the V2 `plugins` entry (K31). It never runs `caveman --only opencode`,
+/// which writes the V1 key. The source location is not confirmed yet, so this stops with a named error.
+fn caveman_opencode(
+    engine: &Engine<'_>,
+    _recipe: &Recipe,
+    host: &dyn Host,
+    _vars: &mut Vars,
+) -> Result<()> {
+    let source = caveman::opencode_source_root(engine.ctx)?;
+    caveman::install_opencode_files(engine.ctx, engine.run, host, &source)
 }
 
 /// Runs `serena init`, which is non-interactive and safe to run again: it writes the Serena config file.
@@ -216,4 +230,19 @@ fn pinned(recipe: &Recipe) -> Result<&str> {
         .pin
         .as_deref()
         .ok_or_else(|| anyhow!("recipe `{}` has no pinned version", recipe.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caveman_opencode_is_registered() {
+        assert!(lookup("caveman_opencode").is_some());
+    }
+
+    #[test]
+    fn opencode_sandbox_config_is_still_not_registered() {
+        assert!(lookup("opencode_sandbox_config").is_none());
+    }
 }

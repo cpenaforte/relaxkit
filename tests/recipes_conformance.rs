@@ -454,12 +454,17 @@ fn caveman_on_claude_adds_the_marketplace_then_installs_the_cli_and_turns_teleme
 }
 
 #[test]
-fn caveman_on_opencode_stops_at_the_unimplemented_opencode_handler() {
+fn caveman_on_opencode_installs_the_cli_then_stops_at_the_opencode_handler() {
     let rig = prepared();
     let (result, calls) = install(&rig, "caveman", HostKind::Opencode);
     let err = format!("{:#}", result.unwrap_err());
     assert!(err.contains("caveman_opencode"), "{err}");
-    assert!(calls.is_empty(), "{calls:?}");
+    // Only the CLI install runs before the stop (ruling T8-2). No `caveman` command runs on OpenCode.
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(
+        calls[0][1..],
+        tokens(&["install", "-g", "@caveman-ai/cli@4.1.0"])[..]
+    );
 }
 
 #[test]
