@@ -4,7 +4,7 @@ argument-hint: "[--claude-code]"
 allowed-tools: Bash(relaxkit:*)
 ---
 
-Show or change telemetry. With `--claude-code` it changes Claude Code's telemetry setting.
+Show or change telemetry; with `--claude-code` it changes Claude Code's telemetry setting.
 
 !`relaxkit privacy $ARGUMENTS`
 

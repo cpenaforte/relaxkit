@@ -81,7 +81,7 @@ Other keys include `voice` and `compact-at`, for example `relaxkit config set co
 
 ## Slash commands
 
-In Claude Code, `relaxkit setup` installs the relaxkit plugin, which adds one slash command per subcommand under the plugin namespace, `/relaxkit:<subcommand>`:
+In Claude Code, `relaxkit setup` is expected to install the relaxkit plugin, which adds one slash command per subcommand under the plugin namespace, `/relaxkit:<subcommand>`. This form is not yet confirmed in a live session (see the last paragraph of this section):
 
 - `/relaxkit:setup`, `/relaxkit:status`, `/relaxkit:doctor`, `/relaxkit:update`, `/relaxkit:config`, `/relaxkit:preset`, `/relaxkit:privacy`, `/relaxkit:login`, `/relaxkit:undo`, `/relaxkit:uninstall` and `/relaxkit:usage`.
 

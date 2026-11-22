@@ -4,7 +4,7 @@ argument-hint: "github"
 allowed-tools: Bash(relaxkit:*)
 ---
 
-Log in to a service. The only target is `github`.
+Log in to a service; the only target is `github`.
 
 !`relaxkit login $ARGUMENTS`
 
