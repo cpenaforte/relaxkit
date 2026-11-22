@@ -546,16 +546,14 @@ fn a_repair_never_moves_a_listed_unpinned_plugin() {
     let mut scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     scratch.clear_calls();
-    // The first `claude plugin list` of the rerun is claude-md-management's probe, which is the one that fails.
+    // The first `claude plugin list` of the rerun is caveman's listing check (caveman sorts first in the lock), which
+    // fails once. Caveman is the listed unpinned plugin that is repaired; the plugin is still never installed.
     scratch.fail_once("claude plugin list");
 
     let output = scratch.relaxkit().arg("setup").assert().success();
 
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
-    assert!(
-        text.contains("repaired claude-md-management on claude"),
-        "{text}"
-    );
+    assert!(text.contains("repaired caveman on claude"), "{text}");
     let calls = scratch.calls();
     assert!(
         calls

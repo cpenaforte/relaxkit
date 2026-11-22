@@ -342,9 +342,9 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             let Ok(kind) = host_name.parse::<HostKind>() else {
                 continue;
             };
-            if !hosts.iter().any(|host| host.info().kind == kind) {
+            let Some(host) = hosts.iter().find(|host| host.info().kind == kind) else {
                 continue;
-            }
+            };
             let Some(probe) = recipe.probe.get(&kind) else {
                 continue;
             };
@@ -388,7 +388,11 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
                             "run `relaxkit setup` again",
                         )
                     }
-                    _ => Check::ok(&check_id, format!("`{shown}` passed")),
+                    // A plugin probe also needs the plugin listed by the host's config (R4-2).
+                    _ => match unlisted_plugin(ctx, host.as_ref(), recipe, kind) {
+                        Some(problem) => Check::fail(&check_id, problem, "run relaxkit setup"),
+                        None => Check::ok(&check_id, format!("`{shown}` passed")),
+                    },
                 },
                 Ok(out) => Check::fail(
                     &check_id,
@@ -418,6 +422,18 @@ fn expected_text(recipe: &Recipe, kind: HostKind, probe: &Probe) -> Option<Strin
         return plugin_spec(recipe, kind).map(|spec| plugin_name(spec).to_string());
     }
     None
+}
+
+/// The problem when a recipe's plugin for this host is not listed by the host, or its list cannot be read. A recipe
+/// with no plugin for the host has no problem here (ruling R4-2).
+fn unlisted_plugin(ctx: &Ctx, host: &dyn Host, recipe: &Recipe, kind: HostKind) -> Option<String> {
+    let spec = plugin_spec(recipe, kind)?;
+    let name = plugin_name(spec);
+    match host.plugin_list(ctx) {
+        Ok(plugins) if plugins.iter().any(|plugin| plugin.name == name) => None,
+        Ok(_) => Some(format!("{name} is not listed in the {kind} config")),
+        Err(err) => Some(format!("the {kind} plugin list cannot be read: {err:#}")),
+    }
 }
 
 /// Each locked MCP entry's command must resolve on the MCP PATH (spec 6, ruling K58). The command is only looked for on

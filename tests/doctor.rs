@@ -403,6 +403,53 @@ fn a_plugin_probe_that_exits_zero_without_its_plugin_fails() {
 }
 
 #[test]
+fn an_opencode_plugin_probe_fails_unless_the_plugin_is_listed() {
+    // R4-2: an OpenCode plugin probe passes only when its program exits 0 and the plugin is listed under `plugins` in
+    // the OpenCode config. Without superpowers listed the probe fails; with it listed the probe passes.
+    let root = tempfile::tempdir().unwrap();
+    lock(
+        root.path(),
+        &[("superpowers", "5.0.1", "opencode-plugin", &["opencode"])],
+    );
+    let runner = || {
+        refusing_sandbox(root.path())
+            .with_program("opencode", Path::new("/usr/local/bin/opencode"))
+            .reply(
+                "/usr/local/bin/opencode --version",
+                Output::ok("opencode 2.2.6\n"),
+            )
+    };
+    let config = config_file_in(&opencode_dir(root.path(), None));
+    write(&config, "{\"plugins\": [\"opencode-sandbox@1.0.0\"]}\n");
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner(), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+    let probe = find(&checks, "tool.superpowers.opencode");
+    assert_eq!(probe.status, CheckStatus::Fail, "{probe:?}");
+    assert!(
+        probe
+            .message
+            .contains("superpowers is not listed in the opencode config"),
+        "{probe:?}"
+    );
+
+    write(
+        &config,
+        "{\"plugins\": [\"superpowers@git+https://github.com/obra/superpowers.git#v5.0.1\"]}\n",
+    );
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner(), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+    let probe = find(&checks, "tool.superpowers.opencode");
+    assert_eq!(probe.status, CheckStatus::Ok, "{probe:?}");
+}
+
+#[test]
 fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
     // The probe's program lives only in relaxkit's bin directory, which the stub PATH does not hold. The engine finds it
     // there, so doctor must run it by its full path rather than by its bare name (ruling Important 6).
