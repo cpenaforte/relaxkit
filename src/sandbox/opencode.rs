@@ -60,9 +60,11 @@ fn require_pinned(ctx: &Ctx, host: &dyn Host, version: &str) -> Result<()> {
     )
 }
 
-/// The sandbox config with enforce mode, the allowlist and the project-override deny applied. Other keys are kept.
+/// The sandbox config with the global switch cleared, enforce mode, the allowlist and the project-override deny
+/// applied. Other keys are kept.
 pub fn sandbox_text(old: &str) -> Result<String> {
-    let mode = json_set(old, &["mode"], &json!("enforce"))?;
+    let enabled = json_set(old, &["disabled"], &json!(false))?;
+    let mode = json_set(&enabled, &["mode"], &json!("enforce"))?;
     let domains = union_strings(&mode, &["network", "allowedDomains"], &ALLOWED_DOMAINS)?;
     union_strings(&domains, &["filesystem", "denyWrite"], &[PROJECT_OVERRIDE])
 }
@@ -206,6 +208,24 @@ mod tests {
 
         assert!(!sandbox_file(root.path()).exists());
         assert!(!root.path().join(".config/opencode").exists());
+    }
+
+    #[test]
+    fn opencode_sandbox_clears_a_pre_existing_disabled_switch() {
+        // Spec 7: `disabled` is the global off switch of the plugin, so the enforce write must clear it.
+        let root = tempfile::tempdir().unwrap();
+        config_with_plugins(root.path(), &["opencode-sandbox@0.7.0"]);
+        write(
+            &sandbox_file(root.path()),
+            r#"{"disabled": true, "mode": "permissive"}"#,
+        );
+        let ctx = ctx(root.path());
+
+        apply(&ctx, &ctx.run, &host(root.path()), "0.7.0").unwrap();
+
+        let value = read_json(&sandbox_file(root.path()));
+        assert_eq!(value["disabled"], json!(false));
+        assert_eq!(value["mode"], json!("enforce"));
     }
 
     #[test]
