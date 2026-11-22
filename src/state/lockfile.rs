@@ -96,7 +96,11 @@ impl Lockfile {
     /// Checks every tool version. Only exact versions may be stored.
     fn validate(&self) -> Result<()> {
         for (name, tool) in &self.tools {
-            check_version(&tool.version).with_context(|| format!("tool `{name}`"))?;
+            // `unversioned` is the one non-version the engine records: an adopted plugin whose listing reports no
+            // version (engine.rs UNVERSIONED). Everything else must be an exact version.
+            if tool.version != crate::tools::engine::UNVERSIONED {
+                check_version(&tool.version).with_context(|| format!("tool `{name}`"))?;
+            }
         }
         Ok(())
     }

@@ -89,7 +89,10 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                 };
                 // Each host is compared with the version its own lock entry records (K73).
                 let locked = tool.version_for(host_name);
-                let state = if installed == locked {
+                // A version that was never recorded cannot drift: its host version is shown, not compared (F3-1).
+                let state = if locked == crate::tools::engine::UNVERSIONED {
+                    "as locked (version not recorded)".to_string()
+                } else if installed == locked {
                     "as locked".to_string()
                 } else {
                     format!("drift: locked {locked}")

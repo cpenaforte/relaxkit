@@ -1284,6 +1284,79 @@ fn an_opencode_config_with_two_entries_for_the_plugin_is_rolled_back() {
 }
 
 #[test]
+fn an_unversioned_lock_entry_is_not_drift() {
+    // A Claude plugin locked as `unversioned` (its listing reported no version when it was recorded) is not drift:
+    // status says its version is not recorded (F3-1).
+    let fx = Fixture::new();
+    fx.shell.on(
+        "claude plugin list",
+        Output::ok("superpowers@anthropic-plugin-directory  Version: 7.0.2\n"),
+    );
+    fx.lock(&[(
+        "superpowers",
+        relaxkit::tools::engine::UNVERSIONED,
+        "claude-plugin:anthropic-plugin-directory",
+        &["claude"],
+    )]);
+
+    let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
+
+    let lines: Vec<&String> = report
+        .lines
+        .iter()
+        .filter(|line| line.starts_with("superpowers on"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(!lines[0].contains("drift"), "{lines:?}");
+    assert!(lines[0].contains("version not recorded"), "{lines:?}");
+}
+
+#[test]
+fn a_first_move_from_an_unversioned_entry_records_without_the_updated_label() {
+    // The entry was recorded without a version, so the move records the version now. The row must not claim an update
+    // of a version it never knew, and Claude is still listed to restart (F3-1).
+    let fx = Fixture::new();
+    let version = Arc::new(Mutex::new("7.0.2".to_string()));
+    let listed = version.clone();
+    fx.shell
+        .on("claude plugin marketplace update", Output::ok(""));
+    fx.shell.answer(
+        "claude plugin list",
+        Arc::new(move |_| {
+            Output::ok(&format!(
+                "superpowers@anthropic-plugin-directory  Version: {}\n",
+                listed.lock().unwrap()
+            ))
+        }),
+    );
+    fx.shell
+        .on("claude plugin update superpowers@", Output::ok(""));
+    let moved = version.clone();
+    fx.shell.effect(
+        "claude plugin update superpowers@",
+        Arc::new(move |_| *moved.lock().unwrap() = "7.0.3".to_string()),
+    );
+    fx.lock(&[(
+        "superpowers",
+        relaxkit::tools::engine::UNVERSIONED,
+        "claude-plugin:anthropic-plugin-directory",
+        &["claude"],
+    )]);
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.3"}"#,
+    );
+
+    let report = fx.run(false, Some("superpowers")).unwrap();
+
+    let row = row(&report, "superpowers");
+    assert!(!matches!(row.result, RowResult::Updated), "{row:?}");
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert!(report.restart.contains(&HostKind::Claude), "{report:?}");
+    assert_eq!(fx.read_lock().tools["superpowers"].version, "7.0.3");
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

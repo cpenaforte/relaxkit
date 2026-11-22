@@ -26,7 +26,7 @@ use crate::sandbox::opencode::sandbox_config_path;
 use crate::sandbox::selftest::selftest_with;
 use crate::state::lockfile::{LockedTool, Lockfile};
 use crate::state::{record_backup, record_link};
-use crate::tools::engine::Engine;
+use crate::tools::engine::{Engine, UNVERSIONED};
 
 /// The rows in run order (K80): rtk first, the pinned tools and Node before the tools that run on Node, then the rest.
 const ORDER: [&str; 14] = [
@@ -718,7 +718,22 @@ fn tool_flow(
             }
             let restart: Vec<HostKind> = changed.iter().map(|(kind, _)| *kind).collect();
             match record_moves(ctx, plan.id, &changed, None) {
-                Ok(()) => (row(RowResult::Updated, None), restart.clone()),
+                Ok(()) => {
+                    // A move from a version that was never recorded records the version now. It is not an update of a
+                    // version the lock knew, so it carries no "updated" label; the hosts still restart (F3-1).
+                    let from_unversioned = changed
+                        .iter()
+                        .any(|(kind, _)| entry.version_for(kind.as_str()) == UNVERSIONED);
+                    let result = if from_unversioned {
+                        row(
+                            RowResult::Current,
+                            Some("the previous version was not recorded, so the new version is recorded now".to_string()),
+                        )
+                    } else {
+                        row(RowResult::Updated, None)
+                    };
+                    (result, restart.clone())
+                }
                 Err(err) => {
                     report.failed.push(plan.id.to_string());
                     (
