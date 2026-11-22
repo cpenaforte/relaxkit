@@ -480,6 +480,44 @@ fn an_unreadable_opencode_plugins_entry_is_a_plugin_config_fail_and_is_not_rewri
 }
 
 #[test]
+fn caveman_on_opencode_fails_unless_its_plugin_entry_is_listed() {
+    // R5-2: caveman's OpenCode plugin entry `./plugins/caveman` is checked like the other plugins. The probe passes
+    // only when that entry is listed under `plugins`.
+    let root = tempfile::tempdir().unwrap();
+    lock(root.path(), &[("caveman", "4.1.0", "npm", &["opencode"])]);
+    let runner = || {
+        refusing_sandbox(root.path())
+            .with_program("caveman", Path::new("/usr/local/bin/caveman"))
+            .reply("/usr/local/bin/caveman status", Output::ok("caveman ok\n"))
+    };
+    let config = config_file_in(&opencode_dir(root.path(), None));
+    write(&config, "{\"plugins\": [\"opencode-sandbox@1.0.0\"]}\n");
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner(), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+    let probe = find(&checks, "tool.caveman.opencode");
+    assert_eq!(probe.status, CheckStatus::Fail, "{probe:?}");
+    assert!(
+        probe
+            .message
+            .contains("./plugins/caveman is not listed in the opencode config"),
+        "{probe:?}"
+    );
+
+    write(&config, "{\"plugins\": [\"./plugins/caveman\"]}\n");
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner(), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+    let probe = find(&checks, "tool.caveman.opencode");
+    assert_eq!(probe.status, CheckStatus::Ok, "{probe:?}");
+}
+
+#[test]
 fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
     // The probe's program lives only in relaxkit's bin directory, which the stub PATH does not hold. The engine finds it
     // there, so doctor must run it by its full path rather than by its bare name (ruling Important 6).

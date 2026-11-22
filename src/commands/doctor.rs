@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use crate::commands::read_optional;
 use crate::commands::setup::sudo_command;
+use crate::config_apply::caveman::PLUGIN_SPEC;
 use crate::ctx::Ctx;
 use crate::edit::jsonc_get;
 use crate::exec::Cmd;
@@ -432,8 +433,14 @@ fn unlisted_plugin(
     kind: HostKind,
     check_id: &str,
 ) -> Option<Check> {
-    let spec = plugin_spec(recipe, kind)?;
-    let name = plugin_name(spec);
+    let name = match plugin_spec(recipe, kind) {
+        Some(spec) => plugin_name(spec).to_string(),
+        // caveman's OpenCode entry is the path its config step writes, not a recipe plugin spec (ruling R5-2).
+        None if recipe.id == "caveman" && kind == HostKind::Opencode => {
+            plugin_name(PLUGIN_SPEC).to_string()
+        }
+        None => return None,
+    };
     match host.plugin_list(ctx) {
         Ok(plugins) if plugins.iter().any(|plugin| plugin.name == name) => None,
         Ok(_) => Some(Check::fail(

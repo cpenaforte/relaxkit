@@ -79,7 +79,7 @@ const RULES_FILE: &str = "src/rules/caveman-activate.md";
 const BLOCK_ID: &str = "caveman";
 
 /// The V2 `plugins` entry for the copied plugin, relative to the config directory.
-const PLUGIN_SPEC: &str = "./plugins/caveman";
+pub(crate) const PLUGIN_SPEC: &str = "./plugins/caveman";
 
 /// Copies caveman's OpenCode files from `source` (the repository root) into the OpenCode config directory, writes the
 /// ruleset block into AGENTS.md, and lists the plugin under the V2 `plugins` key. Every owned file is read and checked
