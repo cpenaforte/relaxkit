@@ -117,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_pipe_does_not_panic_the_reporter() {
+    fn write_line_ignores_a_closed_pipe() {
         write_line(&mut ClosedPipe, "hello");
     }
 
