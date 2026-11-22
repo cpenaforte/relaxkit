@@ -559,6 +559,41 @@ fn opencode_tuple_plugin_entries_are_read_by_their_first_element() {
 }
 
 #[test]
+fn status_reads_a_git_plugin_spec_version_from_its_tag() {
+    // R8-1: a git spec `superpowers@git+https://...#v7.0.2` is at version 7.0.2, so status says "as locked" and
+    // prints no drift. An npm spec keeps its version after the `@`.
+    let root = tempfile::tempdir().unwrap();
+    lock(
+        root.path(),
+        &[
+            ("superpowers", "7.0.2", "opencode-plugin", &["opencode"]),
+            ("opencode-sandbox", "0.7.0", "npm", &["opencode"]),
+        ],
+    );
+    write(
+        &config_file_in(&opencode_dir(root.path(), None)),
+        "{\"plugins\": [\"superpowers@git+https://github.com/obra/superpowers.git#v7.0.2\", \"opencode-sandbox@0.7.0\"]}\n",
+    );
+    let context = ctx(root.path(), FakeRunner::new(), FakeNet::new());
+
+    let report = status::report_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
+
+    let text = status_text(&report);
+    assert!(
+        text.contains(
+            "superpowers on opencode: installed 7.0.2, locked 7.0.2 (opencode-plugin); as locked"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "opencode-sandbox on opencode: installed 0.7.0, locked 0.7.0 (npm); as locked"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
 fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
     // The probe's program lives only in relaxkit's bin directory, which the stub PATH does not hold. The engine finds it
     // there, so doctor must run it by its full path rather than by its bare name (ruling Important 6).

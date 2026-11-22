@@ -98,10 +98,14 @@ pub fn package_name(spec: &str) -> &str {
     }
 }
 
-/// Reads one `plugins` entry as a plugin. The version is whatever follows the package name.
+/// Reads one `plugins` entry as a plugin. The version is whatever follows the package name, except that a git spec
+/// names its release after the last `#`: `#v7.0.2` is version 7.0.2 (ruling R8-1).
 fn to_plugin(spec: &str) -> InstalledPlugin {
     let name = package_name(spec);
-    let version = spec[name.len()..].strip_prefix('@').map(String::from);
+    let version = match spec.rsplit_once('#') {
+        Some((_, tag)) => Some(tag.strip_prefix('v').unwrap_or(tag).to_string()),
+        None => spec[name.len()..].strip_prefix('@').map(String::from),
+    };
     InstalledPlugin {
         name: name.to_string(),
         marketplace: None,
