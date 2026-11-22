@@ -286,7 +286,20 @@ mod tests {
             .map(|record| record.run.to_string())
             .collect();
         assert_eq!(runs, vec!["3-3"]);
-        assert!(lock_path(&dirs).exists(), "no lock file after an append");
+    }
+
+    #[test]
+    fn append_creates_the_journal_lock_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(dir.path());
+        assert!(!lock_path(&dirs).exists());
+
+        append(&dirs, &sample_record("4-4", "/h/d.json")).unwrap();
+
+        assert!(
+            lock_path(&dirs).exists(),
+            "append did not create the lock file"
+        );
     }
 
     #[test]
