@@ -131,7 +131,9 @@ echo "Checksum of $asset verified."
 
 mkdir "$work/extract"
 tar -xzf "$work/$asset" -C "$work/extract" || die "cannot unpack $asset"
-[ -f "$work/extract/relaxkit" ] && [ ! -L "$work/extract/relaxkit" ] || die "$asset has no relaxkit binary"
+if [ ! -f "$work/extract/relaxkit" ] || [ -L "$work/extract/relaxkit" ]; then
+  die "$asset has no relaxkit binary"
+fi
 
 # The binary is written to a new file in the work directory, then renamed over the old one, so a failure before the
 # rename leaves the installed binary as it was.
