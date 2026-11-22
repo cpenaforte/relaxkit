@@ -211,11 +211,15 @@ impl<'a> Engine<'a> {
                 }
                 Step::Mcp { name, argv } => {
                     let argv = recipe.expand(argv, &vars)?;
-                    let env: Vec<(String, String)> = recipe
-                        .env
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect();
+                    // The entry starts Node through the fixed link (spec 4, items 4 and 5), so PATH names that link
+                    // first, then the system directories, and no other PATH is inherited.
+                    let mut env = vec![("PATH".to_string(), self.mcp_path())];
+                    env.extend(
+                        recipe
+                            .env
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone())),
+                    );
                     host.mcp_add(self.ctx, name, &argv, &env)?;
                 }
                 Step::Plugin { spec } => {
@@ -269,6 +273,12 @@ impl<'a> Engine<'a> {
             cmd = cmd.arg(arg);
         }
         Ok(cmd.env("PATH", &self.search_path()?))
+    }
+
+    /// PATH for an MCP entry: the node link, then the system directories.
+    fn mcp_path(&self) -> String {
+        let link = self.ctx.dirs.data.join("node").join("bin");
+        format!("{}:/usr/bin:/bin", link.display())
     }
 
     fn search_path(&self) -> Result<String> {
@@ -635,6 +645,38 @@ exec = ["caveman", "telemetry", "off"]
         assert_eq!(argv[separator + 1], npx.display().to_string());
         assert!(npx.is_absolute());
         assert!(argv[separator + 1..].iter().all(|a| a != "npx"));
+    }
+
+    #[test]
+    fn mcp_entries_carry_the_node_link_on_their_path() {
+        let root = tempfile::tempdir().unwrap();
+        let recipe = fixture(MCP_FIXTURE);
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .reply("claude mcp remove", Output::ok(""))
+                .reply("claude mcp add", Output::ok("")),
+        );
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let hosts = vec![claude(root.path(), "2.1.330")];
+        let node = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node);
+
+        eng.install(&recipe).unwrap();
+
+        let add = runner
+            .cmds()
+            .into_iter()
+            .find(|cmd| cmd.to_string().starts_with("claude mcp add"))
+            .expect("an mcp add was run");
+        let argv = add.argv().to_vec();
+        let link = ctx.dirs.data.join("node").join("bin");
+        let expected = format!("PATH={}:/usr/bin:/bin", link.display());
+        let flag = argv
+            .iter()
+            .position(|a| a == "--env")
+            .expect("an --env flag");
+        assert_eq!(argv[flag + 1], expected, "{argv:?}");
     }
 
     #[test]

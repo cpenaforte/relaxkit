@@ -197,6 +197,12 @@ fn write_catalog(rig: &Rig, marketplace: &str, plugins: &[&str]) {
     .unwrap();
 }
 
+/// The PATH every MCP entry carries: the node link, then the system directories (spec 4).
+fn mcp_path(rig: &Rig) -> String {
+    let link = rig.ctx.dirs.data.join("node").join("bin");
+    format!("PATH={}:/usr/bin:/bin", link.display())
+}
+
 fn npx(rig: &Rig) -> String {
     npx_bin(&rig.ctx).display().to_string()
 }
@@ -346,6 +352,8 @@ fn playwright_on_claude_installs_chromium_then_writes_the_pinned_entry() {
                 "--scope".into(),
                 "user".into(),
                 "playwright".into(),
+                "--env".into(),
+                mcp_path(&rig),
                 "--".into(),
                 npx,
                 "-y".into(),
@@ -379,6 +387,8 @@ fn playwright_on_opencode_installs_chromium_then_writes_the_pinned_entry() {
                 "mcp".into(),
                 "add".into(),
                 "--global".into(),
+                "--env".into(),
+                mcp_path(&rig),
                 "playwright".into(),
                 "--".into(),
                 npx,
@@ -418,6 +428,8 @@ fn chrome_devtools_on_claude_uses_playwright_chromium_and_no_update_check() {
                 "user".into(),
                 "chrome-devtools".into(),
                 "--env".into(),
+                mcp_path(&rig),
+                "--env".into(),
                 "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1".into(),
                 "--".into(),
                 npx,
@@ -447,6 +459,8 @@ fn chrome_devtools_on_opencode_uses_the_same_entry_shape() {
             "add".into(),
             "--global".into(),
             "--env".into(),
+            mcp_path(&rig),
+            "--env".into(),
             "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1".into(),
             "chrome-devtools".into(),
             "--".into(),
@@ -472,24 +486,26 @@ fn serena_on_claude_installs_pinned_uv_tool_inits_and_registers_with_the_pinned_
             tokens(&["uv", "tool", "install", "-p", "3.13", "serena-agent==2.1.0"]),
             tokens(&["serena", "init"]),
             tokens(&["claude", "mcp", "remove", "--scope", "user", "serena"]),
-            tokens(&[
-                "claude",
-                "mcp",
-                "add",
-                "--scope",
-                "user",
-                "serena",
-                "--env",
-                "SERENA_USAGE_REPORTING=false",
-                "--",
-                "serena",
-                "start-mcp-server",
-                "--context",
-                "claude-code",
-                "--project-from-cwd",
-                "--enable-web-dashboard",
-                "False",
-            ]),
+            vec![
+                "claude".into(),
+                "mcp".into(),
+                "add".into(),
+                "--scope".into(),
+                "user".into(),
+                "serena".into(),
+                "--env".into(),
+                mcp_path(&rig),
+                "--env".into(),
+                "SERENA_USAGE_REPORTING=false".into(),
+                "--".into(),
+                "serena".into(),
+                "start-mcp-server".into(),
+                "--context".into(),
+                "claude-code".into(),
+                "--project-from-cwd".into(),
+                "--enable-web-dashboard".into(),
+                "False".into(),
+            ],
         ],
     );
 }
@@ -504,23 +520,25 @@ fn serena_on_opencode_uses_the_ide_context() {
         vec![
             tokens(&["uv", "tool", "install", "-p", "3.13", "serena-agent==2.1.0"]),
             tokens(&["serena", "init"]),
-            tokens(&[
-                "opencode",
-                "mcp",
-                "add",
-                "--global",
-                "--env",
-                "SERENA_USAGE_REPORTING=false",
-                "serena",
-                "--",
-                "serena",
-                "start-mcp-server",
-                "--context",
-                "ide",
-                "--project-from-cwd",
-                "--enable-web-dashboard",
-                "False",
-            ]),
+            vec![
+                "opencode".into(),
+                "mcp".into(),
+                "add".into(),
+                "--global".into(),
+                "--env".into(),
+                mcp_path(&rig),
+                "--env".into(),
+                "SERENA_USAGE_REPORTING=false".into(),
+                "serena".into(),
+                "--".into(),
+                "serena".into(),
+                "start-mcp-server".into(),
+                "--context".into(),
+                "ide".into(),
+                "--project-from-cwd".into(),
+                "--enable-web-dashboard".into(),
+                "False".into(),
+            ],
         ],
     );
 }
