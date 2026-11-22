@@ -862,6 +862,47 @@ fn repair_re_adds_the_mcp_entry_at_the_locked_version_not_the_pin() {
 }
 
 #[test]
+fn a_repair_of_an_unversioned_cli_installs_the_recipe_pin_not_the_placeholder() {
+    // The lock records caveman as unversioned and its CLI is missing, so the repair installs the CLI. It must use the
+    // recipe's pin (4.1.0), never the placeholder word `unversioned` (K ruling T8-4, F4-4).
+    let fx = Fixture::new();
+    fx.lock(&[("caveman", "unversioned", "npm", &["claude"])]);
+    Registry::new(&[("caveman", "4.1.0")], &[]).attach(&fx.shell);
+    fx.shell.on(
+        "claude plugin marketplace list",
+        Output::ok("  \u{276f} caveman  (github JuliusBrussee/caveman)\n"),
+    );
+    let npm = fx.npm();
+    fx.shell.on(
+        &format!("{npm} install -g @caveman-ai/cli@4.1.0"),
+        Output::ok(""),
+    );
+    let recipes = relaxkit::recipe::load_all().unwrap();
+    let caveman = recipes.iter().find(|r| r.id == "caveman").unwrap();
+    let ctx = fx.ctx();
+    let node = relaxkit::runtime::nvm::current_node(&ctx).unwrap();
+    let engine = Engine {
+        ctx: &ctx,
+        run: &ctx.run,
+        hosts: &fx.hosts,
+        recipes: &recipes,
+        node: &node,
+    };
+
+    let _ = engine.reinstall(caveman, HostKind::Claude);
+
+    let lines = fx.shell.lines();
+    assert!(
+        lines.iter().all(|l| !l.contains("unversioned")),
+        "the placeholder reached a command: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("@caveman-ai/cli@4.1.0")),
+        "the CLI was not installed at the recipe pin: {lines:?}"
+    );
+}
+
+#[test]
 fn rtk_below_its_minimum_host_is_not_touched_and_its_lock_stays() {
     // Claude 2.1.300 is below rtk's minimum (2.1.330), so no host is updated: the row is "not touched", and the
     // lock keeps its route and version (the update must not record a move that did not happen).

@@ -553,11 +553,11 @@ impl<'a> Engine<'a> {
             return Ok(recipe.clone());
         };
         match lock.tools.get(&recipe.id) {
-            Some(entry) => Ok(crate::tools::update::pinned(
-                recipe,
-                entry.version_for(kind.as_str()),
-            )),
-            None => Ok(recipe.clone()),
+            // An unversioned entry has no version to install, so the recipe's own pin stands (F4-4).
+            Some(entry) if entry.version_for(kind.as_str()) != UNVERSIONED => Ok(
+                crate::tools::update::pinned(recipe, entry.version_for(kind.as_str())),
+            ),
+            _ => Ok(recipe.clone()),
         }
     }
 
