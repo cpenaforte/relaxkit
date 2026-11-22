@@ -1,6 +1,9 @@
 //! Runtimes relaxkit installs for itself. Task 10 adds nvm and Node; Task 11 adds uv, gh and Chromium.
 
+pub mod chromium;
+pub mod gh;
 pub mod nvm;
+pub mod uv;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -46,17 +49,21 @@ pub(crate) mod testing {
     use anyhow::Result;
 
     use crate::ctx::{Ctx, Reporter};
-    use crate::exec::{Cmd, FakeRunner, Output, Runner};
+    use crate::exec::{Cmd, FakeRunner, Output, Runner, SystemRunner};
     use crate::net::FakeNet;
     use crate::platform::KitDirs;
     use crate::state::RunId;
 
     /// Keeps each command as it was run, environment included, and answers through `inner`.
     /// `FakeRunner::calls` shows only the display string, so the environment needs this.
+    /// `real` prefixes run through the system (such as `tar`, for an archive built in the test), and
+    /// `effect` writes a file after a matching command succeeds, as the real tool would.
     #[derive(Clone)]
     pub struct Recorder {
         inner: FakeRunner,
         cmds: Arc<Mutex<Vec<Cmd>>>,
+        real: Vec<String>,
+        effects: Vec<(String, PathBuf, String)>,
     }
 
     impl Recorder {
@@ -64,7 +71,22 @@ pub(crate) mod testing {
             Recorder {
                 inner,
                 cmds: Arc::new(Mutex::new(Vec::new())),
+                real: Vec::new(),
+                effects: Vec::new(),
             }
+        }
+
+        /// Commands whose display starts with `prefix` run for real instead of being answered.
+        pub fn real(mut self, prefix: &str) -> Recorder {
+            self.real.push(prefix.to_string());
+            self
+        }
+
+        /// After a command whose display starts with `prefix` succeeds, `path` is written with `text`.
+        pub fn effect(mut self, prefix: &str, path: PathBuf, text: &str) -> Recorder {
+            self.effects
+                .push((prefix.to_string(), path, text.to_string()));
+            self
         }
 
         pub fn cmds(&self) -> Vec<Cmd> {
@@ -80,7 +102,31 @@ pub(crate) mod testing {
     impl Runner for Recorder {
         fn run(&self, cmd: &Cmd) -> Result<Output> {
             self.cmds.lock().expect("recorder lock").push(cmd.clone());
-            self.inner.run(cmd)
+            let display = cmd.to_string();
+            if self
+                .real
+                .iter()
+                .any(|prefix| display.starts_with(prefix.as_str()))
+            {
+                return SystemRunner.run(cmd);
+            }
+            let out = self.inner.run(cmd)?;
+            if out.code == 0 {
+                for (prefix, path, text) in &self.effects {
+                    if display.starts_with(prefix.as_str()) {
+                        if let Some(parent) = path.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::write(path, text)?;
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+                        }
+                    }
+                }
+            }
+            Ok(out)
         }
 
         fn which(&self, program: &str) -> Option<PathBuf> {

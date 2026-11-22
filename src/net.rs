@@ -54,7 +54,7 @@ impl Net for HttpNet {
 
 #[derive(Default)]
 struct FakeState {
-    bodies: BTreeMap<String, String>,
+    bodies: BTreeMap<String, Vec<u8>>,
 }
 
 /// Scripted network. Clones share state.
@@ -70,17 +70,20 @@ impl FakeNet {
 
     /// Serves `body` for `url`.
     pub fn with(self, url: &str, body: &str) -> FakeNet {
+        self.with_bytes(url, body.as_bytes().to_vec())
+    }
+
+    /// Serves raw `bytes` for `url`, such as a release archive. `get_text` refuses non-UTF-8 bytes.
+    pub fn with_bytes(self, url: &str, bytes: Vec<u8>) -> FakeNet {
         self.state
             .lock()
             .expect("fake net lock")
             .bodies
-            .insert(url.to_string(), body.to_string());
+            .insert(url.to_string(), bytes);
         self
     }
-}
 
-impl Net for FakeNet {
-    fn get_text(&self, url: &str) -> Result<String> {
+    fn bytes(&self, url: &str) -> Result<Vec<u8>> {
         self.state
             .lock()
             .expect("fake net lock")
@@ -89,9 +92,15 @@ impl Net for FakeNet {
             .cloned()
             .ok_or_else(|| anyhow!("unexpected URL in test: {url}"))
     }
+}
+
+impl Net for FakeNet {
+    fn get_text(&self, url: &str) -> Result<String> {
+        String::from_utf8(self.bytes(url)?).with_context(|| format!("{url} is not UTF-8"))
+    }
 
     fn download(&self, url: &str, dest: &Path) -> Result<()> {
-        let body = self.get_text(url)?;
+        let body = self.bytes(url)?;
         std::fs::write(dest, body).with_context(|| format!("cannot write {}", dest.display()))
     }
 }
