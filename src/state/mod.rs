@@ -38,9 +38,9 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
             }
             fs::copy(&target, &backup)
                 .with_context(|| format!("cannot back up {}", target.display()))?;
-            // fs::copy gives the backup the target's mode. A target we cannot read, or one that is
-            // read-only, would leave a backup that we cannot open, or that a later copy in the same
-            // run cannot write over. Restore needs only the bytes, so the backup gets 0600.
+            // fs::copy gives the backup the target's mode. A read-only target would leave a backup
+            // that a later copy in the same run cannot write over. Restore needs only the bytes, so
+            // the backup gets 0600.
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -48,7 +48,7 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
                     .with_context(|| format!("cannot set the mode of {}", backup.display()))?;
             }
             // The copy must reach the disk before the journal record that names it is synced.
-            // On Unix a read-only open can fsync, and it works when the copied mode is 0444.
+            // On Unix a read-only open can fsync, whatever the mode.
             // Windows needs write access for FlushFileBuffers; opening does not truncate.
             let opened = if cfg!(windows) {
                 OpenOptions::new().write(true).open(&backup)
