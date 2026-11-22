@@ -1,0 +1,40 @@
+# Homebrew formula template for relaxkit (Task 27 part A). scripts/render-formula.sh fills the @...@ placeholders
+# from the release checksums file. The repository name OWNER/relaxkit is a placeholder until the owner confirms it
+# (ruling P-2); replace it everywhere it appears.
+class Relaxkit < Formula
+  desc "Sets up and manages a curated set of agent tools on Linux and macOS"
+  homepage "https://github.com/OWNER/relaxkit"
+  version "@VERSION@"
+  license any_of: ["MIT", "Apache-2.0"]
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/OWNER/relaxkit/releases/download/v@VERSION@/relaxkit-@VERSION@-aarch64-apple-darwin.tar.gz"
+      sha256 "@SHA256_AARCH64_APPLE_DARWIN@"
+    else
+      url "https://github.com/OWNER/relaxkit/releases/download/v@VERSION@/relaxkit-@VERSION@-x86_64-apple-darwin.tar.gz"
+      sha256 "@SHA256_X86_64_APPLE_DARWIN@"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/OWNER/relaxkit/releases/download/v@VERSION@/relaxkit-@VERSION@-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "@SHA256_AARCH64_UNKNOWN_LINUX_MUSL@"
+    else
+      url "https://github.com/OWNER/relaxkit/releases/download/v@VERSION@/relaxkit-@VERSION@-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "@SHA256_X86_64_UNKNOWN_LINUX_MUSL@"
+    end
+  end
+
+  def install
+    bin.install "relaxkit"
+    # rlx is an optional short alias. Homebrew refuses to link over a file it does not own, so an existing rlx is kept.
+    bin.install_symlink "relaxkit" => "rlx"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/relaxkit --version")
+    assert_match version.to_s, shell_output("#{bin}/rlx --version")
+  end
+end
