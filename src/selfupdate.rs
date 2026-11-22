@@ -48,9 +48,14 @@ pub enum SelfUpdate {
 /// The self step for the running binary, with the embedded key. The running path is resolved through symbolic links
 /// first, so a run as `rlx` replaces the real file (K95).
 pub fn run(ctx: &Ctx, check_only: bool) -> Result<SelfUpdate> {
+    run_with(ctx, check_only, true)
+}
+
+/// `run`, where `tools` says whether a swapped binary runs the tool phase (K96). `update --self` passes false (K101).
+pub fn run_with(ctx: &Ctx, check_only: bool, tools: bool) -> Result<SelfUpdate> {
     let invoked = std::env::current_exe().context("cannot find the running relaxkit")?;
     let exe = resolve_exe(&invoked)?;
-    apply(ctx, &exe, EMBEDDED_KEY, check_only)
+    apply_with(ctx, &exe, EMBEDDED_KEY, check_only, tools)
 }
 
 /// The running binary's path with every symbolic link followed.
@@ -61,6 +66,18 @@ pub fn resolve_exe(invoked: &Path) -> Result<PathBuf> {
 /// The self step for an already resolved binary path `exe`, verifying with `pubkey_text`. `exe` must not be a link.
 /// A check, or a dry run, changes nothing and downloads nothing beyond the release lookup.
 pub fn apply(ctx: &Ctx, exe: &Path, pubkey_text: &str, check_only: bool) -> Result<SelfUpdate> {
+    apply_with(ctx, exe, pubkey_text, check_only, true)
+}
+
+/// `apply`, where `tools` says whether the new binary runs `update --tools` after a swap (K96). `false` is `--self`
+/// (K101): the self step runs without the re-run and without any tool.
+pub fn apply_with(
+    ctx: &Ctx,
+    exe: &Path,
+    pubkey_text: &str,
+    check_only: bool,
+    tools: bool,
+) -> Result<SelfUpdate> {
     if pubkey_text.contains(PLACEHOLDER_MARKER) {
         return Ok(SelfUpdate::NotConfigured);
     }
@@ -94,7 +111,9 @@ pub fn apply(ctx: &Ctx, exe: &Path, pubkey_text: &str, check_only: bool) -> Resu
         return Ok(SelfUpdate::Available { version: newest });
     }
     install(ctx, exe, pubkey_text, &newest)?;
-    rerun(ctx, exe)?;
+    if tools {
+        rerun(ctx, exe)?;
+    }
     Ok(SelfUpdate::Updated {
         from: INSTALLED.to_string(),
         to: newest,

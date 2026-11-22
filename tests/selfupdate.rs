@@ -504,3 +504,29 @@ fn an_equal_version_names_the_newest_in_its_row_and_downloads_nothing() {
     assert_eq!(requests.requested(), vec![tag_url()]);
     assert!(runner.calls().is_empty(), "{:?}", runner.calls());
 }
+
+#[test]
+fn self_only_swaps_but_runs_no_tool_phase() {
+    // K101 (F22-2): `update --self` updates relaxkit itself only. After a successful swap, the new binary is not run
+    // and no tool is touched.
+    let root = temp();
+    let exe = installed(&root.path().join("usr/bin"), "old binary\n");
+    let runner = Recorder::default();
+    let ctx = ctx_for(root.path(), &runner, good_release());
+
+    let outcome = selfupdate::apply_with(&ctx, &exe, &test_key(), false, false).unwrap();
+
+    assert_eq!(
+        outcome,
+        SelfUpdate::Updated {
+            from: INSTALLED.to_string(),
+            to: VERSION.to_string(),
+        }
+    );
+    assert_eq!(fs::read_to_string(&exe).unwrap(), PAYLOAD);
+    let calls = runner.calls();
+    assert!(
+        calls.iter().all(|(program, _)| program == "tar"),
+        "--self ran a command other than the unpack: {calls:?}"
+    );
+}

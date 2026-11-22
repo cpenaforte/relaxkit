@@ -82,7 +82,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             let mut tools_done_by_new_binary = false;
             if self_step {
                 let tools_out = std::mem::replace(&mut ctx.out, Reporter::capture());
-                let outcome = selfupdate::run(&ctx, check);
+                let outcome = selfupdate::run_with(&ctx, check, !self_only);
                 let captured = ctx.out.lines();
                 ctx.out = tools_out;
                 match outcome {
@@ -106,6 +106,8 @@ pub fn run(cli: Cli) -> Result<i32> {
                 }
             }
             if self_only {
+                // K101: `--self` runs no tool phase, and the report says so.
+                ctx.out.info("tools: not run (--self)");
                 return Ok(if self_failed { 1 } else { 0 });
             }
             if tools_done_by_new_binary {
