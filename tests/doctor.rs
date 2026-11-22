@@ -674,7 +674,7 @@ fn status_lists_installed_versus_locked_versions_and_flags_drift() {
     lock(root.path(), &[("rtk", "1.2.1", "script", &["claude"])]);
     let runner = FakeRunner::new()
         .with_program("rtk", Path::new("/usr/local/bin/rtk"))
-        .reply("rtk --version", Output::ok("rtk 1.2.0\n"))
+        .reply("/usr/local/bin/rtk --version", Output::ok("rtk 1.2.0\n"))
         .reply("claude plugin list", Output::ok(""));
     // A managed block whose body was edited by hand.
     let claude_md = block_upsert("# notes\n", "roles", "edited by hand");

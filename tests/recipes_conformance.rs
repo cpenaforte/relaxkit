@@ -363,14 +363,16 @@ fn adopted_rtk_on_claude_still_gets_the_hook() {
     std::fs::remove_file(&bin_rtk).unwrap();
     let found = rig.root.path().join("homebrew/bin/rtk");
     write_executable(&found);
-    rig.rec.with_program("rtk", found.to_str().unwrap());
-    rig.rec.reply("rtk --version", Output::ok("rtk 1.2.1\n"));
+    let found_bin = found.to_str().unwrap().to_string();
+    rig.rec.with_program("rtk", &found_bin);
+    rig.rec
+        .reply(&format!("{found_bin} --version"), Output::ok("rtk 1.2.1\n"));
     let (result, calls) = install(&rig, "rtk", HostKind::Claude);
     assert!(result.is_ok(), "{result:?}");
     expect_calls(
         &calls,
         vec![
-            tokens(&["rtk", "--version"]),
+            tokens(&[&found_bin, "--version"]),
             tokens(&["rtk", "init", "-g"]),
             tokens(&["rtk", "telemetry", "disable"]),
         ],

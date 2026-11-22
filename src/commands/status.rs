@@ -273,7 +273,13 @@ fn plugin_line(ctx: &Ctx, lock: Option<&Lockfile>, lines: &mut Vec<String>) {
 
 /// The savings line of `rtk gain`, or `n/a` when rtk does not report one.
 fn rtk_gain(ctx: &Ctx) -> String {
-    match ctx.runner.run(&Cmd::new("rtk").arg("gain")) {
+    // The same rtk every caller resolves: the pack copy first (ruling R3-2).
+    let program =
+        crate::runtime::rtk::resolve(ctx).unwrap_or_else(|| std::path::PathBuf::from("rtk"));
+    match ctx
+        .runner
+        .run(&Cmd::new(&program.to_string_lossy()).arg("gain"))
+    {
         Ok(out) if out.code == 0 => out
             .stdout
             .lines()

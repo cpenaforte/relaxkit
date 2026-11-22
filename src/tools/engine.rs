@@ -172,6 +172,12 @@ impl<'a> Engine<'a> {
     fn probe_on_path(&self, recipe: &Recipe, kind: HostKind) -> Option<(String, PathBuf)> {
         let probe = recipe.probe.get(&kind)?;
         let bin = probe.argv.first().filter(|arg| !arg.starts_with('{'))?;
+        // rtk resolves its pack copy first, so a broken rtk elsewhere on the PATH does not decide (ruling R3-2).
+        if recipe.id == "rtk"
+            && let Some(path) = rtk::resolve(self.ctx)
+        {
+            return Some((path.to_string_lossy().into_owned(), path));
+        }
         if let Some(path) = self.ctx.runner.which(bin) {
             return Some((bin.clone(), path));
         }
@@ -310,7 +316,11 @@ impl<'a> Engine<'a> {
             None
         };
         let (installed, route) = self.install_here(recipe, kind, host.as_ref())?;
-        let version = latest.unwrap_or(installed);
+        // The rtk repair records the release it installed, as a script copy in the pack bin (ruling R3-2).
+        let (version, route) = match latest {
+            Some(tag) => (tag, Route::Script),
+            None => (installed, route),
+        };
         self.record(recipe, &[(kind, version.clone(), route)])?;
         Ok(Outcome::Installed { version })
     }
@@ -912,7 +922,7 @@ exec = ["caveman", "telemetry", "off"]
         let runner = Recorder::new(
             FakeRunner::new()
                 .with_program("rtk", Path::new("/opt/homebrew/bin/rtk"))
-                .reply("rtk --version", Output::ok("rtk 1.2.1\n"))
+                .reply("/opt/homebrew/bin/rtk --version", Output::ok("rtk 1.2.1\n"))
                 .reply("rtk init -g", Output::ok(""))
                 .reply("rtk telemetry disable", Output::ok("")),
         );
@@ -938,7 +948,7 @@ exec = ["caveman", "telemetry", "off"]
         assert_eq!(
             runner.lines(),
             vec![
-                "rtk --version".to_string(),
+                "/opt/homebrew/bin/rtk --version".to_string(),
                 "rtk init -g".to_string(),
                 "rtk telemetry disable".to_string(),
             ]
@@ -1035,7 +1045,7 @@ exec = ["caveman", "telemetry", "off"]
         let runner = Recorder::new(
             FakeRunner::new()
                 .with_program("rtk", Path::new("/opt/homebrew/bin/rtk"))
-                .reply("rtk --version", Output::ok("rtk 1.1.0\n"))
+                .reply("/opt/homebrew/bin/rtk --version", Output::ok("rtk 1.1.0\n"))
                 .reply("rtk init -g --opencode", Output::ok(""))
                 .reply("rtk telemetry disable", Output::ok("")),
         );
@@ -1121,7 +1131,10 @@ exec = ["caveman", "telemetry", "off"]
         let runner = Recorder::new(
             FakeRunner::new()
                 .with_program("rtk", Path::new("/opt/homebrew/bin/rtk"))
-                .reply("rtk --version", Output::fail(1, "no version"))
+                .reply(
+                    "/opt/homebrew/bin/rtk --version",
+                    Output::fail(1, "no version"),
+                )
                 .reply("rtk init -g --opencode", Output::ok(""))
                 .reply("rtk telemetry disable", Output::ok("")),
         );

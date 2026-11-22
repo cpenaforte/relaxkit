@@ -36,14 +36,21 @@ fn reinstall_latest_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<St
     install_latest(ctx, run, os, arch)
 }
 
+/// The rtk every caller runs: the pack copy in relaxkit's bin directory first, then the PATH (ruling R3-2). A broken
+/// rtk elsewhere on the PATH does not decide which one is used.
+pub fn resolve(ctx: &Ctx) -> Option<PathBuf> {
+    let pack = ctx.dirs.bin.join("rtk");
+    if is_executable(&pack) {
+        return Some(pack);
+    }
+    ctx.runner.which("rtk")
+}
+
 fn ensure_rtk_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<PathBuf> {
-    if let Some(path) = ctx.runner.which("rtk") {
+    if let Some(path) = resolve(ctx) {
         return Ok(path);
     }
     let bin = ctx.dirs.bin.join("rtk");
-    if is_executable(&bin) {
-        return Ok(bin);
-    }
     if ctx.dry_run {
         ctx.out.info(&format!(
             "would install the latest rtk into {}",
@@ -266,6 +273,92 @@ mod tests {
         let lines = runner.lines();
         assert_eq!(lines.len(), 1, "the archive is unpacked: {lines:?}");
         assert!(lines[0].starts_with("tar -xf"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_repair_with_a_broken_brew_rtk_records_the_pack_copy_as_script() {
+        // R3-2: a broken rtk on the PATH (Homebrew) does not win over the pack copy. The repair installs the latest
+        // release, the re-check passes, the detected install is the pack copy, and the lock records route script
+        // with the release tag.
+        use crate::commands::doctor;
+        use crate::exec::Output;
+        use crate::host::claude::{ClaudeHost, claude_paths};
+        use crate::host::{Host, HostInfo, HostKind};
+        use crate::recipe::load_all;
+        use crate::runtime::nvm::NodeInstall;
+        use crate::state::lockfile::Lockfile;
+        use crate::tools::Engine;
+        use crate::tools::detect::Route;
+
+        let root = tempfile::tempdir().unwrap();
+        // The repair downloads the archive for this machine, so the fake release is named for it.
+        let archive = asset_name(current_os().unwrap(), current_arch().unwrap());
+        let (bytes, checksums) = release(root.path(), archive, "rtk", None);
+        let net = FakeNet::new()
+            .with(TAG_URL, r#"{"tag_name":"v9.9.9"}"#)
+            .with(CHECKSUMS, &checksums)
+            .with_bytes(
+                &format!("https://github.com/rtk-ai/rtk/releases/download/v9.9.9/{archive}"),
+                bytes,
+            );
+        let pack = bin_rtk(root.path());
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .with_program("rtk", Path::new("/opt/homebrew/bin/rtk"))
+                .reply("/opt/homebrew/bin/rtk", Output::fail(1, "broken"))
+                .reply(
+                    &format!("{} --version", pack.display()),
+                    Output::ok("rtk 9.9.9\n"),
+                )
+                .reply(
+                    &format!("{} gain", pack.display()),
+                    Output::ok("rtk gain ok\n"),
+                )
+                .reply("rtk init", Output::ok(""))
+                .reply("rtk telemetry", Output::ok("")),
+        )
+        .real("tar -xf");
+        let ctx = ctx_with(root.path(), &runner, net);
+        let (dir, state) = claude_paths(root.path(), None);
+        let hosts: Vec<Box<dyn Host>> = vec![Box::new(ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/local/bin/claude"),
+                version: "2.1.330".to_string(),
+            },
+            dir,
+            state,
+        ))];
+        let recipes = load_all().unwrap();
+        let recipe = recipes.iter().find(|recipe| recipe.id == "rtk").unwrap();
+        let node = NodeInstall {
+            version: "v24.13.0".to_string(),
+            root: root.path().join("node"),
+        };
+        let engine = Engine {
+            ctx: &ctx,
+            run: &ctx.run,
+            hosts: &hosts,
+            recipes: &recipes,
+            node: &node,
+        };
+
+        engine.reinstall(recipe, HostKind::Claude).unwrap();
+
+        let lock = Lockfile::load(&ctx).unwrap().unwrap();
+        assert_eq!(lock.tools["rtk"].version, "9.9.9");
+        assert_eq!(lock.tools["rtk"].route, "script");
+        // Status reads the same install the lock records, so there is no drift.
+        assert_eq!(
+            engine.detect(recipe, hosts[0].as_ref()).unwrap(),
+            Some(("9.9.9".to_string(), Route::Script))
+        );
+        let checks = doctor::checks_for(&ctx, &hosts).unwrap();
+        let probe = checks
+            .iter()
+            .find(|check| check.id == "tool.rtk.claude")
+            .unwrap();
+        assert_eq!(probe.status, doctor::CheckStatus::Ok, "{probe:?}");
     }
 
     #[test]
