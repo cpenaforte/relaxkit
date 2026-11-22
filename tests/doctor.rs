@@ -12,7 +12,7 @@ use relaxkit::commands::doctor::{self, Check, CheckStatus};
 use relaxkit::commands::status::{self, StatusReport};
 use relaxkit::ctx::Ctx;
 use relaxkit::edit::block_upsert;
-use relaxkit::exec::{FakeRunner, Output};
+use relaxkit::exec::{Cmd, FakeRunner, Output, Runner};
 use relaxkit::host::claude::{ClaudeHost, claude_paths};
 use relaxkit::host::opencode::{OpencodeHost, config_file_in, opencode_dir};
 use relaxkit::host::{Host, HostInfo, HostKind};
@@ -543,6 +543,55 @@ fn doctor_fails_when_a_locked_mcp_entry_is_missing_from_opencode() {
         find(&checks, "mcp-entry.serena.opencode").status,
         CheckStatus::Ok
     );
+}
+
+/// A runner that answers a probe only when the child's PATH holds `dir` (ruling R2-4).
+struct NeedsDirOnPath {
+    dir: PathBuf,
+}
+
+impl Runner for NeedsDirOnPath {
+    fn run(&self, cmd: &Cmd) -> anyhow::Result<Output> {
+        let path = cmd
+            .environment()
+            .iter()
+            .find(|(key, _)| key == "PATH")
+            .map(|(_, value)| value.clone())
+            .unwrap_or_default();
+        if path.split(':').any(|entry| Path::new(entry) == self.dir) {
+            Ok(Output::ok("rtk 1.2.1\n"))
+        } else {
+            Ok(Output::fail(127, "not found"))
+        }
+    }
+
+    fn which(&self, _program: &str) -> Option<PathBuf> {
+        None
+    }
+}
+
+#[test]
+fn doctor_probes_run_on_the_engine_search_path() {
+    // R2-4: a probe child gets the engine's search path, which starts with the Node link bin, so a fresh machine's
+    // probe finds its own Node. The program is in the pack bin, which the stub PATH does not hold.
+    let root = tempfile::tempdir().unwrap();
+    let base = ctx(root.path(), FakeRunner::new(), FakeNet::new());
+    let program = base.dirs.bin.join("rtk");
+    write(&program, "#!/bin/sh\n");
+    fs::set_permissions(
+        &program,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let node_link = base.dirs.data.join("node").join("bin");
+    lock(root.path(), &[("rtk", "1.2.1", "script", &["claude"])]);
+    let mut context = ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new());
+    context.runner = Box::new(NeedsDirOnPath { dir: node_link });
+
+    let checks = doctor::checks_for(&context, &[claude(root.path())]).unwrap();
+
+    let probe = find(&checks, "tool.rtk.claude");
+    assert_eq!(probe.status, CheckStatus::Ok, "{probe:?}");
 }
 
 #[test]

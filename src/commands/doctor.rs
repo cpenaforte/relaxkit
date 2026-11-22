@@ -369,7 +369,8 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             };
             let cmd = args
                 .iter()
-                .fold(Cmd::new(&path.to_string_lossy()), |cmd, arg| cmd.arg(arg));
+                .fold(Cmd::new(&path.to_string_lossy()), |cmd, arg| cmd.arg(arg))
+                .env("PATH", &probe_path(ctx));
             checks.push(match ctx.runner.run(&cmd) {
                 Ok(out) if out.code == 0 => Check::ok(&check_id, format!("`{shown}` passed")),
                 Ok(out) => Check::fail(
@@ -468,6 +469,25 @@ fn mcp_entry_check(ctx: &Ctx, host: &dyn Host, entry: &str, id: &str, kind: Host
             "relaxkit does not rewrite a file that does not parse; repair it by hand",
         ),
     }
+}
+
+/// The PATH a probe child runs with: the Node link bin, the pack bin, `~/.local/bin`, then the PATH doctor was started
+/// with (ruling R2-4). It is the engine's search order, so a probe finds the tools the engine installed.
+fn probe_path(ctx: &Ctx) -> String {
+    let mut entries = vec![
+        ctx.dirs.data.join("node").join("bin").display().to_string(),
+        ctx.dirs.bin.display().to_string(),
+        ctx.dirs
+            .home
+            .join(".local")
+            .join("bin")
+            .display()
+            .to_string(),
+    ];
+    if let Some(current) = std::env::var_os("PATH") {
+        entries.push(current.to_string_lossy().into_owned());
+    }
+    entries.join(":")
 }
 
 /// The file a probe's program runs from, looked up the way the engine looks: the Node link, the pack bin, `~/.local/bin`,
