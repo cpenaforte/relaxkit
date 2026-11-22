@@ -304,7 +304,8 @@ argv = ["fixture", "--version"]
     }
 
     /// True when the text holds a version that is not written through `{version}`: a dotted run of three
-    /// parts, or a run of two parts right after `@` or `==` (an npm or PyPI pin).
+    /// parts, or a run of two parts after a pin marker (`@`, `#`, `==` or `~=`), optionally behind a `v`,
+    /// `^` or `~` prefix. `--timeout=1.5` is not a pin.
     fn has_version_literal(text: &str) -> bool {
         let chars: Vec<char> = text.replace("{version}", "").chars().collect();
         let mut i = 0;
@@ -326,9 +327,15 @@ argv = ["fixture", "--version"]
                     break;
                 }
             }
-            let after_at = start >= 1 && chars[start - 1] == '@';
-            let after_eq = start >= 2 && chars[start - 2] == '=' && chars[start - 1] == '=';
-            if parts >= 3 || (parts >= 2 && (after_at || after_eq)) {
+            let mut marker_end = start;
+            if marker_end >= 1 && matches!(chars[marker_end - 1], 'v' | '^' | '~') {
+                marker_end -= 1;
+            }
+            let pinned = (marker_end >= 1 && matches!(chars[marker_end - 1], '@' | '#'))
+                || (marker_end >= 2
+                    && chars[marker_end - 1] == '='
+                    && matches!(chars[marker_end - 2], '=' | '~'));
+            if parts >= 3 || (parts >= 2 && pinned) {
                 return true;
             }
         }
@@ -343,6 +350,14 @@ argv = ["fixture", "--version"]
         assert!(has_version_literal("pkg@1.13"));
         assert!(has_version_literal("serena-agent==2.1"));
         assert!(!has_version_literal("-p 3.13"));
+        assert!(has_version_literal("pkg@v1.13"));
+        assert!(has_version_literal("pkg@^1.13"));
+        assert!(has_version_literal("pkg@~1.13"));
+        assert!(has_version_literal("serena-agent~=2.1"));
+        assert!(has_version_literal(
+            "superpowers@git+https://github.com/obra/superpowers.git#v7.0"
+        ));
+        assert!(!has_version_literal("--timeout=1.5"));
 
         for recipe in embedded() {
             let mut texts: Vec<String> = Vec::new();
