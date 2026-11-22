@@ -6,6 +6,7 @@ pub mod opencode;
 
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
@@ -189,6 +190,43 @@ pub(crate) fn edit_guarded(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<Ou
 pub(crate) fn run_edit(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<()> {
     check(cmd, edit_guarded(ctx, files, cmd)?)?;
     Ok(())
+}
+
+/// The text of each file in `files` that exists now, so a failed step can put it back.
+pub(crate) fn snapshot(files: &[PathBuf]) -> Result<Vec<(PathBuf, String)>> {
+    let mut saved = Vec::new();
+    for file in files {
+        match fs::read_to_string(file) {
+            Ok(text) => saved.push((file.clone(), text)),
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).with_context(|| format!("cannot read {}", file.display()));
+            }
+        }
+    }
+    Ok(saved)
+}
+
+/// Runs `body`, which removes an entry and adds it again. If it fails, the texts in `saved` are written back
+/// under the run, so the old entry is not lost. The journal keeps the first backup, so undo still reaches the
+/// state from before the command.
+pub(crate) fn restore_on_failure(
+    ctx: &Ctx,
+    saved: &[(PathBuf, String)],
+    body: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let Err(err) = body() else {
+        return Ok(());
+    };
+    for (file, text) in saved {
+        if let Err(restore) = safe_write(ctx, &ctx.run, file, text) {
+            return Err(err.context(format!(
+                "the old entry could not be written back to {}: {restore:#}",
+                file.display()
+            )));
+        }
+    }
+    Err(err)
 }
 
 /// Test support: runners that answer like `FakeRunner` and also change files, as a real CLI would.

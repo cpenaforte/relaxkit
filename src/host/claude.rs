@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::{Host, HostInfo, InstalledPlugin, edit_guarded, run_edit, run_read};
+use super::{
+    Host, HostInfo, InstalledPlugin, edit_guarded, restore_on_failure, run_edit, run_read, snapshot,
+};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 
@@ -91,9 +93,14 @@ impl Host for ClaudeHost {
         for word in argv {
             cmd = cmd.arg(word);
         }
-        // Claude refuses to add a name that exists, so an update first clears the old entry.
-        self.mcp_remove(ctx, name)?;
-        run_edit(ctx, &self.edited_files(), &cmd)
+        // Claude refuses to add a name that exists, so an update first clears the old entry. If the add
+        // fails, the old entry is written back.
+        let files = self.edited_files();
+        let saved = snapshot(&files)?;
+        restore_on_failure(ctx, &saved, || {
+            self.mcp_remove(ctx, name)?;
+            run_edit(ctx, &files, &cmd)
+        })
     }
 
     /// Removing an entry that is not there is not an error: the end state is the same.
@@ -128,11 +135,13 @@ impl Host for ClaudeHost {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
 
     use super::*;
     use crate::exec::{FakeRunner, Output};
     use crate::host::HostKind;
+    use crate::host::testing::Writing;
     use crate::net::FakeNet;
 
     fn host(root: &Path) -> ClaudeHost {
@@ -287,6 +296,30 @@ mod tests {
                 .lines()
                 .iter()
                 .any(|l| l.contains("would run claude plugin install"))
+        );
+    }
+
+    #[test]
+    fn claude_failed_add_keeps_the_old_entry() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join(".claude.json");
+        fs::write(
+            &state,
+            "{\"mcpServers\":{\"serena\":{\"command\":\"old\"}}}",
+        )
+        .unwrap();
+        let mut c = ctx(root.path(), &FakeRunner::new());
+        c.runner = Box::new(Writing {
+            inner: FakeRunner::new()
+                .reply("claude mcp remove", Output::ok(""))
+                .reply("claude mcp add", Output::fail(1, "offline")),
+            effects: vec![("claude mcp remove", state.clone(), "{\"mcpServers\":{}}")],
+        });
+        let result = host(root.path()).mcp_add(&c, "serena", &serena_argv(), &[]);
+        assert!(result.is_err());
+        assert!(
+            fs::read_to_string(&state).unwrap().contains("\"old\""),
+            "the old serena entry was lost"
         );
     }
 }

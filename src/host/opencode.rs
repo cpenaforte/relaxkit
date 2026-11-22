@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
-use super::{Host, HostInfo, InstalledPlugin, run_edit};
+use super::{Host, HostInfo, InstalledPlugin, restore_on_failure, run_edit, snapshot};
 use crate::ctx::Ctx;
 use crate::edit::{jsonc_get, jsonc_remove};
 use crate::exec::Cmd;
@@ -129,8 +129,13 @@ impl Host for OpencodeHost {
             cmd = cmd.arg(word);
         }
         // Clear the old entry first, so an update really replaces the argv (for example the K9 `--context ide`).
-        self.mcp_remove(ctx, name)?;
-        run_edit(ctx, &self.config_candidates(), &cmd)
+        // If the add fails, the old entry is written back.
+        let files = self.config_candidates();
+        let saved = snapshot(&files)?;
+        restore_on_failure(ctx, &saved, || {
+            self.mcp_remove(ctx, name)?;
+            run_edit(ctx, &files, &cmd)
+        })
     }
 
     /// Removes `mcp.servers.<name>` with the comment-preserving editor. No native `mcp remove` is known
@@ -159,13 +164,21 @@ impl Host for OpencodeHost {
     /// load side by side.
     fn plugin_update(&self, ctx: &Ctx, spec: &str) -> Result<()> {
         let package = package_name(spec);
-        for entry in self.plugin_specs()? {
-            if package_name(&entry) == package {
-                let cmd = Cmd::new("opencode").args(&["plugin", "remove"]).arg(&entry);
-                run_edit(ctx, &self.config_candidates(), &cmd)?;
+        let old: Vec<String> = self
+            .plugin_specs()?
+            .into_iter()
+            .filter(|entry| package_name(entry) == package)
+            .collect();
+        // If the removal or the add fails, the old entries are written back.
+        let files = self.config_candidates();
+        let saved = snapshot(&files)?;
+        restore_on_failure(ctx, &saved, || {
+            for entry in &old {
+                let cmd = Cmd::new("opencode").args(&["plugin", "remove"]).arg(entry);
+                run_edit(ctx, &files, &cmd)?;
             }
-        }
-        self.plugin_install(ctx, spec)
+            self.plugin_install(ctx, spec)
+        })
     }
 
     /// Reads the `plugins` array from the config file. `plugin list` is not used: it needs the managed
@@ -454,5 +467,52 @@ mod tests {
             .plugin_install(&c, "opencode-sandbox@0.7.0")
             .unwrap();
         assert!(fake.calls().is_empty());
+    }
+
+    #[test]
+    fn opencode_failed_add_keeps_the_old_entry() {
+        let root = tempfile::tempdir().unwrap();
+        write_config(
+            root.path(),
+            "{\n  \"mcp\": {\n    \"servers\": {\n      \"serena\": {\"type\": \"local\", \"command\": [\"old\"]}\n    }\n  }\n}\n",
+        );
+        let fake = FakeRunner::new().reply("opencode mcp add", Output::fail(1, "offline"));
+        let result = host(root.path()).mcp_add(
+            &ctx(root.path(), Box::new(fake)),
+            "serena",
+            &serena_argv(),
+            &[],
+        );
+        assert!(result.is_err());
+        let text = fs::read_to_string(config_path(root.path())).unwrap();
+        assert!(text.contains("\"old\""), "the old serena entry was lost");
+    }
+
+    #[test]
+    fn opencode_failed_plugin_update_keeps_the_old_entry() {
+        use crate::host::testing::Writing;
+        let root = tempfile::tempdir().unwrap();
+        write_config(
+            root.path(),
+            "{\n  \"plugins\": [\"opencode-sandbox@0.7.0\"]\n}\n",
+        );
+        let mut c = ctx(root.path(), Box::new(FakeRunner::new()));
+        c.runner = Box::new(Writing {
+            inner: FakeRunner::new()
+                .reply("opencode plugin remove", Output::ok(""))
+                .reply("opencode plugin add", Output::fail(1, "npm fetch failed")),
+            effects: vec![(
+                "opencode plugin remove",
+                config_path(root.path()),
+                "{\n  \"plugins\": []\n}\n",
+            )],
+        });
+        let result = host(root.path()).plugin_update(&c, "opencode-sandbox@0.8.0");
+        assert!(result.is_err());
+        let text = fs::read_to_string(config_path(root.path())).unwrap();
+        assert!(
+            text.contains("opencode-sandbox@0.7.0"),
+            "the old plugin entry was lost"
+        );
     }
 }
