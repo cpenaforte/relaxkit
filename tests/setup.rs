@@ -539,41 +539,14 @@ fn a_listed_plugin_whose_cli_is_missing_gets_its_cli_installed_and_no_plugin_ins
     );
 }
 
-#[test]
-fn an_unreadable_opencode_plugins_entry_stops_setup_before_any_write() {
-    // R6-1: an OpenCode `plugins` entry that is not a list stops configure before any OpenCode file is written. The
-    // config file and AGENTS.md keep their bytes, no `opencode plugin` call runs, nothing is repaired, and the run
-    // exits 1 with the read error.
-    let scratch = Scratch::new();
-    // Every recipe is locked on every host it names, so setup's install step has nothing to do.
+/// Writes a lock with every recipe locked on every host it names, except `skipped`, so setup's install step has
+/// nothing to do for the other recipes.
+fn write_lock_except(scratch: &Scratch, skipped: Option<&str>) {
     let mut lock = String::from("relaxkit = \"0.1.0\"\n");
-    for (id, version, route, hosts) in [
-        ("caveman", "4.1.0", "npm", "\"claude\", \"opencode\""),
-        ("ccusage", "1.0.0", "npm", "\"claude\", \"opencode\""),
-        (
-            "chrome-devtools",
-            "1.0.0",
-            "npm",
-            "\"claude\", \"opencode\"",
-        ),
-        (
-            "claude-md-management",
-            "1.0.0",
-            "claude-plugin",
-            "\"claude\"",
-        ),
-        ("frontend-design", "1.0.0", "claude-plugin", "\"claude\""),
-        ("opencode-sandbox", "1.0.0", "npm", "\"opencode\""),
-        ("playwright", "1.0.0", "npm", "\"claude\", \"opencode\""),
-        ("rtk", "1.2.1", "script", "\"claude\", \"opencode\""),
-        ("serena", "2.1.0", "uv", "\"claude\", \"opencode\""),
-        (
-            "superpowers",
-            "5.0.1",
-            "opencode-plugin",
-            "\"claude\", \"opencode\"",
-        ),
-    ] {
+    for (id, version, route, hosts) in LOCKED_RECIPES {
+        if Some(*id) == skipped {
+            continue;
+        }
         lock.push_str(&format!(
             "\n[tools.{id}]\nversion = \"{version}\"\nroute = \"{route}\"\nhosts = [{hosts}]\n"
         ));
@@ -581,6 +554,43 @@ fn an_unreadable_opencode_plugins_entry_stops_setup_before_any_write() {
     let lock_path = scratch.home().join(".config/relaxkit/lock.toml");
     fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
     fs::write(&lock_path, lock).unwrap();
+}
+
+const LOCKED_RECIPES: &[(&str, &str, &str, &str)] = &[
+    ("caveman", "4.1.0", "npm", "\"claude\", \"opencode\""),
+    ("ccusage", "1.0.0", "npm", "\"claude\", \"opencode\""),
+    (
+        "chrome-devtools",
+        "1.0.0",
+        "npm",
+        "\"claude\", \"opencode\"",
+    ),
+    (
+        "claude-md-management",
+        "1.0.0",
+        "claude-plugin",
+        "\"claude\"",
+    ),
+    ("frontend-design", "1.0.0", "claude-plugin", "\"claude\""),
+    ("opencode-sandbox", "1.0.0", "npm", "\"opencode\""),
+    ("playwright", "1.0.0", "npm", "\"claude\", \"opencode\""),
+    ("rtk", "1.2.1", "script", "\"claude\", \"opencode\""),
+    ("serena", "2.1.0", "uv", "\"claude\", \"opencode\""),
+    (
+        "superpowers",
+        "5.0.1",
+        "opencode-plugin",
+        "\"claude\", \"opencode\"",
+    ),
+];
+
+#[test]
+fn an_unreadable_opencode_plugins_entry_stops_setup_before_any_write() {
+    // R6-1: an OpenCode `plugins` entry that is not a list stops setup before any OpenCode file is written. The config
+    // file and AGENTS.md keep their bytes, no `opencode plugin` call runs, nothing is repaired, and the run exits 1
+    // with the read error.
+    let scratch = Scratch::new();
+    write_lock_except(&scratch, None);
     fs::write(
         scratch.home().join(".claude.json"),
         "{\"mcpServers\": {\"serena\": {}, \"chrome-devtools\": {}, \"playwright\": {}}}\n",
@@ -609,6 +619,38 @@ fn an_unreadable_opencode_plugins_entry_stops_setup_before_any_write() {
             .iter()
             .all(|call| !call.starts_with("opencode plugin")),
         "no opencode plugin call may touch an unreadable plugins entry: {calls:?}"
+    );
+}
+
+#[test]
+fn an_unreadable_opencode_plugins_entry_stops_the_install_loop_before_any_write() {
+    // R7-1: setup reads the OpenCode plugins entry before its install loop. Serena is left out of the lock, so its
+    // install step would remove and re-add its MCP entry in opencode.json. It does not: the file and AGENTS.md keep
+    // their bytes, no `opencode mcp` call runs, and the run exits 1 on the plugins error.
+    let scratch = Scratch::new();
+    write_lock_except(&scratch, Some("serena"));
+    let config = scratch.home().join(".config/opencode/opencode.json");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let broken = "{\"plugins\": \"x\", \"mcp\": {\"servers\": {\"chrome-devtools\": {}, \"playwright\": {}}}}\n";
+    fs::write(&config, broken).unwrap();
+    let agents = scratch.home().join(".config/opencode/AGENTS.md");
+    let notes = "# my notes\n";
+    fs::write(&agents, notes).unwrap();
+    scratch.clear_calls();
+
+    let output = scratch.relaxkit().arg("setup").assert().code(1);
+
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();
+    assert!(stderr.contains("plugins in "), "{stderr}");
+    assert!(stderr.contains("is not a list"), "{stderr}");
+    assert_eq!(fs::read_to_string(&config).unwrap(), broken);
+    assert_eq!(fs::read_to_string(&agents).unwrap(), notes);
+    let calls = scratch.calls();
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.starts_with("opencode mcp") && !call.starts_with("opencode plugin")),
+        "no opencode mcp or plugin call may run before the plugins entry is read: {calls:?}"
     );
 }
 

@@ -124,6 +124,14 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
 
     let recipes = install_order(load_all()?)?;
     let present: Vec<HostKind> = hosts.iter().map(|host| host.info().kind).collect();
+    // An unreadable OpenCode `plugins` entry stops setup before the install loop writes any OpenCode file, including
+    // the MCP remove and add of a recipe outside the lock (ruling R7-1).
+    for host in hosts
+        .iter()
+        .filter(|host| host.info().kind == HostKind::Opencode)
+    {
+        host.plugin_list(ctx)?;
+    }
     let locked = Lockfile::load(ctx)?;
     let mut installed = 0;
     let mut kept = 0;
