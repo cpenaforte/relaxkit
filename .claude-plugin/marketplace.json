@@ -1,0 +1,16 @@
+{
+  "name": "relaxkit",
+  "owner": {
+    "name": "OWNER"
+  },
+  "metadata": {
+    "description": "Marketplace for the relaxkit Claude Code adapter. OWNER is a placeholder until the first release."
+  },
+  "plugins": [
+    {
+      "name": "relaxkit",
+      "source": "./adapters/claude-plugin",
+      "description": "Sets up and manages a curated set of agent tools on Linux and macOS"
+    }
+  ]
+}

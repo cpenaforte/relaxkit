@@ -42,10 +42,16 @@ if [ -n "$RELAXKIT_STUB_FAIL" ]; then
   esac
 fi
 # RELAXKIT_STUB_FAIL_ONCE fails the first call that matches, then the fail-once marker is spent (shell builtins only).
+# A fail-skip file holds how many matching calls pass before that one (shell builtins only).
 if [ -n "$RELAXKIT_STUB_FAIL_ONCE" ]; then
   case "$line" in
     *"$RELAXKIT_STUB_FAIL_ONCE"*)
-      if read -r armed < "$RELAXKIT_STUB_STATE/fail-once" 2>/dev/null && [ "$armed" = armed ]; then
+      skipping=0
+      if [ -f "$RELAXKIT_STUB_STATE/fail-skip" ]; then
+        read -r left < "$RELAXKIT_STUB_STATE/fail-skip"
+        if [ "$left" -gt 0 ]; then echo "$((left - 1))" > "$RELAXKIT_STUB_STATE/fail-skip"; skipping=1; fi
+      fi
+      if [ "$skipping" = 0 ] && read -r armed < "$RELAXKIT_STUB_STATE/fail-once" 2>/dev/null && [ "$armed" = armed ]; then
         echo "spent" > "$RELAXKIT_STUB_STATE/fail-once"
         echo "stub refused once: $line" >&2
         exit 1
@@ -215,7 +221,13 @@ impl Scratch {
 
     /// Makes the first call whose command line contains `needle` fail; every later call succeeds.
     pub fn fail_once(&mut self, needle: &str) {
+        self.fail_once_after(needle, 0);
+    }
+
+    /// Like `fail_once`, but the first `passes` calls that contain `needle` succeed before the failing one.
+    pub fn fail_once_after(&mut self, needle: &str, passes: u32) {
         fs::write(self.state.join("fail-once"), "armed\n").expect("arm fail-once");
+        fs::write(self.state.join("fail-skip"), format!("{passes}\n")).expect("arm fail-skip");
         self.extra_env
             .insert("RELAXKIT_STUB_FAIL_ONCE".into(), needle.into());
     }

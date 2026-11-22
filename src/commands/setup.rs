@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use anyhow::{Result, bail};
 
+use crate::adapters;
 use crate::commands::doctor::{self, Check, CheckStatus};
 use crate::config::{KitConfig, effective};
 use crate::config_apply::{claude, opencode, voice};
@@ -193,6 +194,7 @@ fn configure(
             HostKind::Claude => {
                 claude::apply_roles(ctx, run, host.as_ref(), &config.for_host(HostKind::Claude))?;
                 claude::apply_privacy_env(ctx, run, host.as_ref())?;
+                adapters::install_claude(ctx, run, host.as_ref())?;
             }
             HostKind::Opencode => {
                 // An unreadable `plugins` entry stops here, before any OpenCode file is written (ruling R6-1).
