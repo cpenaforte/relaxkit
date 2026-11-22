@@ -261,11 +261,28 @@ fn remove_strings(text: &str, path: &[&str], wanted: &[&str]) -> Result<String> 
 /// Removes the pack's binary copies from `dirs.bin`: each regular file (journaled as a backup first) and each link
 /// (journaled as a link first), so undo puts them back.
 fn remove_bin_copies(ctx: &Ctx, run: &RunId, lines: &mut Vec<String>) -> Result<()> {
+    let running = std::env::current_exe()
+        .ok()
+        .and_then(|exe| fs::canonicalize(exe).ok());
+    remove_bin_copies_except(ctx, run, running.as_deref(), lines)
+}
+
+/// Removes the pack's copies in `dirs.bin`, except the running binary `running` (K119).
+fn remove_bin_copies_except(
+    ctx: &Ctx,
+    run: &RunId,
+    running: Option<&Path>,
+    lines: &mut Vec<String>,
+) -> Result<()> {
     let Ok(entries) = fs::read_dir(&ctx.dirs.bin) else {
         return Ok(());
     };
     for entry in entries {
         let path = entry?.path();
+        // K119: an entry that resolves to the running binary is never removed.
+        if running.is_some_and(|exe| fs::canonicalize(&path).is_ok_and(|target| target == exe)) {
+            continue;
+        }
         let meta = fs::symlink_metadata(&path)
             .with_context(|| format!("cannot inspect {}", path.display()))?;
         if meta.file_type().is_symlink() {
@@ -569,6 +586,27 @@ mod tests {
             get(&text, &["sandbox", "enabled"]),
             Some(json!(true)),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn the_running_binary_is_kept_even_inside_the_bin_directory() {
+        // F23-14 / K119: uninstall never removes the binary that runs it, even when it sits in dirs.bin.
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+        fs::create_dir_all(&ctx.dirs.bin).unwrap();
+        let running = ctx.dirs.bin.join("relaxkit");
+        fs::write(&running, "the running binary").unwrap();
+        fs::write(ctx.dirs.bin.join("rtk"), "rtk copy").unwrap();
+        let running_path = fs::canonicalize(&running).unwrap();
+
+        let mut lines = Vec::new();
+        remove_bin_copies_except(&ctx, &RunId::new(), Some(&running_path), &mut lines).unwrap();
+
+        assert!(running.exists(), "the running binary stays");
+        assert!(
+            !ctx.dirs.bin.join("rtk").exists(),
+            "the other copy is removed"
         );
     }
 }
