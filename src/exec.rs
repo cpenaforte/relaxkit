@@ -15,6 +15,7 @@ pub struct Cmd {
     args: Vec<String>,
     env: Vec<(String, String)>,
     cwd: Option<PathBuf>,
+    terminal: bool,
 }
 
 impl Cmd {
@@ -59,6 +60,17 @@ impl Cmd {
 
     pub fn working_dir(&self) -> Option<&Path> {
         self.cwd.as_deref()
+    }
+
+    /// Runs with the caller's stdin, stdout and stderr, so a prompt or a one-time code reaches the user.
+    /// The output is then not captured: `Output` comes back with empty stdout and stderr.
+    pub fn inherit_terminal(mut self) -> Cmd {
+        self.terminal = true;
+        self
+    }
+
+    pub fn inherits_terminal(&self) -> bool {
+        self.terminal
     }
 }
 
@@ -132,6 +144,16 @@ impl Runner for SystemRunner {
         }
         if let Some(dir) = cmd.working_dir() {
             process.current_dir(dir);
+        }
+        if cmd.inherits_terminal() {
+            let status = process
+                .status()
+                .with_context(|| format!("cannot run `{cmd}`"))?;
+            return Ok(Output {
+                code: status.code().unwrap_or(-1),
+                stdout: String::new(),
+                stderr: String::new(),
+            });
         }
         let finished = process
             .output()
@@ -272,6 +294,21 @@ mod tests {
         assert_eq!(out.code, 3);
         assert_eq!(out.stdout, "hi");
         assert_eq!(out.stderr, "err");
+    }
+
+    #[test]
+    fn system_runner_inherits_the_terminal_when_asked() {
+        // The child prints "hi" on the inherited stdout; the runner must not capture it.
+        let out = SystemRunner
+            .run(
+                &Cmd::new("sh")
+                    .args(&["-c", "printf hi; exit 4"])
+                    .inherit_terminal(),
+            )
+            .unwrap();
+        assert_eq!(out.code, 4);
+        assert_eq!(out.stdout, "");
+        assert_eq!(out.stderr, "");
     }
 
     #[test]

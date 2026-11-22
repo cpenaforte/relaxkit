@@ -6,6 +6,7 @@ pub mod ctx;
 pub mod edit;
 pub mod exec;
 pub mod fsx;
+pub mod github;
 pub mod host;
 pub mod net;
 pub mod platform;
