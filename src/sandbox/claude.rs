@@ -10,7 +10,7 @@ use serde_json::json;
 use super::{ALLOWED_DOMAINS, GhPath, union_strings};
 use crate::brand;
 use crate::ctx::Ctx;
-use crate::edit::{jsonc_remove, jsonc_set};
+use crate::edit::{jsonc_get, jsonc_remove, jsonc_set};
 use crate::host::{Host, HostKind};
 use crate::platform::Os;
 use crate::state::{RunId, safe_write};
@@ -84,8 +84,11 @@ pub fn settings_text(old: &str, os: Os, gh: GhPath) -> Result<String> {
             &["sandbox", "enableWeakerNetworkIsolation"],
             &json!(true),
         )
-    } else {
+    } else if jsonc_get(&text, &["sandbox", "enableWeakerNetworkIsolation"])? == Some(json!(true)) {
+        // K120: removed only while it is true, the value relaxkit writes; a user's own value stays.
         jsonc_remove(&text, &["sandbox", "enableWeakerNetworkIsolation"])
+    } else {
+        Ok(text)
     }
 }
 
@@ -174,6 +177,42 @@ mod tests {
         let fallback = settings(&settings_text("{}", Os::MacOs, GhPath::ExcludedFallback).unwrap());
         assert!(
             fallback["sandbox"]
+                .get("enableWeakerNetworkIsolation")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn weaker_isolation_is_removed_only_while_it_is_true() {
+        // K120 / F23-15: a user's own false stays on a rerun. A true that relaxkit wrote on the excluded route is removed.
+        let users_false = settings(
+            &settings_text(
+                "{\"sandbox\": {\"enableWeakerNetworkIsolation\": false}}",
+                Os::Linux,
+                GhPath::ExcludedFallback,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            users_false["sandbox"]["enableWeakerNetworkIsolation"],
+            json!(false)
+        );
+
+        let written_true = settings(&settings_text("{}", Os::MacOs, GhPath::Inside).unwrap());
+        assert_eq!(
+            written_true["sandbox"]["enableWeakerNetworkIsolation"],
+            json!(true)
+        );
+        let rerun = settings(
+            &settings_text(
+                &written_true.to_string(),
+                Os::MacOs,
+                GhPath::ExcludedFallback,
+            )
+            .unwrap(),
+        );
+        assert!(
+            rerun["sandbox"]
                 .get("enableWeakerNetworkIsolation")
                 .is_none()
         );
