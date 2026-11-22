@@ -524,12 +524,13 @@ fn rtk_flow(
             &moves_to(&out.updated, &target),
             Some("script"),
         ) {
-            Ok(()) => (row(RowResult::Updated, note), out.updated),
+            Ok(()) => (row(RowResult::Updated, note), out.updated.clone()),
             Err(err) => {
                 report.failed.push(plan.id.to_string());
+                // The pack copy was written before the lock failed, so the hosts are still listed to restart (K69).
                 (
                     row(RowResult::RollbackFailed(format!("{err:#}")), note),
-                    Vec::new(),
+                    out.updated,
                 )
             }
         },
@@ -665,7 +666,7 @@ fn tool_flow(
                                     )),
                                     None,
                                 ),
-                                Vec::new(),
+                                out.updated.clone(),
                             );
                         }
                     }
@@ -687,12 +688,12 @@ fn tool_flow(
             }
             let restart: Vec<HostKind> = changed.iter().map(|(kind, _)| *kind).collect();
             match record_moves(ctx, plan.id, &changed, None) {
-                Ok(()) => (row(RowResult::Updated, None), restart),
+                Ok(()) => (row(RowResult::Updated, None), restart.clone()),
                 Err(err) => {
                     report.failed.push(plan.id.to_string());
                     (
                         row(RowResult::RollbackFailed(format!("{err:#}")), None),
-                        Vec::new(),
+                        restart,
                     )
                 }
             }

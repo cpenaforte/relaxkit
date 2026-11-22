@@ -1034,6 +1034,46 @@ fn status_reports_no_drift_after_a_partial_update() {
 }
 
 #[test]
+fn a_claude_update_with_no_reported_version_still_restarts_claude() {
+    // The plugin is updated on disk and its probe passes, but the listing names no exact version, so the new version
+    // cannot be recorded. The row is named as failed, and Claude is still listed to restart (K69).
+    let fx = Fixture::new();
+    fx.shell
+        .on("claude plugin marketplace update", Output::ok(""));
+    fx.shell.on(
+        "claude plugin list",
+        Output::ok("superpowers@anthropic-plugin-directory\n"),
+    );
+    fx.shell
+        .on("claude plugin update superpowers@", Output::ok(""));
+    fx.lock(&[(
+        "superpowers",
+        "7.0.2",
+        "claude-plugin:anthropic-plugin-directory",
+        &["claude"],
+    )]);
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.3"}"#,
+    );
+
+    let report = fx.run(false, Some("superpowers")).unwrap();
+
+    assert!(
+        matches!(
+            row(&report, "superpowers").result,
+            RowResult::RollbackFailed(_)
+        ),
+        "{:?}",
+        row(&report, "superpowers")
+    );
+    assert!(
+        report.restart.contains(&HostKind::Claude),
+        "a changed Claude plugin was not listed to restart: {report:?}"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
