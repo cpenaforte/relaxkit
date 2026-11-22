@@ -1763,6 +1763,31 @@ fn a_row_with_a_known_move_keeps_the_updated_label() {
 }
 
 #[test]
+fn an_unversioned_entry_for_a_missing_tool_reports_not_found() {
+    // The lock says unversioned, but the plugin is not in the listing: status must say it was not found, not that it
+    // is as locked (F4-3).
+    let fx = Fixture::new();
+    fx.shell.on("claude plugin list", Output::ok(""));
+    fx.lock(&[(
+        "superpowers",
+        relaxkit::tools::engine::UNVERSIONED,
+        "claude-plugin:anthropic-plugin-directory",
+        &["claude"],
+    )]);
+
+    let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
+
+    let lines: Vec<&String> = report
+        .lines
+        .iter()
+        .filter(|line| line.starts_with("superpowers on"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("not found"), "{lines:?}");
+    assert!(!lines[0].contains("as locked"), "{lines:?}");
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

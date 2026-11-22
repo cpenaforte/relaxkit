@@ -90,7 +90,12 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                 // Each host is compared with the version its own lock entry records (K73).
                 let locked = tool.version_for(host_name);
                 // A version that was never recorded cannot drift: its host version is shown, not compared (F3-1).
-                let state = if locked == crate::tools::engine::UNVERSIONED {
+                // A tool that is missing or unreadable says so first: neither can be compared with anything (F4-3).
+                let state = if installed == "not found" {
+                    "not found".to_string()
+                } else if installed.starts_with("unreadable") {
+                    "unreadable".to_string()
+                } else if locked == crate::tools::engine::UNVERSIONED {
                     "as locked (version not recorded)".to_string()
                 } else if installed == locked {
                     "as locked".to_string()
