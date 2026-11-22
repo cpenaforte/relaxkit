@@ -12,7 +12,7 @@ use super::{Host, HostInfo, InstalledPlugin, run_edit};
 use crate::ctx::Ctx;
 use crate::edit::{jsonc_get, jsonc_remove};
 use crate::exec::Cmd;
-use crate::state::{RunId, safe_write};
+use crate::state::safe_write;
 
 pub struct OpencodeHost {
     info: HostInfo,
@@ -144,7 +144,7 @@ impl Host for OpencodeHost {
         };
         let edited = jsonc_remove(&text, &["mcp", "servers", name])?;
         if edited != text {
-            safe_write(ctx, &RunId::new(), &path, &edited)?;
+            safe_write(ctx, &ctx.run, &path, &edited)?;
         }
         Ok(())
     }

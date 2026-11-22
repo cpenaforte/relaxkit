@@ -14,7 +14,7 @@ use semver::Version;
 use crate::ctx::Ctx;
 use crate::edit::jsonc_get;
 use crate::exec::{Cmd, Output};
-use crate::state::{RunId, safe_write};
+use crate::state::safe_write;
 
 pub use kind::HostKind;
 
@@ -166,7 +166,7 @@ pub(crate) fn edit_guarded(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<Ou
         ctx.out.info(&format!("would run {cmd}"));
         return Ok(Output::ok(""));
     }
-    let run = RunId::new();
+    let run = ctx.run.clone();
     let mut modes = Vec::new();
     for file in files {
         let Ok(meta) = fs::metadata(file) else {
@@ -191,13 +191,55 @@ pub(crate) fn run_edit(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<()> {
     Ok(())
 }
 
+/// Test support: runners that answer like `FakeRunner` and also change files, as a real CLI would.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use anyhow::Result;
+
+    use crate::exec::{Cmd, FakeRunner, Output, Runner};
+
+    /// When a successful command whose display starts with `prefix` runs, `path` is written with `text`.
+    pub(crate) struct Writing {
+        pub(crate) inner: FakeRunner,
+        pub(crate) effects: Vec<(&'static str, PathBuf, &'static str)>,
+    }
+
+    impl Runner for Writing {
+        fn run(&self, cmd: &Cmd) -> Result<Output> {
+            let out = self.inner.run(cmd)?;
+            if out.code == 0 {
+                let display = cmd.to_string();
+                for (prefix, path, text) in &self.effects {
+                    if display.starts_with(prefix) {
+                        if let Some(parent) = path.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(path, text)?;
+                    }
+                }
+            }
+            Ok(out)
+        }
+
+        fn which(&self, program: &str) -> Option<PathBuf> {
+            self.inner.which(program)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::Path;
 
+    use super::testing::Writing;
     use super::*;
     use crate::exec::{FakeRunner, Output};
     use crate::net::FakeNet;
+    use crate::state::{journal, undo};
 
     fn ctx_with(root: &Path, fake: &FakeRunner) -> Ctx {
         Ctx::for_test(root, fake.clone(), FakeNet::new())
@@ -309,5 +351,50 @@ mod tests {
             assert_eq!(mcp_argv(&map[&HostKind::Claude]).join(" "), want_claude);
             assert_eq!(mcp_argv(&map[&HostKind::Opencode]).join(" "), want_opencode);
         }
+    }
+
+    #[test]
+    fn two_edits_in_one_process_share_one_run_and_undo_restores_both() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join(".claude");
+        let state = root.path().join(".claude.json");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("settings.json"), "original settings").unwrap();
+        fs::write(&state, "original state").unwrap();
+        let mut ctx = ctx_with(root.path(), &FakeRunner::new());
+        ctx.runner = Box::new(Writing {
+            inner: FakeRunner::new().reply("claude plugin", Output::ok("")),
+            effects: vec![
+                (
+                    "claude plugin install",
+                    dir.join("settings.json"),
+                    "changed settings",
+                ),
+                (
+                    "claude plugin marketplace add",
+                    state.clone(),
+                    "changed state",
+                ),
+            ],
+        });
+        let host = claude::ClaudeHost::new(
+            info(HostKind::Claude, "2.1.330"),
+            dir.clone(),
+            state.clone(),
+        );
+        host.plugin_install(&ctx, "caveman@caveman").unwrap();
+        host.marketplace_add(&ctx, "JuliusBrussee/caveman").unwrap();
+
+        let records = journal::read(&ctx.dirs).unwrap();
+        let runs: BTreeSet<_> = records.iter().map(|r| r.run.clone()).collect();
+        assert!(!records.is_empty());
+        assert_eq!(runs.len(), 1, "two edits in one process must share a run");
+
+        undo(&ctx, None).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("settings.json")).unwrap(),
+            "original settings"
+        );
+        assert_eq!(fs::read_to_string(&state).unwrap(), "original state");
     }
 }

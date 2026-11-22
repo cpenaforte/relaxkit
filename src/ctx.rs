@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::exec::{FakeRunner, Runner, SystemRunner};
 use crate::net::{FakeNet, HttpNet, Net};
 use crate::platform::KitDirs;
+use crate::state::RunId;
 
 /// Where user-facing lines go. `stdout()` prints; `capture()` keeps them for tests.
 #[derive(Clone, Default)]
@@ -69,6 +70,8 @@ pub struct Ctx {
     pub out: Reporter,
     pub dry_run: bool,
     pub project: Option<PathBuf>,
+    /// The run every journaled edit of this process belongs to, so `undo` reverts the whole process.
+    pub run: RunId,
 }
 
 impl Ctx {
@@ -81,6 +84,7 @@ impl Ctx {
             out: Reporter::capture(),
             dry_run: false,
             project: None,
+            run: RunId::new(),
         }
     }
 
@@ -93,6 +97,7 @@ impl Ctx {
             out: Reporter::stdout(),
             dry_run,
             project,
+            run: RunId::new(),
         })
     }
 }
