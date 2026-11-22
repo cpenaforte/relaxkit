@@ -202,6 +202,12 @@ fn configure(
                 let available = opencode_models(ctx, host.as_ref());
                 let own = config.for_host(HostKind::Opencode);
                 opencode::apply_roles(ctx, run, host.as_ref(), &own, &available)?;
+                adapters::install_opencode(
+                    ctx,
+                    run,
+                    host.as_ref(),
+                    &format!("v{}", env!("CARGO_PKG_VERSION")),
+                )?;
                 if let Some(note) = unapplied_tiers_note(&own, &available) {
                     ctx.out.warn(&note);
                 }

@@ -1,14 +1,17 @@
 //! The Claude Code adapter (Task 24, part A): the plugin manifest, the marketplace file, and the install argv.
 
+use std::cell::RefCell;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use relaxkit::adapters::install_claude;
+use anyhow::Result;
+use relaxkit::adapters::{install_claude, install_opencode};
 use relaxkit::brand;
 use relaxkit::ctx::Ctx;
 use relaxkit::exec::{FakeRunner, Output};
 use relaxkit::host::claude::ClaudeHost;
-use relaxkit::host::{HostInfo, HostKind};
+use relaxkit::host::opencode::OpencodeHost;
+use relaxkit::host::{Host, HostInfo, HostKind, InstalledPlugin};
 use relaxkit::net::FakeNet;
 
 fn repo_file(relative: &str) -> serde_json::Value {
@@ -78,4 +81,175 @@ fn claude_adapter_install_argv() {
     let ctx = Ctx::for_test(root.path(), listed.clone(), FakeNet::new());
     install_claude(&ctx, &ctx.run, &host).unwrap();
     assert_eq!(listed.calls(), vec!["claude plugin list".to_string()]);
+}
+
+/// The OpenCode install spec for release tag v0.1.0 (Task 25b).
+const SPEC_V010: &str = "relaxkit-opencode@git+https://github.com/cpenaforte/relaxkit.git#v0.1.0::path:adapters/opencode-plugin";
+
+/// An OpenCode host that lists the plugins it is given and records each install and update it receives.
+struct FakeOpencode {
+    info: HostInfo,
+    listed: Vec<InstalledPlugin>,
+    calls: RefCell<Vec<String>>,
+}
+
+impl FakeOpencode {
+    fn new(listed: Vec<InstalledPlugin>) -> FakeOpencode {
+        FakeOpencode {
+            info: HostInfo {
+                kind: HostKind::Opencode,
+                binary: "/usr/bin/opencode".into(),
+                version: "2.2.6".into(),
+            },
+            listed,
+            calls: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl Host for FakeOpencode {
+    fn info(&self) -> &HostInfo {
+        &self.info
+    }
+
+    fn plugin_install(&self, _ctx: &Ctx, spec: &str) -> Result<()> {
+        self.calls.borrow_mut().push(format!("install {spec}"));
+        Ok(())
+    }
+
+    fn plugin_update(&self, _ctx: &Ctx, spec: &str) -> Result<()> {
+        self.calls.borrow_mut().push(format!("update {spec}"));
+        Ok(())
+    }
+
+    fn plugin_list(&self, _ctx: &Ctx) -> Result<Vec<InstalledPlugin>> {
+        Ok(self.listed.clone())
+    }
+
+    fn instructions_file(&self, _ctx: &Ctx) -> PathBuf {
+        unreachable!("the OpenCode adapter does not use this")
+    }
+
+    fn config_file(&self, _ctx: &Ctx) -> PathBuf {
+        unreachable!("the OpenCode adapter does not use this")
+    }
+
+    fn mcp_add(
+        &self,
+        _ctx: &Ctx,
+        _name: &str,
+        _argv: &[String],
+        _env: &[(String, String)],
+    ) -> Result<()> {
+        unreachable!("the OpenCode adapter does not use this")
+    }
+
+    fn mcp_remove(&self, _ctx: &Ctx, _name: &str) -> Result<()> {
+        unreachable!("the OpenCode adapter does not use this")
+    }
+
+    fn mcp_entry_present(&self, _ctx: &Ctx, _name: &str) -> Result<bool> {
+        unreachable!("the OpenCode adapter does not use this")
+    }
+
+    fn marketplace_add(&self, _ctx: &Ctx, _source: &str) -> Result<()> {
+        unreachable!("the OpenCode adapter does not use this")
+    }
+
+    fn marketplace_update(&self, _ctx: &Ctx) -> Result<()> {
+        unreachable!("the OpenCode adapter does not use this")
+    }
+
+    fn state_files(&self, _ctx: &Ctx) -> Vec<PathBuf> {
+        unreachable!("the OpenCode adapter does not use this")
+    }
+}
+
+#[test]
+fn opencode_adapter_install_argv_pins_the_release_tag() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+    let host = FakeOpencode::new(Vec::new());
+
+    install_opencode(&ctx, &ctx.run, &host, "v0.1.0").unwrap();
+
+    assert_eq!(
+        *host.calls.borrow(),
+        vec![format!("install {SPEC_V010}")],
+        "the spec must be the pinned release tag"
+    );
+    // The tag is `#v` and a version, never a branch name.
+    let tag = SPEC_V010
+        .split_once('#')
+        .unwrap()
+        .1
+        .split("::")
+        .next()
+        .unwrap();
+    assert!(
+        tag.strip_prefix('v')
+            .is_some_and(|version| semver::Version::parse(version).is_ok()),
+        "{tag}"
+    );
+    assert!(!SPEC_V010.contains("main") && !SPEC_V010.contains("master"));
+}
+
+#[test]
+fn opencode_adapter_is_not_installed_twice() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+    let listed = vec![InstalledPlugin {
+        name: "relaxkit-opencode".into(),
+        marketplace: None,
+        version: Some("0.1.0::path:adapters/opencode-plugin".into()),
+    }];
+    let host = FakeOpencode::new(listed);
+
+    install_opencode(&ctx, &ctx.run, &host, "v0.1.0").unwrap();
+
+    assert!(host.calls.borrow().is_empty(), "{:?}", host.calls.borrow());
+}
+
+#[test]
+fn opencode_adapter_moves_to_a_new_tag() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+    let listed = vec![InstalledPlugin {
+        name: "relaxkit-opencode".into(),
+        marketplace: None,
+        version: Some("0.0.9::path:adapters/opencode-plugin".into()),
+    }];
+    let host = FakeOpencode::new(listed);
+
+    install_opencode(&ctx, &ctx.run, &host, "v0.1.0").unwrap();
+
+    assert_eq!(*host.calls.borrow(), vec![format!("update {SPEC_V010}")]);
+}
+
+#[test]
+fn opencode_adapter_reads_its_own_entry_from_the_real_config() {
+    // The version the host reads back from `plugins` is the value the adapter compares, so a second run against the
+    // real config file installs nothing.
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("opencode");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("opencode.json"),
+        format!("{{\"plugins\": [\"{SPEC_V010}\"]}}\n"),
+    )
+    .unwrap();
+    let host = OpencodeHost::new(
+        HostInfo {
+            kind: HostKind::Opencode,
+            binary: "/usr/bin/opencode".into(),
+            version: "2.2.6".into(),
+        },
+        dir,
+    );
+    let fake = FakeRunner::new();
+    let ctx = Ctx::for_test(root.path(), fake.clone(), FakeNet::new());
+
+    install_opencode(&ctx, &ctx.run, &host, "v0.1.0").unwrap();
+
+    assert!(fake.calls().is_empty(), "{:?}", fake.calls());
 }
