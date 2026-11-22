@@ -42,6 +42,7 @@ if [ -n "$RELAXKIT_STUB_FAIL" ]; then
   esac
 fi
 case "$line" in
+  *"@anthropic-ai/sandbox-runtime"*) printf 'status=1\n403\n'; exit 0 ;;
   "claude --version"|"claude -v") echo "2.1.330 (Claude Code)" ;;
   "opencode --version") echo "2.2.6" ;;
   "rtk --version") echo "rtk 1.2.1" ;;

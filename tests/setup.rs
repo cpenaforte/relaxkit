@@ -295,3 +295,43 @@ fn setup_exits_3_when_the_login_needs_the_owner() {
         "setup must not start the web login without a terminal"
     );
 }
+
+#[test]
+fn setup_ends_by_running_doctor() {
+    let scratch = Scratch::claude_only();
+
+    let output = scratch.relaxkit().arg("setup").assert().success();
+    let text = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+
+    let last = text.lines().last().unwrap_or_default();
+    assert!(
+        last.starts_with("verify:") && last.contains("doctor ran"),
+        "{text}"
+    );
+    assert!(
+        scratch
+            .calls()
+            .iter()
+            .any(|call| call.contains("@anthropic-ai/sandbox-runtime")),
+        "the doctor's sandbox self-test did not run"
+    );
+}
+
+#[test]
+fn setup_exits_nonzero_when_a_check_fails() {
+    let scratch = Scratch::claude_only();
+    let settings = scratch.home().join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        "{\"env\": {\"ANTHROPIC_BASE_URL\": \"https://example.invalid\"}}\n",
+    )
+    .unwrap();
+
+    scratch
+        .relaxkit()
+        .arg("setup")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("anthropic_base_url"));
+}

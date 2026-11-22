@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use anyhow::{Result, bail};
 
+use crate::commands::doctor::{self, CheckStatus};
 use crate::config::KitConfig;
 use crate::config_apply::{claude, opencode, voice};
 use crate::ctx::Ctx;
@@ -33,6 +34,9 @@ pub const STEPS: [&str; 7] = [
 /// The exit code when the GitHub login needs the owner (ruling K48).
 const LOGIN_PENDING_EXIT: i32 = 3;
 
+/// The exit code when a doctor check failed. It takes precedence over the login (ruling K50).
+const FAILED_CHECK_EXIT: i32 = 1;
+
 /// One printed line, tagged with its step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepLine {
@@ -40,7 +44,8 @@ pub struct StepLine {
     pub line: String,
 }
 
-/// What a setup run did. `exit_code` is 0 when all is well, 3 when the owner must finish the GitHub login.
+/// What a setup run did. `exit_code` is 0 when all is well, 1 when a doctor check failed, 3 when the owner must
+/// finish the GitHub login.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SetupReport {
     pub steps: Vec<StepLine>,
@@ -149,9 +154,10 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
     configure(ctx, &run, hosts, &mut report)?;
     sandbox_step(ctx, &run, hosts, &mut report)?;
     let login = login_step(ctx, &run, &mut report)?;
-    verify_step(ctx, &recipes, &mut report)?;
+    let failed = verify_step(ctx, hosts, &mut report)?;
 
     report.exit_code = match login {
+        _ if failed => FAILED_CHECK_EXIT,
         Some(LoginOutcome::ManualStep { .. }) => LOGIN_PENDING_EXIT,
         _ => 0,
     };
@@ -196,7 +202,7 @@ fn configure(
 
 /// The OpenCode models the roles can map onto. A host that cannot list them yields none, so each agent inherits
 /// the host's default model.
-fn opencode_models(ctx: &Ctx, host: &dyn Host) -> Vec<String> {
+pub fn opencode_models(ctx: &Ctx, host: &dyn Host) -> Vec<String> {
     let binary = host.info().binary.to_string_lossy().into_owned();
     match ctx.runner.run(&Cmd::new(&binary).arg("models")) {
         Ok(out) if out.code == 0 => out
@@ -304,59 +310,45 @@ fn login_step(ctx: &Ctx, run: &RunId, report: &mut SetupReport) -> Result<Option
     Ok(Some(outcome))
 }
 
-/// The quick verify pass (ruling K50): every locked tool's probe, for each host it is locked on. A probe with a
-/// templated program (`{npx}`) is skipped here; doctor checks it. Any probe that fails stops setup.
-fn verify_step(ctx: &Ctx, recipes: &[Recipe], report: &mut SetupReport) -> Result<()> {
-    let Some(lock) = Lockfile::load(ctx)? else {
-        report.say(ctx, "verify", "nothing is locked yet".to_string());
-        return Ok(());
-    };
-    let mut passed = 0;
-    let mut skipped = 0;
-    let mut failed = Vec::new();
-    for (id, tool) in &lock.tools {
-        let Some(recipe) = recipes.iter().find(|recipe| &recipe.id == id) else {
-            continue;
-        };
-        for host in &tool.hosts {
-            let Ok(kind) = host.parse::<HostKind>() else {
-                continue;
-            };
-            let Some(probe) = recipe.probe.get(&kind) else {
-                continue;
-            };
-            let Some((program, args)) = probe.argv.split_first() else {
-                continue;
-            };
-            if program.starts_with('{') {
-                skipped += 1;
-                continue;
-            }
-            let cmd = args.iter().fold(Cmd::new(program), |cmd, arg| cmd.arg(arg));
-            match ctx.runner.run(&cmd) {
-                Ok(out) if out.code == 0 => passed += 1,
-                Ok(out) => failed.push(format!("{id} on {host}: `{cmd}` exited {}", out.code)),
-                Err(err) => failed.push(format!("{id} on {host}: {err:#}")),
-            }
-        }
-    }
-    if !failed.is_empty() {
-        bail!("verify failed: {}", failed.join("; "));
-    }
+/// The verify step runs `doctor` (ruling K50). Its checks print here, and a failed check makes setup exit 1. Returns
+/// whether any check failed.
+fn verify_step(ctx: &Ctx, hosts: &[Box<dyn Host>], report: &mut SetupReport) -> Result<bool> {
+    let checks = doctor::checks_for(ctx, hosts)?;
+    let count = |status: CheckStatus| checks.iter().filter(|check| check.status == status).count();
+    let (ok, warn, fail) = (
+        count(CheckStatus::Ok),
+        count(CheckStatus::Warn),
+        count(CheckStatus::Fail),
+    );
     report.say(
         ctx,
         "verify",
-        format!("{passed} probes passed, {skipped} skipped (templated programs)"),
+        format!(
+            "doctor ran {} checks: {ok} ok, {warn} warn, {fail} fail",
+            checks.len()
+        ),
     );
-    Ok(())
-}
-
-/// The product name a host goes by in the output.
-fn product_name(kind: HostKind) -> &'static str {
-    match kind {
-        HostKind::Claude => "Claude Code",
-        HostKind::Opencode => "OpenCode",
+    for check in checks
+        .iter()
+        .filter(|check| check.status != CheckStatus::Ok)
+    {
+        let fix = check
+            .fix
+            .as_deref()
+            .map(|fix| format!("; fix: {fix}"))
+            .unwrap_or_default();
+        report.say(
+            ctx,
+            "verify",
+            format!(
+                "{} {}: {}{fix}",
+                check.status.as_str(),
+                check.id,
+                check.message
+            ),
+        );
     }
+    Ok(fail > 0)
 }
 
 /// A recipe is left alone when every host it names that is installed already has it in the lock. The lock
@@ -411,7 +403,7 @@ fn host_names(hosts: &[Box<dyn Host>]) -> String {
         .iter()
         .map(|host| {
             let info = host.info();
-            format!("{} {}", product_name(info.kind), info.version)
+            format!("{} {}", info.kind.product_name(), info.version)
         })
         .collect::<Vec<_>>()
         .join(", ")

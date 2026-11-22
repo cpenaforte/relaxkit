@@ -17,7 +17,7 @@ use crate::roles::{Role, resolve_opencode};
 use crate::state::{RunId, safe_write};
 
 /// The managed block in AGENTS.md that routes each kind of prompt to its agent.
-const ROUTING_BLOCK: &str = "roles";
+pub const ROUTING_BLOCK: &str = "roles";
 
 /// The result of `apply_compact`. `KeptDefault` means OpenCode keeps its own compaction setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +97,7 @@ pub fn apply_roles(
 }
 
 /// The routing sentences. Each names one prompt kind and the agent that takes it.
-const ROUTING_TEXT: &str = "When you dispatch a subagent, pick its agent by the prompt: implementer prompts go to the `implementer` agent; review prompts go to the `reviewer` agent; fix-loop rounds 4 to 5 go to the `implementer-escalated` agent; the final whole-branch review goes to the `reviewer-final` agent. Planning runs in the main session with the `plan` agent. These model choices are set by relaxkit's configuration.";
+pub const ROUTING_TEXT: &str = "When you dispatch a subagent, pick its agent by the prompt: implementer prompts go to the `implementer` agent; review prompts go to the `reviewer` agent; fix-loop rounds 4 to 5 go to the `implementer-escalated` agent; the final whole-branch review goes to the `reviewer-final` agent. Planning runs in the main session with the `plan` agent. These model choices are set by relaxkit's configuration.";
 
 /// Sets `agents.<id>.model`, or removes it when there is no model, so the agent inherits the host default.
 fn set_model(text: &str, id: &str, model: Option<String>) -> Result<String> {

@@ -20,6 +20,16 @@ impl HostKind {
     }
 }
 
+impl HostKind {
+    /// The name a person knows the host by.
+    pub fn product_name(self) -> &'static str {
+        match self {
+            HostKind::Claude => "Claude Code",
+            HostKind::Opencode => "OpenCode",
+        }
+    }
+}
+
 impl FromStr for HostKind {
     type Err = anyhow::Error;
 

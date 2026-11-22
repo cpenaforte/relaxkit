@@ -16,7 +16,7 @@ use crate::roles::{Role, RoleSetting, resolve_claude};
 use crate::state::{RunId, safe_write};
 
 /// The CLAUDE.md block that names the model for each subagent role.
-const ROLES_BLOCK: &str = "roles";
+pub const ROLES_BLOCK: &str = "roles";
 
 /// Sets Claude Code's compact threshold (spec 6.2): `autoCompactWindow` under `modelSettings.<model>` for each Claude
 /// model the roles resolve to. Missing entries are created. Nothing else in the file changes.
@@ -80,6 +80,16 @@ fn claude_model_id(alias: &str) -> String {
 pub fn apply_roles(ctx: &Ctx, run: &RunId, host: &dyn Host, config: &KitConfig) -> Result<()> {
     let path = host.instructions_file(ctx);
     let old = read_text(&path)?;
+    let text = match roles_block_text(config) {
+        Some(body) => block_upsert(&old, ROLES_BLOCK, &body),
+        None => block_remove(&old, ROLES_BLOCK),
+    };
+    write_if_changed(ctx, run, &path, &old, &text)
+}
+
+/// The body of the `roles` block that `apply_roles` writes, or `None` when no role has a Claude Code alias.
+/// `status` compares the file's block with this text to find hand edits.
+pub fn roles_block_text(config: &KitConfig) -> Option<String> {
     let alias = |role: Role| claude_alias(config, role);
     let subagents: Vec<String> = [
         (Role::Implementer, "implementer"),
@@ -102,13 +112,11 @@ pub fn apply_roles(ctx: &Ctx, run: &RunId, host: &dyn Host, config: &KitConfig) 
             "Planning runs in the main session: planner → {model}."
         ));
     }
-    let text = if sentences.is_empty() {
-        block_remove(&old, ROLES_BLOCK)
-    } else {
-        sentences.push("These model choices are advisory.".to_string());
-        block_upsert(&old, ROLES_BLOCK, &sentences.join(" "))
-    };
-    write_if_changed(ctx, run, &path, &old, &text)
+    if sentences.is_empty() {
+        return None;
+    }
+    sentences.push("These model choices are advisory.".to_string());
+    Some(sentences.join(" "))
 }
 
 /// Makes the pack's rtk path resolve for the hook. An adopted rtk lives elsewhere on the PATH, so a symbolic link
