@@ -37,7 +37,7 @@ pub fn install_claude(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
 }
 
 /// The OpenCode plugin's package name, the `name` in `adapters/opencode-plugin/package.json`.
-const OPENCODE_PLUGIN: &str = "relaxkit-opencode";
+pub const OPENCODE_PLUGIN: &str = "relaxkit-opencode";
 /// The plugin's directory in this repository, which the install spec names after `::path:`.
 const OPENCODE_PATH: &str = "adapters/opencode-plugin";
 

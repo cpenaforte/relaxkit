@@ -102,7 +102,8 @@ The slash form, `/relaxkit:<subcommand>`, is not yet confirmed in a live Claude 
 relaxkit has no telemetry of its own, and it has no background update checks: nothing runs on a timer. It uses the network only when you run one of these commands:
 
 - `setup` and `update` download the pack from GitHub, the npm registry, PyPI, nodejs.org and astral.sh, and Playwright's browser download host (for the Chromium that the playwright tool installs).
-- `status` reads the npm registry for the sandbox plugin's age. `doctor` does the same, and its sandbox self-test runs the pinned sandbox runtime through npx (which can fetch it from npm) and makes two curl requests (api.github.com and example.com).
+- `doctor`'s sandbox self-test runs the pinned sandbox runtime through npx (which can fetch it from npm) and makes two curl requests (api.github.com and example.com).
+- `status` and `doctor` read the sandbox runtime's entry in the npm registry and the date of relaxkit's latest release from api.github.com, to show the OpenCode sandbox plugin's health. Both are plain GET requests. `status` makes them only when the plugin is listed.
 - `login github` runs the `gh` CLI, which talks to GitHub.
 
 `relaxkit usage` runs the usage tool with `--offline` added unless you pass that flag yourself.

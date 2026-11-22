@@ -795,31 +795,6 @@ fn an_unlisted_plugin_fails_closed_and_installs_nothing() {
 }
 
 #[test]
-fn opencode_sandbox_pins_the_plugin_then_refuses_when_the_pin_is_not_listed() {
-    // The recording runner writes no config, so the pinned plugin is never listed: the handler refuses and
-    // writes no sandbox policy for a plugin that is not loaded.
-    let rig = prepared();
-    let (result, calls) = install(&rig, "opencode-sandbox", HostKind::Opencode);
-    let err = format!("{:#}", result.unwrap_err());
-    assert!(err.contains("opencode-sandbox@0.7.0"), "{err}");
-    assert!(
-        calls.contains(&tokens(&[
-            "opencode",
-            "plugin",
-            "add",
-            "opencode-sandbox@0.7.0"
-        ])),
-        "{calls:?}"
-    );
-    assert!(
-        !rig.root
-            .path()
-            .join(".config/opencode/sandbox.json")
-            .exists()
-    );
-}
-
-#[test]
 fn no_recipe_ever_runs_a_forbidden_command() {
     let forbidden = [
         "cargo install rtk",

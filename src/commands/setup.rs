@@ -266,7 +266,6 @@ fn sandbox_step(
 ) -> Result<()> {
     let plan = sandbox::linux_prerequisites(ctx)?;
     let packages = sudo_step(ctx, &plan)?;
-    let locked = Lockfile::load(ctx)?;
     let mut notes = Vec::new();
     for host in hosts {
         match host.info().kind {
@@ -276,21 +275,9 @@ fn sandbox_step(
                 sandbox::claude::apply(ctx, run, host.as_ref(), gh)?;
                 notes.push("Claude Code sandbox written".to_string());
             }
-            HostKind::Opencode => {
-                let version = locked
-                    .as_ref()
-                    .and_then(|lock| lock.tools.get("opencode-sandbox"))
-                    .filter(|tool| tool.hosts.iter().any(|h| h == "opencode"))
-                    .map(|tool| tool.version.clone());
-                match version {
-                    Some(version) => {
-                        sandbox::opencode::apply(ctx, run, host.as_ref(), &version)?;
-                        notes.push(format!("OpenCode sandbox {version} written"));
-                    }
-                    None => notes
-                        .push("OpenCode sandbox skipped: its plugin is not installed".to_string()),
-                }
-            }
+            // The OpenCode sandbox is relaxkit's own plugin (spec section 11). configure installs it and stops on failure.
+            HostKind::Opencode => notes
+                .push("OpenCode sandbox: relaxkit-opencode, installed by configure".to_string()),
         }
     }
     notes.push(packages);

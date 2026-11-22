@@ -6,7 +6,6 @@ mod support;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use relaxkit::commands::doctor::{self, Check, CheckStatus};
 use relaxkit::commands::status::{self, StatusReport};
@@ -22,8 +21,6 @@ use support::Scratch;
 
 const CLAUDE_VERSION: &str = "2.1.330";
 const OPENCODE_VERSION: &str = "2.2.6";
-const SANDBOX_RUNTIME: &str = "https://registry.npmjs.org/@anthropic-ai%2fsandbox-runtime";
-const SANDBOX_PLUGIN: &str = "https://registry.npmjs.org/opencode-sandbox";
 
 /// A context rooted at `root`, with the given fake runner and registry.
 fn ctx(root: &Path, runner: FakeRunner, net: FakeNet) -> Ctx {
@@ -110,23 +107,6 @@ fn doctor_reports_v1_mcp_shape_without_rewriting() {
     assert_eq!(check.status, CheckStatus::Warn, "{check:?}");
     assert!(check.fix.is_some(), "{check:?}");
     assert_eq!(fs::read_to_string(&config).unwrap(), text);
-}
-
-#[test]
-fn doctor_flags_a_project_sandbox_file() {
-    let root = tempfile::tempdir().unwrap();
-    let project = root.path().join("project");
-    write(
-        &project.join(".opencode/sandbox.json"),
-        "{\"mode\": \"permissive\"}\n",
-    );
-    let mut context = ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new());
-    context.project = Some(project);
-
-    let checks = doctor::checks_for(&context, &[]).unwrap();
-
-    let check = find(&checks, "project.sandbox_file");
-    assert_eq!(check.status, CheckStatus::Warn, "{check:?}");
 }
 
 #[test]
@@ -238,91 +218,6 @@ fn doctor_json_schema_is_stable() {
             "{entry}"
         );
     }
-}
-
-/// The date `days` before today, as the npm registry writes a release time.
-fn released_days_ago(days: i64) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-    let (year, month, day) = civil_from_days(now.div_euclid(86_400) - days);
-    format!("{year:04}-{month:02}-{day:02}T00:00:00.000Z")
-}
-
-/// Civil date of a day count since 1970-01-01 (the proleptic Gregorian calendar).
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
-}
-
-/// A registry that serves the pinned plugin, released `days` ago, with the runtime 0.0.76 to 0.0.83 published.
-fn sandbox_registry(days: i64) -> FakeNet {
-    let plugin = format!(
-        "{{\"dist-tags\":{{\"latest\":\"0.7.0\"}},\"time\":{{\"0.7.0\":\"{}\"}},\"versions\":{{\"0.7.0\":{{\"dependencies\":{{\"@anthropic-ai/sandbox-runtime\":\"^0.0.76\"}}}}}}}}",
-        released_days_ago(days)
-    );
-    let versions: Vec<String> = (76..=83)
-        .map(|patch| format!("\"0.0.{patch}\":{{}}"))
-        .collect();
-    let runtime = format!("{{\"versions\":{{{}}}}}", versions.join(","));
-    FakeNet::new()
-        .with(SANDBOX_PLUGIN, &plugin)
-        .with(SANDBOX_RUNTIME, &runtime)
-}
-
-#[test]
-fn doctor_warns_only_after_120_days_without_a_plugin_release() {
-    let root = tempfile::tempdir().unwrap();
-    lock(
-        root.path(),
-        &[("opencode-sandbox", "0.7.0", "npm", &["opencode"])],
-    );
-    let hosts = [opencode(root.path(), OPENCODE_VERSION)];
-
-    let at_119 = ctx(
-        root.path(),
-        refusing_sandbox(root.path()),
-        sandbox_registry(119),
-    );
-    let checks = doctor::checks_for(&at_119, &hosts).unwrap();
-    assert_eq!(
-        find(&checks, "plugin.opencode-sandbox").status,
-        CheckStatus::Ok
-    );
-
-    // Runtime lag alone never warns: 7 releases behind, released 3 days ago.
-    let lagging = ctx(
-        root.path(),
-        refusing_sandbox(root.path()),
-        sandbox_registry(3),
-    );
-    let checks = doctor::checks_for(&lagging, &hosts).unwrap();
-    assert_eq!(
-        find(&checks, "plugin.opencode-sandbox").status,
-        CheckStatus::Ok
-    );
-
-    let at_121 = ctx(
-        root.path(),
-        refusing_sandbox(root.path()),
-        sandbox_registry(121),
-    );
-    let checks = doctor::checks_for(&at_121, &hosts).unwrap();
-    let check = find(&checks, "plugin.opencode-sandbox");
-    assert_eq!(check.status, CheckStatus::Warn, "{check:?}");
-    assert!(
-        check.fix.as_deref().unwrap_or("").contains("wrapper"),
-        "{check:?}"
-    );
 }
 
 #[test]
@@ -561,18 +456,15 @@ fn opencode_tuple_plugin_entries_are_read_by_their_first_element() {
 #[test]
 fn status_reads_a_git_plugin_spec_version_from_its_tag() {
     // R8-1: a git spec `superpowers@git+https://...#v7.0.2` is at version 7.0.2, so status says "as locked" and
-    // prints no drift. An npm spec keeps its version after the `@`.
+    // prints no drift.
     let root = tempfile::tempdir().unwrap();
     lock(
         root.path(),
-        &[
-            ("superpowers", "7.0.2", "opencode-plugin", &["opencode"]),
-            ("opencode-sandbox", "0.7.0", "npm", &["opencode"]),
-        ],
+        &[("superpowers", "7.0.2", "opencode-plugin", &["opencode"])],
     );
     write(
         &config_file_in(&opencode_dir(root.path(), None)),
-        "{\"plugins\": [\"superpowers@git+https://github.com/obra/superpowers.git#v7.0.2\", \"opencode-sandbox@0.7.0\"]}\n",
+        "{\"plugins\": [\"superpowers@git+https://github.com/obra/superpowers.git#v7.0.2\"]}\n",
     );
     let context = ctx(root.path(), FakeRunner::new(), FakeNet::new());
 
@@ -582,12 +474,6 @@ fn status_reads_a_git_plugin_spec_version_from_its_tag() {
     assert!(
         text.contains(
             "superpowers on opencode: installed 7.0.2, locked 7.0.2 (opencode-plugin); as locked"
-        ),
-        "{text}"
-    );
-    assert!(
-        text.contains(
-            "opencode-sandbox on opencode: installed 0.7.0, locked 0.7.0 (npm); as locked"
         ),
         "{text}"
     );
@@ -643,27 +529,6 @@ fn doctor_fails_when_the_sandbox_selftest_cannot_fetch_its_runtime() {
     let check = find(&checks, "claude.sandbox.selftest");
     assert_eq!(check.status, CheckStatus::Fail, "{check:?}");
     assert!(check.message.contains("could not run"), "{check:?}");
-}
-
-#[test]
-fn doctor_treats_an_unreachable_registry_as_health_unknown() {
-    // The plugin's age comes from the npm registry. When the registry cannot be reached, the check is ok and says so
-    // (ruling OWNER-1 (a)); it is never a fail for the network alone.
-    let root = tempfile::tempdir().unwrap();
-    lock(
-        root.path(),
-        &[("opencode-sandbox", "1.0.0", "npm", &["opencode"])],
-    );
-
-    let checks = doctor::checks_for(
-        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
-        &[opencode(root.path(), OPENCODE_VERSION)],
-    )
-    .unwrap();
-
-    let check = find(&checks, "plugin.opencode-sandbox");
-    assert_eq!(check.status, CheckStatus::Ok, "{check:?}");
-    assert!(check.message.contains("health unknown"), "{check:?}");
 }
 
 #[test]
@@ -989,33 +854,6 @@ fn status_lists_other_node_installs_and_the_rtk_gain_line() {
 }
 
 #[test]
-fn status_shows_sandbox_plugin_age_and_runtime_lag() {
-    let root = tempfile::tempdir().unwrap();
-    lock(
-        root.path(),
-        &[("opencode-sandbox", "0.7.0", "npm", &["opencode"])],
-    );
-    let context = ctx(root.path(), FakeRunner::new(), sandbox_registry(3));
-
-    let report = status::report_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
-
-    let text = status_text(&report);
-    assert!(
-        text.contains("opencode-sandbox 0.7.0 (released 3d ago; bundles sandbox-runtime 0.0.76, 7 releases behind)"),
-        "{text}"
-    );
-
-    let unreachable = ctx(root.path(), FakeRunner::new(), FakeNet::new());
-    let report =
-        status::report_for(&unreachable, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
-    assert!(
-        status_text(&report).contains("health unknown"),
-        "{}",
-        status_text(&report)
-    );
-}
-
-#[test]
 fn doctor_fails_on_a_settings_file_that_does_not_parse() {
     let root = tempfile::tempdir().unwrap();
     let settings = root.path().join(".claude/settings.json");
@@ -1027,4 +865,192 @@ fn doctor_fails_on_a_settings_file_that_does_not_parse() {
     let check = find(&checks, "claude.settings");
     assert_eq!(check.status, CheckStatus::Fail, "{check:?}");
     assert_eq!(fs::read_to_string(&settings).unwrap(), "{\"env\": {\n");
+}
+
+// ---- the OpenCode sandbox plugin (spec 10 item 25) ----------------------------------------------------------------
+
+const RELAXKIT_OPENCODE_LISTED: &str = "{\"plugins\": [\"relaxkit-opencode@git+https://github.com/cpenaforte/relaxkit.git#v0.1.0::path:adapters/opencode-plugin\"]}\n";
+
+const SANDBOX_RUNTIME_REGISTRY: &str = "https://registry.npmjs.org/@anthropic-ai%2fsandbox-runtime";
+
+const RELAXKIT_LATEST_RELEASE: &str =
+    "https://api.github.com/repos/cpenaforte/relaxkit/releases/latest";
+
+/// The date `days` before today, as the registries write a release time.
+fn released_days_ago(days: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let (year, month, day) = civil_from_days(now.div_euclid(86_400) - days);
+    format!("{year:04}-{month:02}-{day:02}T00:00:00.000Z")
+}
+
+/// Civil date of a day count since 1970-01-01 (the proleptic Gregorian calendar).
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
+/// The network the plugin check reads. The bundled runtime 0.0.83 was released 200 days ago; when `newer` is given, 0.0.84
+/// was released that many days ago. relaxkit's newest release was `release_days` days ago.
+fn health_network(newer: Option<i64>, release_days: i64) -> FakeNet {
+    let mut versions = vec![("0.0.83".to_string(), released_days_ago(200))];
+    if let Some(days) = newer {
+        versions.push(("0.0.84".to_string(), released_days_ago(days)));
+    }
+    let listed: String = versions
+        .iter()
+        .map(|(version, _)| format!("\"{version}\": {{}}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let times: String = versions
+        .iter()
+        .map(|(version, at)| format!("\"{version}\": \"{at}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let body = format!(r#"{{"versions": {{{listed}}}, "time": {{{times}}}}}"#);
+    FakeNet::new().with(SANDBOX_RUNTIME_REGISTRY, &body).with(
+        RELAXKIT_LATEST_RELEASE,
+        &format!(
+            r#"{{"published_at": "{}"}}"#,
+            released_days_ago(release_days)
+        ),
+    )
+}
+
+#[test]
+fn doctor_fails_when_the_opencode_plugin_is_not_listed() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        &config_file_in(&opencode_dir(root.path(), None)),
+        "{\"plugins\": []}\n",
+    );
+    let context = ctx(root.path(), FakeRunner::new(), health_network(None, 3));
+
+    let checks = doctor::checks_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
+
+    let check = find(&checks, "opencode.sandbox.plugin");
+    assert_eq!(check.status, CheckStatus::Fail, "{check:?}");
+    assert!(
+        check.message.contains("not in the OpenCode plugins list"),
+        "{check:?}"
+    );
+}
+
+#[test]
+fn doctor_shows_a_listed_plugin_with_its_runtime_lag_and_release_age_as_ok() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        &config_file_in(&opencode_dir(root.path(), None)),
+        RELAXKIT_OPENCODE_LISTED,
+    );
+    let context = ctx(root.path(), FakeRunner::new(), health_network(Some(10), 3));
+
+    let checks = doctor::checks_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
+
+    let check = find(&checks, "opencode.sandbox.plugin");
+    assert_eq!(check.status, CheckStatus::Ok, "{check:?}");
+    assert!(
+        check
+            .message
+            .contains("sandbox-runtime 0.0.83 bundled, 1 release behind"),
+        "{check:?}"
+    );
+    assert!(
+        check
+            .message
+            .contains("relaxkit's newest release is 3 days old"),
+        "{check:?}"
+    );
+}
+
+#[test]
+fn doctor_warns_only_after_120_days_without_a_relaxkit_release() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        &config_file_in(&opencode_dir(root.path(), None)),
+        RELAXKIT_OPENCODE_LISTED,
+    );
+    let status_at = |days: i64| {
+        let context = ctx(root.path(), FakeRunner::new(), health_network(None, days));
+        find(
+            &doctor::checks_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap(),
+            "opencode.sandbox.plugin",
+        )
+        .status
+    };
+
+    assert_eq!(status_at(119), CheckStatus::Ok);
+    assert_eq!(status_at(121), CheckStatus::Warn);
+}
+
+#[test]
+fn doctor_never_warns_on_a_runtime_lag_alone() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        &config_file_in(&opencode_dir(root.path(), None)),
+        RELAXKIT_OPENCODE_LISTED,
+    );
+    // The runtime has been out of date for 150 days, but relaxkit released three days ago.
+    let context = ctx(root.path(), FakeRunner::new(), health_network(Some(150), 3));
+
+    let checks = doctor::checks_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
+
+    let check = find(&checks, "opencode.sandbox.plugin");
+    assert_eq!(check.status, CheckStatus::Ok, "{check:?}");
+}
+
+#[test]
+fn doctor_treats_an_unreachable_registry_as_unknown_not_a_failure() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        &config_file_in(&opencode_dir(root.path(), None)),
+        RELAXKIT_OPENCODE_LISTED,
+    );
+    let context = ctx(root.path(), FakeRunner::new(), FakeNet::new());
+
+    let checks = doctor::checks_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
+
+    let check = find(&checks, "opencode.sandbox.plugin");
+    assert_eq!(check.status, CheckStatus::Ok, "{check:?}");
+    assert!(check.message.contains("health unknown"), "{check:?}");
+    assert!(
+        check.message.contains("release age is unknown"),
+        "{check:?}"
+    );
+}
+
+#[test]
+fn status_shows_the_opencode_plugin_with_its_runtime_lag_and_release_age() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        &config_file_in(&opencode_dir(root.path(), None)),
+        RELAXKIT_OPENCODE_LISTED,
+    );
+    let context = ctx(root.path(), FakeRunner::new(), health_network(Some(10), 3));
+
+    let report = status::report_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
+
+    let text = status_text(&report);
+    assert!(
+        text.contains("the relaxkit-opencode plugin is listed"),
+        "{text}"
+    );
+    assert!(
+        text.contains("sandbox-runtime 0.0.83 bundled, 1 release behind"),
+        "{text}"
+    );
+    assert!(
+        text.contains("relaxkit's newest release is 3 days old"),
+        "{text}"
+    );
 }

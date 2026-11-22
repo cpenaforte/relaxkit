@@ -22,15 +22,12 @@ use crate::runtime::gh;
 use crate::runtime::nvm::{
     NodeInstall, NvmSearch, current_node, latest_node_24, link_node, update_node_in,
 };
-use crate::sandbox::candidate_runtime;
-use crate::sandbox::opencode::sandbox_config_path;
-use crate::sandbox::selftest::selftest_with;
 use crate::state::lockfile::{LockedTool, Lockfile};
 use crate::state::{record_backup, record_link};
 use crate::tools::engine::{Engine, UNVERSIONED};
 
 /// The rows in run order (K80): rtk first, the pinned tools and Node before the tools that run on Node, then the rest.
-const ORDER: [&str; 14] = [
+const ORDER: [&str; 13] = [
     "rtk",
     "nvm",
     "uv",
@@ -43,7 +40,6 @@ const ORDER: [&str; 14] = [
     "ccusage",
     "claude-md-management",
     "frontend-design",
-    "opencode-sandbox",
     "gh",
 ];
 
@@ -749,49 +745,6 @@ fn tool_flow(
         .collect();
     let every_pinnable = present.iter().all(|kind| pinnable(recipe, *kind));
 
-    // The sandbox plugin moves only after the self-test passes (K68). A failure keeps the locked version and names it.
-    if plan.id == "opencode-sandbox" {
-        let host = hosts
-            .iter()
-            .find(|host| host.info().kind == HostKind::Opencode);
-        if let Some(host) = host {
-            let kept = plan.installed.clone().unwrap_or_default();
-            // The candidate is proven with the runtime it declares. Without that metadata nothing can be proven, so
-            // nothing moves and the tool is named.
-            let runtime = match candidate_runtime(ctx, &target) {
-                Ok(runtime) => runtime,
-                Err(err) => {
-                    report.failed.push(plan.id.to_string());
-                    return (
-                        row(
-                            RowResult::NotTouched(format!(
-                                "{target} declares no readable runtime, so the locked {kept} stays"
-                            )),
-                            Some(format!("{err:#}")),
-                        ),
-                        Vec::new(),
-                    );
-                }
-            };
-            let failing: Vec<&str> = selftest_with(ctx, host.as_ref(), &runtime)
-                .iter()
-                .filter(|probe| !probe.passed)
-                .map(|probe| probe.probe)
-                .collect();
-            if !failing.is_empty() {
-                report.failed.push(plan.id.to_string());
-                return (
-                    row(
-                        RowResult::NotTouched(format!(
-                            "the sandbox self-test on runtime {runtime} failed for {target}, so the locked {kept} stays"
-                        )),
-                        Some(failing.join("; ")),
-                    ),
-                    Vec::new(),
-                );
-            }
-        }
-    }
     match engine.update(&scope, &target) {
         Ok(out) => {
             if out.updated.is_empty() {
@@ -965,7 +918,7 @@ impl FileState {
 }
 
 /// Backs up everything the run may touch, before any change (K67): the lock snapshot and its journal record, the
-/// existing user files of each detected host, the sandbox policy, and the pack's rtk copy. The rtk copy is journaled
+/// existing user files of each detected host, and the pack's rtk copy. The rtk copy is journaled
 /// even when absent, because the release is written as a new file, and undo must remove it again. A link is not backed
 /// up: a backup would read the file behind it, and undo does not restore links.
 fn back_up_first(
@@ -978,11 +931,7 @@ fn back_up_first(
         lock.snapshot(ctx, &ctx.run)?;
     }
     let rtk = ctx.dirs.bin.join("rtk");
-    let mut candidates: Vec<PathBuf> = vec![
-        ctx.dirs.config.join("lock.toml"),
-        sandbox_config_path(ctx),
-        rtk.clone(),
-    ];
+    let mut candidates: Vec<PathBuf> = vec![ctx.dirs.config.join("lock.toml"), rtk.clone()];
     for host in hosts {
         candidates.extend(host.state_files(ctx));
         candidates.push(host.config_file(ctx));
@@ -998,9 +947,9 @@ fn back_up_first(
         {
             continue;
         }
-        // An absent file is journaled only where this run writes it without `safe_write`: the pack rtk copy. The
-        // sandbox policy and host configs are journaled by `safe_write` just before a write, so a file the update never
-        // writes is never recorded as created (undo would otherwise delete a file the user made later).
+        // An absent file is journaled only where this run writes it without `safe_write`: the pack rtk copy. Host
+        // configs are journaled by `safe_write` just before a write, so a file the update never writes is never
+        // recorded as created (undo would otherwise delete a file the user made later).
         let may_create = file == rtk && rtk_needed;
         if !file.exists() && !may_create {
             continue;

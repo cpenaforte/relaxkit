@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde_json::{Value, json};
 
+use crate::adapters::OPENCODE_PLUGIN;
 use crate::commands::read_optional;
 use crate::commands::setup::sudo_command;
 use crate::config_apply::caveman::PLUGIN_SPEC;
@@ -20,8 +21,9 @@ use crate::platform::{
 };
 use crate::recipe::{Kind, Probe, Recipe, Step, load_all};
 use crate::runtime::nvm::{node_bin, npx_bin};
+use crate::sandbox::health::{health_line, is_stale, plugin_health};
+use crate::sandbox::linux_prerequisites;
 use crate::sandbox::selftest::selftest;
-use crate::sandbox::{linux_prerequisites, plugin_health};
 use crate::state::lockfile::Lockfile;
 use crate::tools::detect::{plugin_name, plugin_spec};
 use crate::tools::engine::{mcp_path_dirs, probe_path};
@@ -100,8 +102,7 @@ pub fn checks_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<Vec<Check>> {
             HostKind::Opencode => opencode_checks(ctx, host.as_ref(), &mut checks)?,
         }
     }
-    project_check(ctx, &mut checks);
-    plugin_check(ctx, &mut checks)?;
+    plugin_check(ctx, hosts, &mut checks)?;
     tool_probe_checks(ctx, hosts, &mut checks)?;
     mcp_checks(ctx, hosts, &mut checks)?;
     Ok(checks)
@@ -273,60 +274,51 @@ fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>)
     Ok(())
 }
 
-/// A sandbox file in the project would be read before relaxkit's global one (spec 10 item 15). Checked only when a
-/// project is given.
-fn project_check(ctx: &Ctx, checks: &mut Vec<Check>) {
-    let Some(project) = &ctx.project else {
-        return;
+/// The OpenCode sandbox plugin (spec 7; spec 10 item 25). The plugin must be listed, or the OpenCode sandbox is not
+/// enforced. The check warns only when relaxkit has had no release for 120 days; a runtime lag never warns on its own,
+/// and an unreachable registry or GitHub is not a failure.
+fn plugin_check(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Result<()> {
+    let Some(host) = hosts
+        .iter()
+        .find(|host| host.info().kind == HostKind::Opencode)
+    else {
+        return Ok(());
     };
-    let file = project.join(".opencode").join("sandbox.json");
-    if file.exists() {
-        checks.push(Check::warn(
-            "project.sandbox_file",
+    let id = "opencode.sandbox.plugin";
+    let listed = match host.plugin_list(ctx) {
+        Ok(plugins) => plugins.iter().any(|plugin| plugin.name == OPENCODE_PLUGIN),
+        Err(err) => {
+            checks.push(Check::fail(
+                id,
+                format!("the OpenCode plugins entry cannot be read: {err:#}"),
+                "repair the plugins entry by hand; relaxkit does not rewrite a file it cannot read",
+            ));
+            return Ok(());
+        }
+    };
+    if !listed {
+        checks.push(Check::fail(
+            id,
             format!(
-                "{} is read before relaxkit's sandbox config",
-                file.display()
+                "{OPENCODE_PLUGIN} is not in the OpenCode plugins list, so the OpenCode sandbox is not enforced"
             ),
-            "delete it, or move its settings into the global sandbox config",
+            "run relaxkit setup",
+        ));
+        return Ok(());
+    }
+    let health = plugin_health(ctx);
+    let line = format!("{OPENCODE_PLUGIN} is listed; {}", health_line(&health));
+    if is_stale(&health) {
+        checks.push(Check::warn(
+            id,
+            line,
+            "relaxkit has had no release for 120 days; run relaxkit update --self when a newer one is out",
         ));
     } else {
-        checks.push(Check::ok("project.sandbox_file", "no project sandbox file"));
-    }
-}
-
-/// The sandbox plugin's age (spec 10 item 25). It warns only after 120 days without a release; runtime lag alone
-/// never warns. An unreachable registry is not a failure.
-fn plugin_check(ctx: &Ctx, checks: &mut Vec<Check>) -> Result<()> {
-    let Some(lock) = Lockfile::load(ctx)? else {
-        return Ok(());
-    };
-    let Some(tool) = lock.tools.get("opencode-sandbox") else {
-        return Ok(());
-    };
-    let id = "plugin.opencode-sandbox";
-    match plugin_health(ctx, &tool.version) {
-        Ok(health) if health.release_age_days > STALE_AFTER_DAYS => checks.push(Check::warn(
-            id,
-            format!(
-                "opencode-sandbox {} has had no release for {} days (over {STALE_AFTER_DAYS})",
-                tool.version, health.release_age_days
-            ),
-            "watch for a release; if none comes, the contingency is a relaxkit-owned wrapper on @anthropic-ai/sandbox-runtime inside the OpenCode plugin (not built in v1)",
-        )),
-        Ok(health) => checks.push(Check::ok(
-            id,
-            format!(
-                "latest release {} days ago; runtime lag {} (a lag alone never warns)",
-                health.release_age_days, health.runtime_lag
-            ),
-        )),
-        Err(err) => checks.push(Check::ok(id, format!("health unknown: {err:#}"))),
+        checks.push(Check::ok(id, line));
     }
     Ok(())
 }
-
-/// Days without a plugin release before doctor warns (spec 10 item 25).
-const STALE_AFTER_DAYS: u32 = 120;
 
 /// Each locked tool's probe, for each installed host it is locked on. A probe whose program is set at install time
 /// (`{npx}`) is not run here.

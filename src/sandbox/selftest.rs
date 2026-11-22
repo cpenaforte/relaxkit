@@ -16,9 +16,11 @@ use crate::host::Host;
 use crate::runtime::nvm::npx_bin;
 use crate::runtime::utf8;
 
-/// The sandbox runtime package the self-test drives (spec 7, item 25). It is the version the OpenCode plugin bundles.
+/// The sandbox runtime package the self-test drives (spec 7, item 25).
 pub const RUNTIME_PACKAGE: &str = "@anthropic-ai/sandbox-runtime";
-pub const RUNTIME_PIN: &str = "0.0.76";
+/// The runtime version the self-test drives: the one the OpenCode plugin bundles (`adapters/opencode-plugin/package.json`,
+/// checked by a drift test).
+pub const RUNTIME_PIN: &str = "0.0.83";
 
 /// The probe names, in the order `selftest` runs them.
 pub const PROBES: [&str; 3] = [

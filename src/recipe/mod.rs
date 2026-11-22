@@ -78,7 +78,7 @@ mod tests {
     use crate::host::HostKind;
     use std::collections::BTreeSet;
 
-    const EXPECTED_IDS: [&str; 10] = [
+    const EXPECTED_IDS: [&str; 9] = [
         "superpowers",
         "rtk",
         "caveman",
@@ -88,7 +88,6 @@ mod tests {
         "ccusage",
         "claude-md-management",
         "frontend-design",
-        "opencode-sandbox",
     ];
 
     const FIXTURE: &str = r#"
@@ -169,13 +168,10 @@ argv = ["fixture", "--version"]
     fn host_scope_matches_the_spec() {
         let both: BTreeSet<HostKind> = [HostKind::Claude, HostKind::Opencode].into();
         let claude_only: BTreeSet<HostKind> = [HostKind::Claude].into();
-        let opencode_only: BTreeSet<HostKind> = [HostKind::Opencode].into();
         for id in ["claude-md-management", "frontend-design"] {
             let hosts: BTreeSet<HostKind> = by_id(id).hosts.into_iter().collect();
             assert_eq!(hosts, claude_only, "{id}");
         }
-        let sandbox: BTreeSet<HostKind> = by_id("opencode-sandbox").hosts.into_iter().collect();
-        assert_eq!(sandbox, opencode_only);
         for id in [
             "superpowers",
             "rtk",
@@ -283,7 +279,7 @@ argv = ["fixture", "--version"]
 
     #[test]
     fn every_recipe_pin_matches_the_table() {
-        let table: [(&str, Option<&str>); 10] = [
+        let table: [(&str, Option<&str>); 9] = [
             ("superpowers", Some("7.0.2")),
             ("rtk", Some("1.2.1")),
             ("caveman", Some("4.1.0")),
@@ -293,7 +289,6 @@ argv = ["fixture", "--version"]
             ("ccusage", Some("20.0.51")),
             ("claude-md-management", None),
             ("frontend-design", None),
-            ("opencode-sandbox", Some("0.7.0")),
         ];
         for (id, pin) in table {
             let recipe = by_id(id);

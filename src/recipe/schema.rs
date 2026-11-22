@@ -9,12 +9,11 @@ use serde::Deserialize;
 use crate::host::HostKind;
 
 /// Handler steps that relaxkit implements in code. A recipe may name only these.
-pub const KNOWN_HANDLERS: [&str; 7] = [
+pub const KNOWN_HANDLERS: [&str; 6] = [
     "chromium",
     "caveman_cli",
     "serena_init",
     "claude_marketplace",
-    "opencode_sandbox_config",
     "rtk_claude_hook",
     "caveman_opencode",
 ];

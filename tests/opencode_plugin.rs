@@ -80,7 +80,8 @@ fn plugin_package_matches_the_crate() {
     assert_eq!(package["name"], "relaxkit-opencode", "{package}");
     assert_eq!(package["version"], env!("CARGO_PKG_VERSION"), "{package}");
     assert_eq!(
-        package["dependencies"]["@anthropic-ai/sandbox-runtime"], "0.0.83",
+        package["dependencies"]["@anthropic-ai/sandbox-runtime"],
+        relaxkit::sandbox::selftest::RUNTIME_PIN,
         "{package}"
     );
 }

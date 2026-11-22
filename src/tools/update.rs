@@ -155,7 +155,7 @@ impl Engine<'_> {
             run(self, next, host, &mut vars)?;
         }
         // The configuration steps run again after the change, so a new binary keeps its hook and its settings (rtk's
-        // hook, caveman's routing and telemetry, the OpenCode sandbox policy for its new pin).
+        // hook, caveman's routing and telemetry).
         self.run_config_steps(next, host)?;
         Ok(())
     }

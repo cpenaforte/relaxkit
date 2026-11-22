@@ -64,7 +64,7 @@ impl Plan {
 
 /// Handlers that only configure a tool that is already installed. An adopted install runs them too (ruling T12-2
 /// covers configuration steps), so rtk on Claude gets its hook whether relaxkit installed rtk or found it.
-const CONFIGURATION_HANDLERS: [&str; 2] = ["rtk_claude_hook", "opencode_sandbox_config"];
+const CONFIGURATION_HANDLERS: [&str; 1] = ["rtk_claude_hook"];
 
 /// The steps of a recipe on `kind` that install or add nothing: the configuration an adopted install still
 /// needs (for example `rtk init -g`, `caveman telemetry off` or the rtk hook).
@@ -1398,12 +1398,12 @@ exec = ["caveman", "telemetry", "off"]
     }
 
     #[test]
-    fn adopted_install_still_runs_the_opencode_sandbox_config_handler() {
+    fn adopted_install_still_runs_the_configuration_handler() {
         let text = r#"
 id = "fixture"
 title = "Fixture"
-kind = "plugin"
-hosts = ["opencode"]
+kind = "npm"
+hosts = ["claude"]
 needs_login = false
 telemetry_default_off = true
 
@@ -1412,25 +1412,22 @@ npm = "fixture-pkg"
 pin = "1.2.3"
 
 [minimum_host]
-opencode = "2.2.6"
+claude = "2.1.330"
 
-[probe.opencode]
+[probe.claude]
 argv = ["fixture-pkg", "--help"]
 
-[[install.opencode]]
-plugin = "fixture-pkg@{version}"
-
-[[install.opencode]]
-handler = "opencode_sandbox_config"
+[[install.claude]]
+handler = "rtk_claude_hook"
 "#;
         let recipe = fixture(text);
 
-        let steps = config_steps(&recipe, HostKind::Opencode);
+        let steps = config_steps(&recipe, HostKind::Claude);
 
         assert!(
-            steps.iter().any(
-                |step| matches!(step, Step::Handler { name } if name == "opencode_sandbox_config")
-            ),
+            steps
+                .iter()
+                .any(|step| matches!(step, Step::Handler { name } if name == "rtk_claude_hook")),
             "{steps:?}"
         );
     }
@@ -1464,7 +1461,7 @@ argv = ["fixture-pkg", "--help"]
 exec = ["fixture-pkg", "install"]
 
 [[install.opencode]]
-handler = "opencode_sandbox_config"
+handler = "caveman_opencode"
 "#;
         let mut recipe = fixture(text);
         unregistered_handler(&mut recipe);

@@ -154,6 +154,31 @@ fn setup_with_only_claude_skips_opencode_steps() {
 }
 
 #[test]
+fn setup_with_only_opencode_reaches_the_opencode_steps() {
+    // Every recipe is locked, so the install loop does not reach GitHub. The run then goes through configure (which
+    // installs the relaxkit-opencode adapter), sandbox, login and verify, and makes no Claude Code call. The exit code
+    // is not checked: the stubs do not write the OpenCode config, so verify reports those entries.
+    let scratch = Scratch::new();
+    scratch.without("claude");
+    write_lock_except(&scratch, None);
+
+    let out = scratch.relaxkit().arg("setup").output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("sandbox: OpenCode sandbox: relaxkit-opencode, installed by configure"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("login: already logged in"), "{stdout}");
+    assert!(stdout.contains("verify: doctor ran"), "{stdout}");
+    let calls = scratch.calls();
+    assert!(
+        calls.iter().all(|call| !call.starts_with("claude ")),
+        "{calls:?}"
+    );
+}
+
+#[test]
 fn setup_with_only_opencode_runs_no_claude_step() {
     // Caveman's OpenCode files come from GitHub, which this test does not reach, so the run is expected to stop
     // there. The check is that no Claude Code step ran first.
@@ -572,7 +597,6 @@ const LOCKED_RECIPES: &[(&str, &str, &str, &str)] = &[
         "\"claude\"",
     ),
     ("frontend-design", "1.0.0", "claude-plugin", "\"claude\""),
-    ("opencode-sandbox", "1.0.0", "npm", "\"opencode\""),
     ("playwright", "1.0.0", "npm", "\"claude\", \"opencode\""),
     ("rtk", "1.2.1", "script", "\"claude\", \"opencode\""),
     ("serena", "2.1.0", "uv", "\"claude\", \"opencode\""),

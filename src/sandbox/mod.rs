@@ -1,24 +1,16 @@
-//! Sandbox configuration for both hosts (spec section 7): the OpenCode sandbox config, and later the Claude Code
-//! settings, the self-test, the Linux prerequisites and the plugin health check.
+//! Sandbox configuration for Claude Code (spec section 7): settings, the self-test and the Linux prerequisites.
 
 pub mod claude;
-pub mod opencode;
+pub mod health;
 pub mod selftest;
 
-use selftest::RUNTIME_PACKAGE;
-
-use anyhow::{Context, Result, anyhow, bail};
-use semver::{Version, VersionReq};
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 
 use crate::ctx::Ctx;
 use crate::edit::{jsonc_append, jsonc_get, jsonc_set};
 use crate::exec::Cmd;
-use crate::net::Net;
 use crate::platform::{Os, PrereqPlan, current_os, prerequisite_plan};
-
-/// The package name of the OpenCode sandbox plugin (spec 7, pinned in the recipe).
-pub const PLUGIN_PACKAGE: &str = "opencode-sandbox";
 
 /// The domains both hosts' sandboxes allow by default (spec 7). The user's own domains are kept beside these.
 pub const ALLOWED_DOMAINS: [&str; 7] = [
@@ -75,155 +67,6 @@ pub fn run_prerequisites(ctx: &Ctx, plan: &PrereqPlan, confirmed: bool) -> Resul
         );
     }
     Ok(())
-}
-
-/// What the plugin health check reports about the pinned OpenCode sandbox plugin (spec 7, item 25).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginHealth {
-    /// Days since the plugin's latest release.
-    pub release_age_days: u32,
-    /// The runtime version the pinned plugin bundles: the highest published version its dependency range allows.
-    pub bundled_runtime: String,
-    /// The highest published runtime version.
-    pub newest_runtime: String,
-    /// How many published runtime versions are newer than the bundled one.
-    pub runtime_lag: u32,
-}
-
-/// The plugin health of `plugin_version`, read from the npm registry through `ctx.net`. It fails soft: the caller
-/// shows a failure as an `unknown` line (see `health_line`) and never stops setup or update.
-pub fn plugin_health(ctx: &Ctx, plugin_version: &str) -> Result<PluginHealth> {
-    plugin_health_at(ctx, plugin_version, now_seconds())
-}
-
-/// The exact runtime version the candidate plugin `plugin_version` declares: the newest published runtime that matches
-/// the candidate's dependency range. Nothing is assumed when the registry cannot say, so the caller must not move.
-pub fn candidate_runtime(ctx: &Ctx, plugin_version: &str) -> Result<String> {
-    let net: &dyn Net = ctx.net.as_ref();
-    let plugin = npm_document(net, PLUGIN_PACKAGE)?;
-    let range = plugin["versions"][plugin_version]["dependencies"][RUNTIME_PACKAGE]
-        .as_str()
-        .ok_or_else(|| {
-            anyhow!("{PLUGIN_PACKAGE}@{plugin_version} has no {RUNTIME_PACKAGE} dependency")
-        })?;
-    let req = VersionReq::parse(range).with_context(|| {
-        format!("{PLUGIN_PACKAGE}@{plugin_version} has a bad {RUNTIME_PACKAGE} range")
-    })?;
-    let runtime = npm_document(net, RUNTIME_PACKAGE)?;
-    let best = runtime["versions"]
-        .as_object()
-        .ok_or_else(|| anyhow!("{RUNTIME_PACKAGE} lists no versions"))?
-        .keys()
-        .filter_map(|text| Version::parse(text).ok())
-        .filter(|version| version.pre.is_empty() && req.matches(version))
-        .max()
-        .ok_or_else(|| anyhow!("no published {RUNTIME_PACKAGE} matches {range}"))?;
-    Ok(best.to_string())
-}
-
-/// `plugin_health` with the clock given, so the release age is computed against a known instant in tests.
-fn plugin_health_at(ctx: &Ctx, plugin_version: &str, now: i64) -> Result<PluginHealth> {
-    let net: &dyn Net = ctx.net.as_ref();
-    let plugin = npm_document(net, PLUGIN_PACKAGE)?;
-    let latest = plugin["dist-tags"]["latest"]
-        .as_str()
-        .ok_or_else(|| anyhow!("{PLUGIN_PACKAGE} has no latest tag"))?;
-    let released = plugin["time"][latest]
-        .as_str()
-        .ok_or_else(|| anyhow!("{PLUGIN_PACKAGE} has no release time for {latest}"))?;
-    let days = (now - parse_utc(released)?).max(0) / 86_400;
-    let release_age_days = u32::try_from(days).unwrap_or(u32::MAX);
-
-    let range = plugin["versions"][plugin_version]["dependencies"][RUNTIME_PACKAGE]
-        .as_str()
-        .ok_or_else(|| {
-            anyhow!("{PLUGIN_PACKAGE}@{plugin_version} has no {RUNTIME_PACKAGE} dependency")
-        })?;
-    let range = VersionReq::parse(range).with_context(|| {
-        format!("{PLUGIN_PACKAGE}@{plugin_version} has a bad {RUNTIME_PACKAGE} range")
-    })?;
-
-    let runtime = npm_document(net, RUNTIME_PACKAGE)?;
-    let published: Vec<Version> = runtime["versions"]
-        .as_object()
-        .ok_or_else(|| anyhow!("{RUNTIME_PACKAGE} lists no versions"))?
-        .keys()
-        .filter_map(|text| Version::parse(text).ok())
-        .filter(|version| version.pre.is_empty())
-        .collect();
-    let bundled = published
-        .iter()
-        .filter(|version| range.matches(version))
-        .max()
-        .ok_or_else(|| anyhow!("no published {RUNTIME_PACKAGE} matches {range}"))?;
-    let newest = published
-        .iter()
-        .max()
-        .ok_or_else(|| anyhow!("{RUNTIME_PACKAGE} has no published versions"))?;
-    let behind = published
-        .iter()
-        .filter(|version| *version > bundled)
-        .count();
-
-    Ok(PluginHealth {
-        release_age_days,
-        bundled_runtime: bundled.to_string(),
-        newest_runtime: newest.to_string(),
-        runtime_lag: u32::try_from(behind).unwrap_or(u32::MAX),
-    })
-}
-
-/// A package's registry document, read through the net abstraction. Scoped names are encoded as `@scope%2fname`.
-fn npm_document(net: &dyn Net, package: &str) -> Result<Value> {
-    let encoded = package.replace('/', "%2f");
-    let body = net
-        .get_text(&format!("https://registry.npmjs.org/{encoded}"))
-        .with_context(|| format!("cannot read the npm registry entry for {package}"))?;
-    serde_json::from_str(&body)
-        .with_context(|| format!("the npm registry entry for {package} is not JSON"))
-}
-
-/// One line for `status` or `doctor`: the health of the plugin, or `unknown` with the reason when it cannot be read.
-pub fn health_line(result: &Result<PluginHealth>) -> String {
-    match result {
-        Ok(health) => format!(
-            "{PLUGIN_PACKAGE}: latest release {} days ago; bundles {RUNTIME_PACKAGE} {}, newest {}, {} releases behind",
-            health.release_age_days,
-            health.bundled_runtime,
-            health.newest_runtime,
-            health.runtime_lag
-        ),
-        Err(err) => format!("{PLUGIN_PACKAGE}: unknown ({err:#})"),
-    }
-}
-
-/// Seconds since the epoch of an RFC 3339 UTC time as the npm registry writes it (`2026-11-18T12:00:00.000Z`).
-fn parse_utc(text: &str) -> Result<i64> {
-    let number = |range: std::ops::Range<usize>| -> Result<i64> {
-        text.get(range)
-            .and_then(|digits| digits.parse().ok())
-            .ok_or_else(|| anyhow!("not an RFC 3339 UTC time: {text}"))
-    };
-    let days = days_from_civil(number(0..4)?, number(5..7)?, number(8..10)?);
-    Ok(days * 86_400 + number(11..13)? * 3_600 + number(14..16)? * 60 + number(17..19)?)
-}
-
-/// Days since 1970-01-01 of a proleptic Gregorian date (the standard civil-calendar algorithm).
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let month_from_march = (month + 9) % 12;
-    let day_of_year = (153 * month_from_march + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
-fn now_seconds() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 /// Adds each wanted string to the JSON array at `path`, after the items already there, and skips any that are
@@ -354,80 +197,6 @@ mod tests {
         let text = r#"{"network": {"allowedDomains": "github.com"}}"#;
 
         assert!(union_strings(text, &["network", "allowedDomains"], &["pypi.org"]).is_err());
-    }
-}
-
-#[cfg(test)]
-mod plugin_tests {
-    use super::*;
-    use crate::exec::FakeRunner;
-    use crate::net::FakeNet;
-    use crate::sandbox::selftest::RUNTIME_PACKAGE;
-
-    /// 2026-11-21T12:00:00Z.
-    const NOW: i64 = 1_795_262_400;
-
-    fn ctx(net: FakeNet) -> Ctx {
-        Ctx::for_test(
-            std::path::Path::new("/nonexistent-home"),
-            FakeRunner::new(),
-            net,
-        )
-    }
-
-    fn registry(plugin_latest_at: &str) -> FakeNet {
-        let plugin = format!(
-            r#"{{"dist-tags": {{"latest": "0.7.0"}}, "time": {{"0.7.0": "{plugin_latest_at}"}},
-                "versions": {{"0.7.0": {{"dependencies": {{"{RUNTIME_PACKAGE}": "^0.0.76"}}}}}}}}"#
-        );
-        let runtime_versions: String = (76..=83)
-            .map(|patch| format!("\"0.0.{patch}\": {{}}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let runtime = format!(r#"{{"versions": {{{runtime_versions}}}}}"#);
-        FakeNet::new()
-            .with("https://registry.npmjs.org/opencode-sandbox", &plugin)
-            .with(
-                "https://registry.npmjs.org/@anthropic-ai%2fsandbox-runtime",
-                &runtime,
-            )
-    }
-
-    #[test]
-    fn plugin_health_reports_age_and_runtime_lag() {
-        let ctx = ctx(registry("2026-11-18T12:00:00.000Z"));
-
-        let health = plugin_health_at(&ctx, "0.7.0", NOW).unwrap();
-
-        assert_eq!(
-            health,
-            PluginHealth {
-                release_age_days: 3,
-                bundled_runtime: "0.0.76".to_string(),
-                newest_runtime: "0.0.83".to_string(),
-                runtime_lag: 7,
-            }
-        );
-        assert!(health_line(&Ok(health)).contains("0.0.83"));
-    }
-
-    #[test]
-    fn plugin_health_fails_soft_when_the_registry_is_unreachable() {
-        let ctx = ctx(FakeNet::new());
-
-        let result = plugin_health_at(&ctx, "0.7.0", NOW);
-
-        assert!(result.is_err());
-        let line = health_line(&result);
-        assert!(line.contains("unknown"), "{line}");
-        assert!(line.contains("opencode-sandbox"), "{line}");
-    }
-
-    #[test]
-    fn utc_times_from_the_registry_are_read_as_seconds() {
-        assert_eq!(parse_utc("1970-01-01T00:00:00.000Z").unwrap(), 0);
-        assert_eq!(parse_utc("2000-03-01T00:00:00.000Z").unwrap(), 951_868_800);
-        assert!(parse_utc("not a time").is_err());
     }
 }
 

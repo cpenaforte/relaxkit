@@ -30,7 +30,6 @@ pub fn lookup(name: &str) -> Option<HandlerFn> {
         "serena_init" => Some(serena_init),
         "claude_marketplace" => Some(claude_marketplace),
         "rtk_claude_hook" => Some(rtk_claude_hook),
-        "opencode_sandbox_config" => Some(opencode_sandbox_config),
         _ => None,
     }
 }
@@ -234,18 +233,6 @@ fn rtk_claude_hook(
     apply_rtk_hook(engine.ctx, engine.run, host)
 }
 
-/// Writes the global OpenCode sandbox config in enforce mode (spec 7, owner decision O6). It runs after the recipe's
-/// `plugin` step, which pins the plugin, and refuses when that pin is not listed.
-fn opencode_sandbox_config(
-    engine: &Engine<'_>,
-    recipe: &Recipe,
-    host: &dyn Host,
-    _vars: &mut Vars,
-) -> Result<()> {
-    let version = pinned(recipe)?;
-    crate::sandbox::opencode::apply(engine.ctx, engine.run, host, version)
-}
-
 fn pinned(recipe: &Recipe) -> Result<&str> {
     recipe
         .pin
@@ -260,10 +247,5 @@ mod tests {
     #[test]
     fn caveman_opencode_is_registered() {
         assert!(lookup("caveman_opencode").is_some());
-    }
-
-    #[test]
-    fn opencode_sandbox_config_is_registered() {
-        assert!(lookup("opencode_sandbox_config").is_some());
     }
 }

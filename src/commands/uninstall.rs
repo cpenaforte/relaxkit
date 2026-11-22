@@ -1,5 +1,5 @@
 //! `relaxkit uninstall` (spec 6, ruling K106). Removes only what relaxkit wrote: the pack's MCP entries, the config
-//! keys the pack wrote, the roles blocks, the sandbox policy, and the pack's binary copies under `dirs.bin`. Every
+//! keys the pack wrote, the roles blocks, and the pack's binary copies under `dirs.bin`. Every
 //! other entry stays, including the user's own agents and the plugins the user installed. Every removal is journaled,
 //! so `relaxkit undo` reverts it. The binary itself, the Node link and the pack's plugins are left in place, and the
 //! report lists them.
@@ -18,7 +18,7 @@ use crate::ctx::Ctx;
 use crate::edit::{block_remove, jsonc_get, jsonc_remove, jsonc_restore_if, jsonc_set};
 use crate::host::{Host, HostKind, detect_hosts};
 use crate::recipe::{Step, load_all};
-use crate::sandbox::{self, opencode as sandbox_opencode};
+use crate::sandbox;
 use crate::state::lockfile::Lockfile;
 use crate::state::{OriginalText, RunId, original_text, record_backup, record_link, with_run_lock};
 
@@ -172,7 +172,7 @@ fn strip_claude_keys(
     Ok(text)
 }
 
-/// The OpenCode agents and routing block the pack wrote, and the sandbox policy file it wrote.
+/// The OpenCode agents and routing block the pack wrote.
 fn remove_opencode(
     ctx: &Ctx,
     run: &RunId,
@@ -189,19 +189,6 @@ fn remove_opencode(
         &available,
     )?;
     // No compaction buffer is removed: relaxkit writes none on OpenCode (K114), so one present is the user's.
-    // Only a regular file is removed: a link is left alone, since undo does not restore links it never journaled.
-    let policy = sandbox_opencode::sandbox_config_path(ctx);
-    if policy.symlink_metadata().is_ok_and(|meta| meta.is_file()) {
-        record_backup(ctx, run, &policy)?;
-        if !ctx.dry_run {
-            fs::remove_file(&policy)
-                .with_context(|| format!("cannot remove {}", policy.display()))?;
-        }
-        lines.push(format!(
-            "removed the OpenCode sandbox policy {}",
-            policy.display()
-        ));
-    }
     lines.push("removed the OpenCode agents and routing block relaxkit wrote".to_string());
     Ok(())
 }

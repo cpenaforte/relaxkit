@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 
+use crate::adapters::OPENCODE_PLUGIN;
 use crate::commands::read_optional;
 use crate::commands::setup::opencode_models;
 use crate::config::{KitConfig, effective};
@@ -16,8 +17,7 @@ use crate::recipe::load_all;
 use crate::recipe::schema::Kind;
 use crate::roles::{Role, resolve_claude, resolve_opencode};
 use crate::runtime::nvm::{NodeInstall, other_nodes};
-use crate::sandbox::opencode::sandbox_config_path;
-use crate::sandbox::plugin_health;
+use crate::sandbox::health::{health_line, plugin_health};
 use crate::state::lockfile::Lockfile;
 use crate::tools::Engine;
 
@@ -142,8 +142,7 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
 
     role_lines(ctx, hosts, &config, &mut lines);
     drift_lines(ctx, hosts, &config, &mut lines)?;
-    sandbox_lines(ctx, hosts, lock.as_ref(), &mut lines)?;
-    plugin_line(ctx, lock.as_ref(), &mut lines);
+    sandbox_lines(ctx, hosts, &mut lines)?;
 
     let others = other_nodes(ctx);
     if others.is_empty() {
@@ -245,13 +244,9 @@ fn drift_lines(
     Ok(())
 }
 
-/// Whether each host's sandbox is enforcing (spec 7): Claude Code's settings, and the OpenCode sandbox file's mode.
-fn sandbox_lines(
-    ctx: &Ctx,
-    hosts: &[Box<dyn Host>],
-    lock: Option<&Lockfile>,
-    lines: &mut Vec<String>,
-) -> Result<()> {
+/// Whether each host's sandbox is enforcing (spec 7): Claude Code's settings, and whether the OpenCode sandbox plugin
+/// is listed.
+fn sandbox_lines(ctx: &Ctx, hosts: &[Box<dyn Host>], lines: &mut Vec<String>) -> Result<()> {
     for host in hosts {
         match host.info().kind {
             HostKind::Claude => {
@@ -268,43 +263,23 @@ fn sandbox_lines(
                 });
             }
             HostKind::Opencode => {
-                let Some(tool) = lock.and_then(|lock| lock.tools.get("opencode-sandbox")) else {
-                    lines.push("OpenCode sandbox: not installed".to_string());
-                    continue;
-                };
-                let text = read_optional(&sandbox_config_path(ctx))?.unwrap_or_default();
-                let mode = jsonc_get(&text, &["mode"]).ok().flatten();
-                let enforce = mode.as_ref().and_then(|value| value.as_str()) == Some("enforce");
-                lines.push(if enforce {
+                let listed = host
+                    .plugin_list(ctx)?
+                    .iter()
+                    .any(|plugin| plugin.name == OPENCODE_PLUGIN);
+                lines.push(if listed {
                     format!(
-                        "OpenCode sandbox: opencode-sandbox {} mode enforce (enforced)",
-                        tool.version
+                        "OpenCode sandbox: the relaxkit-opencode plugin is listed; {}",
+                        health_line(&plugin_health(ctx))
                     )
                 } else {
-                    format!(
-                        "OpenCode sandbox: opencode-sandbox {} is not in enforce mode",
-                        tool.version
-                    )
+                    "OpenCode sandbox: the relaxkit-opencode plugin is not listed; run relaxkit setup"
+                        .to_string()
                 });
             }
         }
     }
     Ok(())
-}
-
-/// The sandbox plugin's release age and runtime lag (spec 10 item 25), or `health unknown` when the registry cannot
-/// be read.
-fn plugin_line(ctx: &Ctx, lock: Option<&Lockfile>, lines: &mut Vec<String>) {
-    let Some(tool) = lock.and_then(|lock| lock.tools.get("opencode-sandbox")) else {
-        return;
-    };
-    lines.push(match plugin_health(ctx, &tool.version) {
-        Ok(health) => format!(
-            "opencode-sandbox {} (released {}d ago; bundles sandbox-runtime {}, {} releases behind)",
-            tool.version, health.release_age_days, health.bundled_runtime, health.runtime_lag
-        ),
-        Err(err) => format!("opencode-sandbox {} (health unknown: {err:#})", tool.version),
-    });
 }
 
 /// The savings line of `rtk gain`, or `n/a` when rtk does not report one.
