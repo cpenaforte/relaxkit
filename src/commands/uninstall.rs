@@ -20,7 +20,7 @@ use crate::host::{Host, HostKind, detect_hosts};
 use crate::recipe::{Step, load_all};
 use crate::sandbox::{self, opencode as sandbox_opencode};
 use crate::state::lockfile::Lockfile;
-use crate::state::{RunId, record_backup, record_link, with_run_lock};
+use crate::state::{RunId, original_text, record_backup, record_link, with_run_lock};
 
 /// Removes the pack's entries and returns the report: what was removed, then what is left in place.
 pub fn run(ctx: &Ctx) -> Result<Vec<String>> {
@@ -92,29 +92,40 @@ fn remove_claude(
 ) -> Result<()> {
     let path = host.config_file(ctx);
     let old = read_or_empty(&path)?;
+    // F23-3 (K106): a key or list entry that was in the file before relaxkit first wrote it is the user's, and stays.
+    let original = original_text(ctx, run, &path)?;
+    let original = original.as_deref();
     let rtk_command = format!("\"{}\" hook claude", ctx.dirs.bin.join("rtk").display());
-    let mut text = jsonc_remove(&old, &["env", "SUPERPOWERS_DISABLE_TELEMETRY"])?;
-    text = remove_rtk_hook(&text, &rtk_command)?;
+    let mut text = restore_or_remove(&old, original, &["env", "SUPERPOWERS_DISABLE_TELEMETRY"])?;
+    if !rtk_hook_in(original, &rtk_command)? {
+        text = remove_rtk_hook(&text, &rtk_command)?;
+    }
     for key in [
         "enabled",
         "autoAllowBashIfSandboxed",
         "failIfUnavailable",
         "enableWeakerNetworkIsolation",
     ] {
-        text = jsonc_remove(&text, &["sandbox", key])?;
+        text = restore_or_remove(&text, original, &["sandbox", key])?;
     }
-    text = remove_strings(
-        &text,
+    let domains = not_in_original(
+        original,
         &["sandbox", "network", "allowedDomains"],
         &sandbox::ALLOWED_DOMAINS,
     )?;
+    text = remove_strings(&text, &["sandbox", "network", "allowedDomains"], &domains)?;
     let mut excluded = sandbox::claude::excluded_commands();
     excluded.push("gh *".to_string());
     let excluded: Vec<&str> = excluded.iter().map(String::as_str).collect();
+    let excluded = not_in_original(original, &["sandbox", "excludedCommands"], &excluded)?;
     text = remove_strings(&text, &["sandbox", "excludedCommands"], &excluded)?;
     if config.compact_at.is_some() {
         for model in claude::claude_models(&config.for_host(HostKind::Claude)) {
-            text = jsonc_remove(&text, &["modelSettings", &model, "autoCompactWindow"])?;
+            text = restore_or_remove(
+                &text,
+                original,
+                &["modelSettings", &model, "autoCompactWindow"],
+            )?;
         }
     }
     write_changed(ctx, run, &path, &old, &text)?;
@@ -275,6 +286,51 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// Puts back the value the file held before relaxkit wrote the key, or removes the key when the user had none.
+fn restore_or_remove(text: &str, original: Option<&str>, path: &[&str]) -> Result<String> {
+    match original
+        .map(|old| jsonc_get(old, path))
+        .transpose()?
+        .flatten()
+    {
+        Some(value) => jsonc_set(text, path, &value),
+        None => jsonc_remove(text, path),
+    }
+}
+
+/// The entries of `wanted` that the list at `path` did not hold before relaxkit wrote it.
+fn not_in_original<'a>(
+    original: Option<&str>,
+    path: &[&str],
+    wanted: &[&'a str],
+) -> Result<Vec<&'a str>> {
+    let mut held = Vec::new();
+    if let Some(old) = original
+        && let Some(Value::Array(items)) = jsonc_get(old, path)?
+    {
+        held = items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_string))
+            .collect();
+    }
+    Ok(wanted
+        .iter()
+        .copied()
+        .filter(|item| !held.iter().any(|kept| kept == item))
+        .collect())
+}
+
+/// Whether the file held the relaxkit Claude hook before relaxkit wrote it, so the hook is the user's own.
+fn rtk_hook_in(original: Option<&str>, command: &str) -> Result<bool> {
+    let Some(old) = original else {
+        return Ok(false);
+    };
+    let Some(Value::Array(entries)) = jsonc_get(old, &["hooks", "PreToolUse"])? else {
+        return Ok(false);
+    };
+    Ok(entries.iter().any(|entry| is_rtk_hook(entry, command)))
+}
+
 fn read_or_empty(path: &Path) -> Result<String> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(text),
@@ -288,4 +344,93 @@ fn write_changed(ctx: &Ctx, run: &RunId, path: &Path, old: &str, new: &str) -> R
         return Ok(());
     }
     crate::state::safe_write(ctx, run, path, new)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::edit::jsonc_get;
+    use crate::exec::FakeRunner;
+    use crate::host::HostInfo;
+    use crate::host::claude::ClaudeHost;
+    use crate::net::FakeNet;
+    use crate::platform::Os;
+    use crate::sandbox::GhPath;
+    use crate::state::safe_write;
+
+    fn get(text: &str, path: &[&str]) -> Option<Value> {
+        jsonc_get(text, path).unwrap()
+    }
+
+    #[test]
+    fn a_user_sandbox_setting_survives_uninstall() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+        let host = ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/bin/claude"),
+                version: "2.1.330".into(),
+            },
+            root.path().join(".claude"),
+            root.path().join(".claude.json"),
+        );
+        let settings = host.config_file(&ctx);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        // The user's own sandbox settings, on disk before relaxkit first writes the file.
+        let user = "{\"env\": {\"USER_KEY\": \"keep\"}, \"sandbox\": {\"enabled\": true, \"failIfUnavailable\": true, \"network\": {\"allowedDomains\": [\"mine.example\"]}}}";
+        fs::write(&settings, user).unwrap();
+        // setup's sandbox write, through the same text function, journaled like any other change.
+        let pack =
+            sandbox::claude::settings_text(user, Os::Linux, GhPath::ExcludedFallback).unwrap();
+        safe_write(&ctx, &RunId::new(), &settings, &pack).unwrap();
+
+        let mut lines = Vec::new();
+        remove_claude(
+            &ctx,
+            &RunId::new(),
+            &host,
+            &KitConfig::default(),
+            &mut lines,
+        )
+        .unwrap();
+
+        let text = fs::read_to_string(&settings).unwrap();
+        assert_eq!(
+            get(&text, &["env", "USER_KEY"]),
+            Some(json!("keep")),
+            "{text}"
+        );
+        assert_eq!(
+            get(&text, &["sandbox", "enabled"]),
+            Some(json!(true)),
+            "{text}"
+        );
+        assert_eq!(
+            get(&text, &["sandbox", "failIfUnavailable"]),
+            Some(json!(true)),
+            "{text}"
+        );
+        assert_eq!(
+            get(&text, &["sandbox", "network", "allowedDomains"]),
+            Some(json!(["mine.example"])),
+            "the user's domain stays and the pack's are removed: {text}"
+        );
+        assert_eq!(
+            get(&text, &["sandbox", "autoAllowBashIfSandboxed"]),
+            None,
+            "{text}"
+        );
+        assert_eq!(get(&text, &["sandbox", "excludedCommands"]), None, "{text}");
+        assert_eq!(
+            get(&text, &["sandbox", "enableWeakerNetworkIsolation"]),
+            None,
+            "{text}"
+        );
+    }
 }

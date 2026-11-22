@@ -196,6 +196,27 @@ fn resolve(path: &Path) -> Result<PathBuf> {
     }
 }
 
+/// The text `path` held before relaxkit first wrote it: the backup kept by the first journal record for the file from
+/// an earlier run. `run` is the caller's own run, whose records are skipped, since its backup is the file as it is now.
+/// `None` when relaxkit created the file, or never journaled it, so there was no user text to keep. A later record's
+/// backup holds relaxkit's own earlier text, so it is never used here.
+pub fn original_text(ctx: &Ctx, run: &RunId, path: &Path) -> Result<Option<String>> {
+    let target = resolve(path)?;
+    let first = journal::read(&ctx.dirs)?
+        .into_iter()
+        .find(|record| record.file == target && record.run != *run);
+    let Some(EditRecord {
+        backup: Some(backup),
+        ..
+    }) = first
+    else {
+        return Ok(None);
+    };
+    fs::read_to_string(&backup)
+        .map(Some)
+        .with_context(|| format!("cannot read the backup {}", backup.display()))
+}
+
 /// `dirs.backups/<run>/` followed by the target path without its root or any `..`.
 fn backup_path(ctx: &Ctx, run: &RunId, target: &Path) -> PathBuf {
     let relative: PathBuf = target
