@@ -17,6 +17,10 @@ use crate::state::{RunId, safe_write};
 /// The project file a sandboxed command must not write (spike B2): the global policy stays the one that applies.
 pub const PROJECT_OVERRIDE: &str = ".opencode/sandbox.json";
 
+/// The project directory a sandboxed command must not write at all (owner decision O6), so no project file under it
+/// can override the policy.
+pub const PROJECT_OVERRIDE_DIR: &str = ".opencode/";
+
 /// Writes the global sandbox config for the pinned plugin. The plugin must already be listed at `version` in the
 /// OpenCode config, so the policy is never written for a plugin that does not load. A dry run changes nothing.
 pub fn apply(ctx: &Ctx, run: &RunId, host: &dyn Host, version: &str) -> Result<()> {
@@ -66,7 +70,11 @@ pub fn sandbox_text(old: &str) -> Result<String> {
     let enabled = jsonc_set(old, &["disabled"], &json!(false))?;
     let mode = jsonc_set(&enabled, &["mode"], &json!("enforce"))?;
     let domains = union_strings(&mode, &["network", "allowedDomains"], &ALLOWED_DOMAINS)?;
-    union_strings(&domains, &["filesystem", "denyWrite"], &[PROJECT_OVERRIDE])
+    union_strings(
+        &domains,
+        &["filesystem", "denyWrite"],
+        &[PROJECT_OVERRIDE_DIR, PROJECT_OVERRIDE],
+    )
 }
 
 /// The file's text, or an empty string when it does not exist yet.
@@ -181,6 +189,7 @@ mod tests {
         let value = read_json(&sandbox_file(root.path()));
         let deny = value["filesystem"]["denyWrite"].as_array().unwrap();
         assert!(deny.contains(&json!(".opencode/sandbox.json")), "{deny:?}");
+        assert!(deny.contains(&json!(".opencode/")), "{deny:?}");
     }
 
     #[test]
