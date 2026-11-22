@@ -64,6 +64,19 @@ pub fn jsonc_remove(text: &str, path: &[&str]) -> Result<String> {
     }
 }
 
+/// Puts back the value `original` held at `path`, or removes the key when `original` did not have it. With no
+/// original text, the key is removed.
+pub fn jsonc_restore(text: &str, original: Option<&str>, path: &[&str]) -> Result<String> {
+    match original
+        .map(|old| jsonc_get(old, path))
+        .transpose()?
+        .flatten()
+    {
+        Some(value) => jsonc_set(text, path, &value),
+        None => jsonc_remove(text, path),
+    }
+}
+
 /// Reads the value at `path`, or `None` when it is absent.
 pub fn jsonc_get(text: &str, path: &[&str]) -> Result<Option<Value>> {
     let parsed = jsonc_parser::parse_to_value(text, &ParseOptions::default())

@@ -11,10 +11,10 @@ use serde_json::json;
 
 use crate::config::{KitConfig, effective};
 use crate::ctx::Ctx;
-use crate::edit::{block_remove, block_upsert, jsonc_get, jsonc_remove, jsonc_set};
+use crate::edit::{block_remove, block_upsert, jsonc_get, jsonc_remove, jsonc_restore, jsonc_set};
 use crate::host::{Host, HostKind};
 use crate::roles::{Role, resolve_opencode};
-use crate::state::{RunId, safe_write};
+use crate::state::{OriginalText, RunId, original_text, safe_write};
 
 /// The managed block in AGENTS.md that routes each kind of prompt to its agent.
 pub const ROUTING_BLOCK: &str = "roles";
@@ -128,14 +128,31 @@ pub fn apply_compact(
     Ok(CompactNote::Applied { buffer })
 }
 
-/// Removes what `apply_roles` wrote: the keys it set under each managed agent, the planner's model, and the routing
-/// block. A managed agent block is removed only when nothing else is left in it. Any other agent the user defined, and
-/// the rest of the file, stay as they are.
+/// Removes what `apply_roles` wrote, and restores each managed key to the value the file held before relaxkit first
+/// wrote it (F23-11). The routing block is removed. A managed agent block is removed only when the original file did
+/// not have it and nothing else is left in it. Any other agent the user defined, and the rest of the file, stay as
+/// they are. With no earlier journaled write to revert (K117), the config file is left alone.
 pub fn unset_roles(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     require_opencode(host)?;
     let path = host.config_file(ctx);
     let old = read_config(&path)?;
-    let mut text = old.clone();
+    let text = match original_text(ctx, run, &path)? {
+        OriginalText::NoEarlierRecord => old.clone(),
+        OriginalText::Created => strip_managed_agents(&old, None)?,
+        OriginalText::Text(original) => strip_managed_agents(&old, Some(&original))?,
+    };
+    write_if_changed(ctx, run, &path, &old, &text)?;
+
+    let agents_path = host.instructions_file(ctx);
+    let agents_old = read_optional(&agents_path)?.unwrap_or_default();
+    let agents_new = block_remove(&agents_old, ROUTING_BLOCK);
+    write_if_changed(ctx, run, &agents_path, &agents_old, &agents_new)
+}
+
+/// The config text with each managed agent key restored to `original`, and the agent blocks that relaxkit alone
+/// created removed once they are empty.
+fn strip_managed_agents(text: &str, original: Option<&str>) -> Result<String> {
+    let mut text = text.to_string();
     for id in managed_agent_ids() {
         // Only the keys relaxkit wrote come out; a key the user added under the same agent stays (K106).
         let keys: &[&str] = if id == PLANNER_AGENT {
@@ -144,21 +161,21 @@ pub fn unset_roles(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
             &["mode", "description", "model"]
         };
         for key in keys {
-            text = jsonc_remove(&text, &["agents", id, key])?;
+            text = jsonc_restore(&text, original, &["agents", id, key])?;
         }
         let emptied = jsonc_get(&text, &["agents", id])?
             .and_then(|value| value.as_object().map(|object| object.is_empty()))
             .unwrap_or(false);
-        if emptied {
+        let original_had_block = original
+            .map(|old| jsonc_get(old, &["agents", id]))
+            .transpose()?
+            .flatten()
+            .is_some();
+        if emptied && !original_had_block {
             text = jsonc_remove(&text, &["agents", id])?;
         }
     }
-    write_if_changed(ctx, run, &path, &old, &text)?;
-
-    let agents_path = host.instructions_file(ctx);
-    let agents_old = read_optional(&agents_path)?.unwrap_or_default();
-    let agents_new = block_remove(&agents_old, ROUTING_BLOCK);
-    write_if_changed(ctx, run, &agents_path, &agents_old, &agents_new)
+    Ok(text)
 }
 
 fn require_opencode(host: &dyn Host) -> Result<()> {
@@ -519,7 +536,7 @@ mod tests {
         .unwrap();
         fs::write(config_path(root.path()), &with_custom).unwrap();
 
-        unset_roles(&ctx, &ctx.run, &host).unwrap();
+        unset_roles(&ctx, &RunId::new(), &host).unwrap();
 
         let text = read(&config_path(root.path()));
         assert_eq!(
@@ -553,7 +570,7 @@ mod tests {
         .unwrap();
         fs::write(config_path(root.path()), &with_user).unwrap();
 
-        unset_roles(&ctx, &ctx.run, &host).unwrap();
+        unset_roles(&ctx, &RunId::new(), &host).unwrap();
 
         let text = read(&config_path(root.path()));
         assert_eq!(
@@ -579,5 +596,31 @@ mod tests {
             None,
             "an empty managed block is removed: {text}"
         );
+    }
+
+    #[test]
+    fn a_user_model_before_setup_survives_unset() {
+        // F23-11: the managed keys go back to the values the file held before setup, so the user's plan model stays.
+        let root = tempfile::tempdir().unwrap();
+        let user = jsonc_set(
+            FIXTURE,
+            &["agents", "plan", "model"],
+            &json!("anthropic/claude-sonnet-5-5"),
+        )
+        .unwrap();
+        seed(root.path(), &user);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+        apply_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+
+        unset_roles(&ctx, &RunId::new(), &host).unwrap();
+
+        let text = read(&config_path(root.path()));
+        assert_eq!(
+            get(&text, &["agents", "plan", "model"]),
+            Some(json!("anthropic/claude-sonnet-5-5")),
+            "{text}"
+        );
+        assert_eq!(get(&text, &["agents", "implementer"]), None, "{text}");
     }
 }

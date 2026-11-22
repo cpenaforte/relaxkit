@@ -15,7 +15,7 @@ use crate::config::KitConfig;
 use crate::config_apply::claude;
 use crate::config_apply::opencode;
 use crate::ctx::Ctx;
-use crate::edit::{block_remove, jsonc_get, jsonc_remove, jsonc_set};
+use crate::edit::{block_remove, jsonc_get, jsonc_remove, jsonc_restore, jsonc_set};
 use crate::host::{Host, HostKind, detect_hosts};
 use crate::recipe::{Step, load_all};
 use crate::sandbox::{self, opencode as sandbox_opencode};
@@ -158,7 +158,7 @@ fn strip_claude_keys(
     text = remove_strings(&text, &["sandbox", "excludedCommands"], &excluded)?;
     if config.compact_at.is_some() {
         for model in claude::claude_models(&config.for_host(HostKind::Claude)) {
-            text = restore_or_remove(
+            text = jsonc_restore(
                 &text,
                 original,
                 &["modelSettings", &model, "autoCompactWindow"],
@@ -313,21 +313,9 @@ fn remove_if_written(
     written: &Value,
 ) -> Result<String> {
     if jsonc_get(text, path)?.as_ref() == Some(written) {
-        restore_or_remove(text, original, path)
+        jsonc_restore(text, original, path)
     } else {
         Ok(text.to_string())
-    }
-}
-
-/// Puts back the value the file held before relaxkit wrote the key, or removes the key when the user had none.
-fn restore_or_remove(text: &str, original: Option<&str>, path: &[&str]) -> Result<String> {
-    match original
-        .map(|old| jsonc_get(old, path))
-        .transpose()?
-        .flatten()
-    {
-        Some(value) => jsonc_set(text, path, &value),
-        None => jsonc_remove(text, path),
     }
 }
 
