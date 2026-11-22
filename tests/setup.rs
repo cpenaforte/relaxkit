@@ -50,9 +50,42 @@ fn is_mutating(call: &str) -> bool {
     TOOLS.contains(&program) && words.any(|word| MUTATING_WORDS.contains(&word))
 }
 
-fn position_of(text: &str, needle: &str) -> usize {
-    text.find(needle)
-        .unwrap_or_else(|| panic!("`{needle}` is missing from:\n{text}"))
+/// The marks a step line and a finding line start with: the glyphs, and their ASCII fallback.
+const MARKS: [&str; 8] = ["✓", "!", "✗", "·", "ok", "!!", "xx", ".."];
+
+/// The step a line names, when the line starts with a mark: `✓ detect  found …` names `detect`.
+fn step_name_of(line: &str) -> Option<&str> {
+    let mut words = line.split_whitespace();
+    let mark = words.next()?;
+    if !MARKS.contains(&mark) {
+        return None;
+    }
+    words.next()
+}
+
+/// The byte offset of the step line for `step` in a setup run's output.
+fn step_offset(text: &str, step: &str) -> usize {
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if step_name_of(line) == Some(step) {
+            return offset;
+        }
+        offset += line.len();
+    }
+    panic!("no line for the `{step}` step in:\n{text}")
+}
+
+/// The text after the step name on the step's line, such as `found Claude Code …` for `detect`.
+fn step_text(text: &str, step: &str) -> String {
+    text.lines()
+        .find(|line| step_name_of(line) == Some(step))
+        .map(|line| {
+            let mut words = line.split_whitespace();
+            words.next();
+            words.next();
+            words.collect::<Vec<_>>().join(" ")
+        })
+        .unwrap_or_else(|| panic!("no line for the `{step}` step in:\n{text}"))
 }
 
 #[test]
@@ -72,7 +105,7 @@ fn setup_dry_run_prints_the_plan_and_writes_nothing() {
     let text = String::from_utf8(output).unwrap();
     let positions: Vec<usize> = STEP_NAMES
         .iter()
-        .map(|step| position_of(&text, &format!("{step}:")))
+        .map(|step| step_offset(&text, step))
         .collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
     assert_eq!(
@@ -111,7 +144,7 @@ fn setup_runs_steps_in_spec_order() {
 
     let positions: Vec<usize> = STEP_NAMES
         .iter()
-        .map(|step| position_of(&text, &format!("{step}:")))
+        .map(|step| step_offset(&text, step))
         .collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
 }
@@ -166,11 +199,15 @@ fn setup_with_only_opencode_reaches_the_opencode_steps() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("sandbox: OpenCode sandbox: relaxkit-opencode, installed by configure"),
+        step_text(&stdout, "sandbox")
+            .contains("OpenCode sandbox: relaxkit-opencode, installed by configure"),
         "{stdout}"
     );
-    assert!(stdout.contains("login: already logged in"), "{stdout}");
-    assert!(stdout.contains("verify: doctor ran"), "{stdout}");
+    assert!(
+        step_text(&stdout, "login").contains("already logged in"),
+        "{stdout}"
+    );
+    assert!(step_text(&stdout, "verify").contains("checks:"), "{stdout}");
     let calls = scratch.calls();
     assert!(
         calls.iter().all(|call| !call.starts_with("claude ")),
@@ -310,7 +347,8 @@ fn setup_exits_3_when_the_login_needs_the_owner() {
         "{text}"
     );
     assert!(
-        text.contains("verify:"),
+        text.lines()
+            .any(|line| step_name_of(line) == Some("verify")),
         "the steps after login must still run:\n{text}"
     );
     assert!(
@@ -329,10 +367,16 @@ fn setup_ends_by_running_doctor() {
     let output = scratch.relaxkit().arg("setup").assert().success();
     let text = String::from_utf8(output.get_output().stdout.clone()).unwrap();
 
-    let last = text.lines().last().unwrap_or_default();
+    // The verify step is the last step: no step line follows it.
+    let verify = step_offset(&text, "verify");
+    assert!(step_text(&text, "verify").contains("checks:"), "{text}");
+    // A step line starts at the margin; the detail lines under a step are indented.
     assert!(
-        last.starts_with("verify:") && last.contains("doctor ran"),
-        "{text}"
+        text[verify..]
+            .lines()
+            .skip(1)
+            .all(|line| line.starts_with(' ') || step_name_of(line).is_none()),
+        "a step line follows verify:\n{text}"
     );
     assert!(
         scratch
@@ -360,7 +404,7 @@ fn setup_exits_nonzero_when_a_check_fails() {
         .arg("setup")
         .assert()
         .code(1)
-        .stdout(predicate::str::contains("fail claude.status_line"));
+        .stdout(predicate::str::contains("✗  claude.status_line"));
 }
 
 #[test]
@@ -378,7 +422,7 @@ fn setup_warns_on_anthropic_base_url_and_never_deletes_it() {
     let output = scratch.relaxkit().arg("setup").assert().code(0);
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
 
-    assert!(text.contains("warn claude.anthropic_base_url"), "{text}");
+    assert!(text.contains("!  claude.anthropic_base_url"), "{text}");
     let after = fs::read_to_string(&settings).unwrap();
     assert!(
         after.contains("\"ANTHROPIC_BASE_URL\": \"https://example.invalid\""),
@@ -431,7 +475,7 @@ fn a_repair_that_still_fails_leaves_a_fail_and_setup_exits_1() {
 
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
     assert!(text.contains("repaired serena on claude"), "{text}");
-    assert!(text.contains("fail tool.serena.claude"), "{text}");
+    assert!(text.contains("✗  tool.serena.claude"), "{text}");
     assert!(text.contains("run `relaxkit setup` again"), "{text}");
 }
 
@@ -475,7 +519,7 @@ fn a_failed_check_takes_precedence_over_a_pending_login() {
 
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned()
         + &String::from_utf8_lossy(&output.get_output().stderr);
-    assert!(text.contains("fail claude.status_line"), "{text}");
+    assert!(text.contains("✗  claude.status_line"), "{text}");
     assert!(text.contains("gh auth login --web --clipboard"), "{text}");
 }
 

@@ -27,6 +27,7 @@ use crate::sandbox::selftest::selftest;
 use crate::state::lockfile::Lockfile;
 use crate::tools::detect::{plugin_name, plugin_spec};
 use crate::tools::engine::{mcp_path_dirs, probe_path};
+use crate::ui::{Mark, Palette, heading, key_values, outcome};
 
 /// The outcome of one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,15 @@ impl CheckStatus {
             CheckStatus::Ok => "ok",
             CheckStatus::Warn => "warn",
             CheckStatus::Fail => "fail",
+        }
+    }
+
+    /// The mark a line with this outcome starts with.
+    pub fn mark(self) -> Mark {
+        match self {
+            CheckStatus::Ok => Mark::Ok,
+            CheckStatus::Warn => Mark::Warn,
+            CheckStatus::Fail => Mark::Fail,
         }
     }
 }
@@ -320,6 +330,14 @@ fn plugin_check(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> 
     Ok(())
 }
 
+/// The command a person runs to check a probe `doctor` does not run, with the locked version filled in.
+fn shown_argv(argv: &[String], version: &str) -> String {
+    argv.iter()
+        .map(|arg| arg.replace("{npx}", "npx").replace("{version}", version))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Each locked tool's probe, for each installed host it is locked on. A probe whose program is set at install time
 /// (`{npx}`) is not run here.
 fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Result<()> {
@@ -345,16 +363,13 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             let Some((program, args)) = probe.argv.split_first() else {
                 continue;
             };
-            let shown = std::iter::once(program.as_str())
-                .chain(args.iter().map(String::as_str))
-                .collect::<Vec<_>>()
-                .join(" ");
+            let shown = shown_argv(&probe.argv, &tool.version);
             if program.starts_with('{') {
                 // Not run is never an ok: the probe is unverified until someone runs it (ruling Important item 6).
                 checks.push(Check::warn(
                     &check_id,
-                    "not run: its program is set at install time",
-                    format!("doctor does not run this probe; run `{shown}` yourself to check it"),
+                    "not run here: the program is chosen at install time",
+                    format!("run `{shown}` to check it yourself"),
                 ));
                 continue;
             }
@@ -552,6 +567,189 @@ fn probe_program(ctx: &Ctx, program: &str) -> Option<PathBuf> {
         .or_else(|| ctx.runner.which(program))
 }
 
+/// The areas the text output groups checks under, in the order they print.
+const AREAS: [&str; 6] = [
+    "Sandbox",
+    "Claude Code",
+    "OpenCode",
+    "Tools",
+    "MCP",
+    "Other",
+];
+
+/// The area a check is listed under, from its id.
+fn area(id: &str) -> &'static str {
+    if id.starts_with("sandbox.") {
+        "Sandbox"
+    } else if id.starts_with("claude.") {
+        "Claude Code"
+    } else if id.starts_with("opencode.") {
+        "OpenCode"
+    } else if id.starts_with("tool.") || id.starts_with("plugin-config.") {
+        "Tools"
+    } else if id.starts_with("mcp") {
+        "MCP"
+    } else {
+        "Other"
+    }
+}
+
+/// Non-ok checks that say the same thing: one finding per outcome and message, in the order they first appear.
+pub struct Finding<'a> {
+    pub status: CheckStatus,
+    pub message: &'a str,
+    pub checks: Vec<&'a Check>,
+}
+
+/// The findings of `checks`. Ok checks are left out.
+pub fn findings(checks: &[Check]) -> Vec<Finding<'_>> {
+    let mut found: Vec<Finding<'_>> = Vec::new();
+    for check in checks
+        .iter()
+        .filter(|check| check.status != CheckStatus::Ok)
+    {
+        match found
+            .iter_mut()
+            .find(|finding| finding.status == check.status && finding.message == check.message)
+        {
+            Some(finding) => finding.checks.push(check),
+            None => found.push(Finding {
+                status: check.status,
+                message: &check.message,
+                checks: vec![check],
+            }),
+        }
+    }
+    found
+}
+
+/// The lines of one finding. A single check shows its id, message and fix. A group shows its message once and the
+/// checks under it: with their own fixes when `detail` is set, else with their ids only.
+pub fn finding_lines(finding: &Finding<'_>, detail: bool, palette: Palette) -> Vec<String> {
+    let status = finding.status.mark();
+    if let [check] = finding.checks.as_slice() {
+        let mut lines = vec![
+            crate::ui::detail(palette, status, &check.id),
+            format!("     {}", finding.message),
+        ];
+        if let Some(fix) = &check.fix {
+            lines.push(format!("     fix  {fix}"));
+        }
+        return lines;
+    }
+    let mut lines = vec![crate::ui::detail(
+        palette,
+        status,
+        &format!("{}  ({} checks)", finding.message, finding.checks.len()),
+    )];
+    if detail {
+        let rows: Vec<(&str, Vec<String>)> = finding
+            .checks
+            .iter()
+            .map(|check| {
+                (
+                    check.id.as_str(),
+                    vec![check.fix.clone().unwrap_or_default()],
+                )
+            })
+            .collect();
+        lines.extend(key_values(&rows, 5));
+    } else {
+        let ids: Vec<&str> = finding
+            .checks
+            .iter()
+            .map(|check| check.id.as_str())
+            .collect();
+        lines.push(format!("     {}", ids.join(", ")));
+        lines.push("     relaxkit doctor shows the command for each".to_string());
+    }
+    lines
+}
+
+/// The counts of a set of outcomes, as text: `2 failed, 7 warnings, 27 ok`. A count of zero is left out.
+pub fn tally_text(fail: usize, warn: usize, ok: usize) -> String {
+    let mut parts = Vec::new();
+    if fail > 0 {
+        parts.push(format!("{fail} failed"));
+    }
+    if warn > 0 {
+        parts.push(format!(
+            "{warn} {}",
+            if warn == 1 { "warning" } else { "warnings" }
+        ));
+    }
+    if ok > 0 {
+        parts.push(format!("{ok} ok"));
+    }
+    if parts.is_empty() {
+        return "no checks".to_string();
+    }
+    parts.join(", ")
+}
+
+/// The outcome counts of `checks`: failures, warnings and ok checks.
+fn counts<'a>(checks: impl Iterator<Item = &'a Check>) -> (usize, usize, usize) {
+    checks.fold((0, 0, 0), |(fail, warn, ok), check| match check.status {
+        CheckStatus::Fail => (fail + 1, warn, ok),
+        CheckStatus::Warn => (fail, warn + 1, ok),
+        CheckStatus::Ok => (fail, warn, ok + 1),
+    })
+}
+
+/// The text `doctor` prints: a verdict line, then the checks grouped by area. Ok checks are listed only with `all`;
+/// otherwise a footnote says how many are hidden.
+pub fn lines(checks: &[Check], all: bool, palette: Palette) -> Vec<String> {
+    let (fail, warn, ok) = counts(checks.iter());
+    let verdict_mark = if fail > 0 {
+        Mark::Fail
+    } else if warn > 0 {
+        Mark::Warn
+    } else {
+        Mark::Ok
+    };
+    let mut lines = vec![outcome(palette, verdict_mark, &tally_text(fail, warn, ok))];
+    for name in AREAS {
+        let in_area: Vec<&Check> = checks
+            .iter()
+            .filter(|check| area(&check.id) == name)
+            .collect();
+        let (area_fail, area_warn, area_ok) = counts(in_area.iter().copied());
+        if in_area.is_empty() || (!all && area_fail + area_warn == 0) {
+            continue;
+        }
+        lines.push(String::new());
+        lines.push(format!(
+            "{}  {}",
+            heading(name, palette),
+            tally_text(area_fail, area_warn, area_ok)
+        ));
+        if all {
+            for check in in_area
+                .iter()
+                .filter(|check| check.status == CheckStatus::Ok)
+            {
+                lines.push(crate::ui::detail(
+                    palette,
+                    Mark::Ok,
+                    &format!("{}  {}", check.id, check.message),
+                ));
+            }
+        }
+        let area_checks: Vec<Check> = in_area.iter().map(|check| (*check).clone()).collect();
+        for finding in findings(&area_checks) {
+            lines.extend(finding_lines(&finding, true, palette));
+        }
+    }
+    if !all && ok > 0 {
+        lines.push(String::new());
+        lines.push(palette.paint(
+            &format!("{ok} ok checks hidden; relaxkit doctor --all lists them"),
+            crate::ui::Style::Dim,
+        ));
+    }
+    lines
+}
+
 /// The JSON document `doctor --json` prints: `{"checks":[{"id","status","message","fix"}]}`.
 pub fn to_json(checks: &[Check]) -> Value {
     let entries: Vec<Value> = checks
@@ -572,6 +770,154 @@ pub fn to_json(checks: &[Check]) -> Value {
 mod tests {
     use super::*;
     use crate::platform::{Os, prerequisite_plan};
+    use crate::ui::Palette;
+
+    #[test]
+    fn a_probe_shown_to_a_person_has_its_placeholders_filled_in() {
+        let argv = ["{npx}", "-y", "ccusage@{version}", "--offline", "--help"].map(String::from);
+
+        assert_eq!(
+            shown_argv(&argv, "20.0.51"),
+            "npx -y ccusage@20.0.51 --offline --help"
+        );
+    }
+
+    fn check(id: &str, status: CheckStatus, message: &str, fix: Option<&str>) -> Check {
+        Check {
+            id: id.to_string(),
+            status,
+            message: message.to_string(),
+            fix: fix.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn the_doctor_text_leads_with_a_verdict_and_hides_ok_checks_by_default() {
+        let checks = vec![
+            check("claude.hooks", CheckStatus::Ok, "hooks are in place", None),
+            check(
+                "claude.sandbox.selftest",
+                CheckStatus::Fail,
+                "Claude Code: the sandbox did not refuse",
+                Some("run `relaxkit setup` again"),
+            ),
+        ];
+
+        let lines = lines(&checks, false, Palette::PLAIN);
+
+        assert_eq!(lines[0], "✗  1 failed, 1 ok", "{lines:?}");
+        assert!(
+            lines.contains(&"Claude Code  1 failed, 1 ok".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"  ✗  claude.sandbox.selftest".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"     fix  run `relaxkit setup` again".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("claude.hooks")),
+            "{lines:?}"
+        );
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("1 ok checks hidden; relaxkit doctor --all lists them"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn all_lists_the_ok_checks_too() {
+        let checks = vec![check(
+            "claude.hooks",
+            CheckStatus::Ok,
+            "hooks are in place",
+            None,
+        )];
+
+        let lines = lines(&checks, true, Palette::PLAIN);
+
+        assert!(
+            lines.contains(&"  ✓  claude.hooks  hooks are in place".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("hidden")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn identical_findings_are_one_line_with_each_check_and_its_own_fix() {
+        let checks = vec![
+            check(
+                "tool.ccusage.claude",
+                CheckStatus::Warn,
+                "not run here",
+                Some("run `a`"),
+            ),
+            check(
+                "tool.ccusage.opencode",
+                CheckStatus::Warn,
+                "not run here",
+                Some("run `bb`"),
+            ),
+        ];
+
+        let lines = lines(&checks, false, Palette::PLAIN);
+
+        assert!(
+            lines.contains(&"  !  not run here  (2 checks)".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"     tool.ccusage.claude    run `a`".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"     tool.ccusage.opencode  run `bb`".to_string()),
+            "{lines:?}"
+        );
+        assert!(lines[0].starts_with("!  2 warnings"), "{lines:?}");
+    }
+
+    #[test]
+    fn findings_keep_the_order_they_first_appear_in() {
+        let checks = vec![
+            check("a", CheckStatus::Warn, "same", None),
+            check("b", CheckStatus::Fail, "other", None),
+            check("c", CheckStatus::Warn, "same", None),
+        ];
+
+        let found = findings(&checks);
+
+        let shape: Vec<(CheckStatus, usize)> = found
+            .iter()
+            .map(|finding| (finding.status, finding.checks.len()))
+            .collect();
+        assert_eq!(shape, vec![(CheckStatus::Warn, 2), (CheckStatus::Fail, 1)]);
+    }
+
+    #[test]
+    fn a_check_lands_under_the_area_its_id_names() {
+        assert_eq!(area("sandbox.prerequisites"), "Sandbox");
+        assert_eq!(area("claude.sandbox.selftest"), "Claude Code");
+        assert_eq!(area("opencode.sandbox.plugin"), "OpenCode");
+        assert_eq!(area("tool.ccusage.claude"), "Tools");
+        assert_eq!(area("plugin-config.x.opencode"), "Tools");
+        assert_eq!(area("mcp-entry.x.claude"), "MCP");
+        assert_eq!(area("something-else"), "Other");
+    }
+
+    #[test]
+    fn tally_text_counts_each_outcome_and_skips_zeros() {
+        assert_eq!(tally_text(2, 7, 27), "2 failed, 7 warnings, 27 ok");
+        assert_eq!(tally_text(0, 1, 0), "1 warning");
+        assert_eq!(tally_text(0, 0, 0), "no checks");
+    }
 
     #[test]
     fn missing_sandbox_packages_fail_with_the_one_sudo_command_as_the_fix() {

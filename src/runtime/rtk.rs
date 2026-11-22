@@ -52,7 +52,7 @@ fn ensure_rtk_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<PathBuf>
     }
     let bin = ctx.dirs.bin.join("rtk");
     if ctx.dry_run {
-        ctx.out.info(&format!(
+        ctx.out.plan(&format!(
             "would install the latest rtk into {}",
             ctx.dirs.bin.display()
         ));

@@ -144,7 +144,7 @@ pub fn link_pack_rtk(ctx: &Ctx) -> Result<()> {
         Ok(_) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             if ctx.dry_run {
-                ctx.out.info(&format!(
+                ctx.out.plan(&format!(
                     "would link {} to {}",
                     link.display(),
                     found.display()

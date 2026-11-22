@@ -54,7 +54,7 @@ pub fn run_prerequisites(ctx: &Ctx, plan: &PrereqPlan, confirmed: bool) -> Resul
         );
     }
     if ctx.dry_run {
-        ctx.out.info(&format!("would run {}", plan.sudo.join(" ")));
+        ctx.out.plan(&format!("would run {}", plan.sudo.join(" ")));
         return Ok(());
     }
     let cmd = args.iter().fold(Cmd::new(program), |cmd, arg| cmd.arg(arg));

@@ -9,6 +9,7 @@ use anyhow::Result;
 use crate::ctx::Ctx;
 use crate::github::{self, LoginOutcome};
 use crate::state::with_run_lock;
+use crate::ui::Mark;
 
 /// Logs in with the terminal check made on the real stdin.
 pub fn run(ctx: &Ctx) -> Result<i32> {
@@ -23,13 +24,17 @@ pub fn run_with(ctx: &Ctx, interactive: bool) -> Result<i32> {
         with_run_lock(&ctx.dirs, || github::login_with(ctx, &ctx.run, interactive))?
     };
     match &outcome {
-        LoginOutcome::AlreadyAuthenticated => ctx.out.info("already logged in to GitHub"),
-        LoginOutcome::LoggedIn => ctx.out.info("logged in to GitHub"),
+        LoginOutcome::AlreadyAuthenticated => {
+            ctx.out.outcome(Mark::Ok, "already logged in to GitHub");
+        }
+        LoginOutcome::LoggedIn => ctx.out.outcome(Mark::Ok, "logged in to GitHub"),
+        // The dry run's plan is printed by the GitHub step itself.
         LoginOutcome::Planned => {}
         LoginOutcome::ManualStep { command } => {
-            ctx.out.info(&format!(
-                "finish the login yourself, then run it again: {command}"
-            ));
+            ctx.out.outcome(
+                Mark::Warn,
+                &format!("finish the login yourself, then run it again: {command}"),
+            );
         }
     }
     Ok(outcome.exit_code())

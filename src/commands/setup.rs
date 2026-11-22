@@ -23,6 +23,7 @@ use crate::sandbox::{self, GhPath};
 use crate::state::lockfile::Lockfile;
 use crate::state::{RunId, with_run_lock};
 use crate::tools::{Engine, Outcome};
+use crate::ui::{self, Mark, Palette, Spinner};
 
 /// The steps in the order they run (spec section 6, ruling K46).
 pub const STEPS: [&str; 7] = [
@@ -35,16 +36,23 @@ pub const STEPS: [&str; 7] = [
     "verify",
 ];
 
+/// The width of the step column: the longest step name.
+const STEP_WIDTH: usize = 13;
+
+/// How the sandbox step begins when the Linux packages are missing. The step's mark and the message share it.
+const MISSING_PACKAGES: &str = "Linux packages are missing";
+
 /// The exit code when the GitHub login needs the owner (ruling K48).
 const LOGIN_PENDING_EXIT: i32 = 3;
 
 /// The exit code when a doctor check failed. It takes precedence over the login (ruling K50).
 const FAILED_CHECK_EXIT: i32 = 1;
 
-/// One printed line, tagged with its step.
+/// One printed step line, tagged with its step and its outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepLine {
     pub step: &'static str,
+    pub mark: Mark,
     pub line: String,
 }
 
@@ -74,35 +82,41 @@ pub fn run(ctx: &Ctx) -> Result<SetupReport> {
 fn plan_only(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> SetupReport {
     let mut report = SetupReport::default();
     let found = host_names(hosts);
-    report.say(ctx, "detect", format!("found {found}"));
-    report.say(
+    report.note(ctx, Mark::Skip, "detect", format!("found {found}"));
+    report.note(
         ctx,
+        Mark::Skip,
         "prerequisites",
         "would install or adopt Node 24 through nvm, uv and gh".to_string(),
     );
-    report.say(
+    report.note(
         ctx,
+        Mark::Skip,
         "install",
         "would install or adopt the pack's tools on each detected host, skipping tools already locked".to_string(),
     );
-    report.say(
+    report.note(
         ctx,
+        Mark::Skip,
         "configure",
         "would write the balanced preset, the roles, the telemetry switch and the voice"
             .to_string(),
     );
-    report.say(
+    report.note(
         ctx,
+        Mark::Skip,
         "sandbox",
         "would write the sandbox settings; Linux packages are printed for you to run unless --allow-sudo is given".to_string(),
     );
-    report.say(
+    report.note(
         ctx,
+        Mark::Skip,
         "login",
         "would log in to GitHub if gh is not logged in".to_string(),
     );
-    report.say(
+    report.note(
         ctx,
+        Mark::Skip,
         "verify",
         "would run the probes of every locked tool".to_string(),
     );
@@ -114,11 +128,16 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
     let mut report = SetupReport::default();
     report.say(ctx, "detect", format!("found {}", host_names(hosts)));
 
+    let prerequisites = Spinner::start(
+        "installing or adopting Node 24, uv and gh",
+        ctx.out.progress(),
+    );
     let node = nvm::ensure_node(ctx, &run)?;
     nvm::link_node(ctx, &node)?;
     uv::ensure_uv(ctx, &run)?;
     let gh_install = gh::ensure_gh(ctx, &run)?;
     gh::record_pack_copy(ctx, &run, &gh_install)?;
+    prerequisites.finish();
     report.say(
         ctx,
         "prerequisites",
@@ -145,6 +164,7 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
         recipes: &recipes,
         node: &node,
     };
+    let tools = Spinner::start("installing the pack's tools", ctx.out.progress());
     for recipe in &recipes {
         if already_locked(recipe, &present, locked.as_ref()) {
             kept += 1;
@@ -158,6 +178,7 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
             installed += 1;
         }
     }
+    tools.finish();
     report.say(
         ctx,
         "install",
@@ -266,6 +287,11 @@ fn sandbox_step(
 ) -> Result<()> {
     let plan = sandbox::linux_prerequisites(ctx)?;
     let packages = sudo_step(ctx, &plan)?;
+    let mark = if packages.starts_with(MISSING_PACKAGES) {
+        Mark::Warn
+    } else {
+        Mark::Ok
+    };
     let mut notes = Vec::new();
     for host in hosts {
         match host.info().kind {
@@ -281,7 +307,7 @@ fn sandbox_step(
         }
     }
     notes.push(packages);
-    report.say(ctx, "sandbox", notes.join("; "));
+    report.note(ctx, mark, "sandbox", notes.join("; "));
     Ok(())
 }
 
@@ -304,7 +330,7 @@ fn sudo_step(ctx: &Ctx, plan: &PrereqPlan) -> Result<String> {
         return Ok("Linux packages installed with one sudo run".to_string());
     }
     Ok(format!(
-        "Linux packages are missing; run this once yourself, then run setup again: {}",
+        "{MISSING_PACKAGES}; run this once yourself, then run setup again: {}",
         sudo_command(plan)
     ))
 }
@@ -324,10 +350,20 @@ pub fn sudo_command(plan: &PrereqPlan) -> String {
 fn login_step(ctx: &Ctx, run: &RunId, report: &mut SetupReport) -> Result<Option<LoginOutcome>> {
     let present = ctx.runner.which("gh").is_some() || is_executable(&ctx.dirs.bin.join("gh"));
     if !present {
-        report.say(ctx, "login", "skipped: gh is not installed".to_string());
+        report.note(
+            ctx,
+            Mark::Skip,
+            "login",
+            "skipped: gh is not installed".to_string(),
+        );
         return Ok(None);
     }
     let outcome = github::login(ctx, run)?;
+    let mark = match &outcome {
+        LoginOutcome::AlreadyAuthenticated | LoginOutcome::LoggedIn => Mark::Ok,
+        LoginOutcome::Planned => Mark::Skip,
+        LoginOutcome::ManualStep { .. } => Mark::Warn,
+    };
     let line = match &outcome {
         LoginOutcome::AlreadyAuthenticated => "already logged in to GitHub".to_string(),
         LoginOutcome::LoggedIn => "logged in to GitHub".to_string(),
@@ -336,7 +372,7 @@ fn login_step(ctx: &Ctx, run: &RunId, report: &mut SetupReport) -> Result<Option
             format!("finish the login yourself, then run setup again: {command}")
         }
     };
-    report.say(ctx, "login", line);
+    report.note(ctx, mark, "login", line);
     Ok(Some(outcome))
 }
 
@@ -349,6 +385,8 @@ fn verify_step(
     engine: &Engine<'_>,
     report: &mut SetupReport,
 ) -> Result<bool> {
+    let palette = ctx.out.palette();
+    let spinner = Spinner::start("checking the installed pack", ctx.out.progress());
     let mut checks = doctor::checks_for(ctx, hosts)?;
     let mut repairs: Vec<Repair> = Vec::new();
     for check in &checks {
@@ -367,39 +405,35 @@ fn verify_step(
             .map(|tool| tool.version.clone())
             .unwrap_or_else(|| "unlocked".to_string())
     };
+    let mut details: Vec<String> = Vec::new();
     for repair in &repairs {
-        match repair {
+        let (mark, text) = match repair {
             Repair::Reinstall(id, kind) => {
                 let Some(recipe) = engine.recipes.iter().find(|recipe| &recipe.id == id) else {
                     continue;
                 };
                 let locked = locked_version(id);
                 match engine.reinstall(recipe, *kind) {
-                    Ok(Outcome::Installed { version }) if id == "rtk" => report.say(
-                        ctx,
-                        "verify",
+                    Ok(Outcome::Installed { version }) if id == "rtk" => (
+                        Mark::Ok,
                         format!("repaired {id} on {kind}: installed the latest release {version}"),
                     ),
-                    Ok(Outcome::Installed { version }) => report.say(
-                        ctx,
-                        "verify",
+                    Ok(Outcome::Installed { version }) => (
+                        Mark::Ok,
                         format!("repaired {id} on {kind}: installed {version}, locked at {locked}"),
                     ),
-                    Ok(Outcome::Adopted { version, .. }) => report.say(
-                        ctx,
-                        "verify",
+                    Ok(Outcome::Adopted { version, .. }) => (
+                        Mark::Ok,
                         format!(
                             "repaired {id} on {kind}: {version} is already installed, so only its configuration ran again (locked at {locked})"
                         ),
                     ),
-                    Ok(Outcome::Skipped { reason }) => report.say(
-                        ctx,
-                        "verify",
+                    Ok(Outcome::Skipped { reason }) => (
+                        Mark::Warn,
                         format!("could not repair {id} on {kind}: {reason}"),
                     ),
-                    Err(err) => report.say(
-                        ctx,
-                        "verify",
+                    Err(err) => (
+                        Mark::Warn,
                         format!("could not repair {id} on {kind}: {err:#}"),
                     ),
                 }
@@ -409,58 +443,46 @@ fn verify_step(
                     continue;
                 };
                 match engine.readd_mcp(recipe, *kind) {
-                    Ok(()) => report.say(
-                        ctx,
-                        "verify",
+                    Ok(()) => (
+                        Mark::Ok,
                         format!("repaired {id} on {kind}: re-added its MCP entry"),
                     ),
-                    Err(err) => report.say(
-                        ctx,
-                        "verify",
+                    Err(err) => (
+                        Mark::Warn,
                         format!("could not repair {id} on {kind}: {err:#}"),
                     ),
                 }
             }
-        }
+        };
+        details.push(detail_line(palette, mark, &text));
     }
     if !repairs.is_empty() {
         checks = doctor::checks_for(ctx, hosts)?;
     }
+    spinner.finish();
     let count = |status: CheckStatus| checks.iter().filter(|check| check.status == status).count();
     let (ok, warn, fail) = (
         count(CheckStatus::Ok),
         count(CheckStatus::Warn),
         count(CheckStatus::Fail),
     );
-    for check in checks
-        .iter()
-        .filter(|check| check.status != CheckStatus::Ok)
-    {
-        let fix = check
-            .fix
-            .as_deref()
-            .map(|fix| format!("; fix: {fix}"))
-            .unwrap_or_default();
-        report.say(
-            ctx,
-            "verify",
-            format!(
-                "{} {}: {}{fix}",
-                check.status.as_str(),
-                check.id,
-                check.message
-            ),
-        );
+    // Findings that say the same thing are one line, so six identical warnings do not print six times.
+    for finding in doctor::findings(&checks) {
+        details.extend(doctor::finding_lines(&finding, false, palette));
     }
-    // The summary is the last line of the step.
-    report.say(
-        ctx,
-        "verify",
-        format!(
-            "doctor ran {} checks: {ok} ok, {warn} warn, {fail} fail",
-            checks.len()
-        ),
+    let mark = if fail > 0 {
+        Mark::Fail
+    } else if warn > 0 {
+        Mark::Warn
+    } else {
+        Mark::Ok
+    };
+    let summary = format!(
+        "{} checks: {}",
+        checks.len(),
+        doctor::tally_text(fail, warn, ok)
     );
+    report.note_with(ctx, mark, "verify", summary, &details);
     Ok(fail > 0)
 }
 
@@ -554,11 +576,40 @@ fn host_names(hosts: &[Box<dyn Host>]) -> String {
 }
 
 impl SetupReport {
-    /// Records a step's line and prints it as `step: line`.
+    /// Records a step that went as planned: a check mark and its line.
     fn say(&mut self, ctx: &Ctx, step: &'static str, line: String) {
-        ctx.out.info(&format!("{step}: {line}"));
-        self.steps.push(StepLine { step, line });
+        self.note(ctx, Mark::Ok, step, line);
     }
+
+    /// Records a step's line with its outcome and prints it: a mark, the step name, then the line.
+    fn note(&mut self, ctx: &Ctx, mark: Mark, step: &'static str, line: String) {
+        self.note_with(ctx, mark, step, line, &[]);
+    }
+
+    /// As `note`, with detail lines printed under the step line.
+    fn note_with(
+        &mut self,
+        ctx: &Ctx,
+        mark: Mark,
+        step: &'static str,
+        line: String,
+        details: &[String],
+    ) {
+        let column = ctx.out.palette().mark_column(mark);
+        ctx.out.info(&format!(
+            "{column}{step:<width$}  {line}",
+            width = STEP_WIDTH
+        ));
+        for detail in details {
+            ctx.out.info(detail);
+        }
+        self.steps.push(StepLine { step, mark, line });
+    }
+}
+
+/// One detail line under a step: its mark, then its text.
+fn detail_line(palette: Palette, mark: Mark, text: &str) -> String {
+    ui::detail(palette, mark, text)
 }
 
 #[cfg(test)]

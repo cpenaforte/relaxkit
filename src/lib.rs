@@ -20,14 +20,16 @@ pub mod sandbox;
 pub mod selfupdate;
 pub mod state;
 pub mod tools;
+pub mod ui;
 
 use anyhow::Result;
 
 use cli::{Cli, Command, ConfigCmd, HostArg, LoginTarget, PresetArg};
-use ctx::{Ctx, Reporter};
+use ctx::Ctx;
 use host::HostKind;
 use presets::Preset;
 use runtime::nvm::NvmSearch;
+use ui::{Mark, Spinner};
 
 /// Runs a parsed command and returns the process exit code. Each handler is a stub until its task lands.
 pub fn run(cli: Cli) -> Result<i32> {
@@ -38,30 +40,28 @@ pub fn run(cli: Cli) -> Result<i32> {
         }
         Command::Status => {
             let ctx = Ctx::system(cli.dry_run, None, false)?;
-            for line in commands::status::run(&ctx)?.lines {
+            let report = commands::status::run(&ctx)?;
+            for line in report.render(ctx.out.palette()) {
                 ctx.out.info(&line);
             }
             Ok(0)
         }
-        Command::Doctor => {
+        Command::Doctor { all } => {
             let project = cli.project.then(std::env::current_dir).transpose()?;
             let ctx = Ctx::system(cli.dry_run, project, false)?;
-            let checks = commands::doctor::run(&ctx)?;
+            // A spinner runs only for the text report: `--json` keeps standard output a JSON document.
+            let spinner =
+                (!cli.json).then(|| Spinner::start("checking the pack", ctx.out.progress()));
+            let checks = commands::doctor::run(&ctx);
+            if let Some(spinner) = spinner {
+                spinner.finish();
+            }
+            let checks = checks?;
             if cli.json {
                 println!("{}", commands::doctor::to_json(&checks));
             } else {
-                for check in &checks {
-                    let fix = check
-                        .fix
-                        .as_deref()
-                        .map(|fix| format!("\n      fix: {fix}"))
-                        .unwrap_or_default();
-                    ctx.out.info(&format!(
-                        "{:<5} {}: {}{fix}",
-                        check.status.as_str(),
-                        check.id,
-                        check.message
-                    ));
+                for line in commands::doctor::lines(&checks, all, ctx.out.palette()) {
+                    ctx.out.info(&line);
                 }
             }
             let failed = checks
@@ -84,13 +84,30 @@ pub fn run(cli: Cli) -> Result<i32> {
             // True when a swapped binary already ran the tool phase (K96), so this process must not run it again.
             let mut tools_done_by_new_binary = false;
             if self_step {
-                let tools_out = std::mem::replace(&mut ctx.out, Reporter::capture());
+                let spinner = (!cli.json).then(|| {
+                    let label = if check {
+                        "checking relaxkit"
+                    } else {
+                        "updating relaxkit"
+                    };
+                    Spinner::start(label, ctx.out.progress())
+                });
+                let styled = ctx.out.capture_styled();
+                let tools_out = std::mem::replace(&mut ctx.out, styled);
                 let outcome = selfupdate::run_with(&ctx, check, !self_only);
                 let captured = ctx.out.lines();
                 ctx.out = tools_out;
+                if let Some(spinner) = spinner {
+                    spinner.finish();
+                }
                 match outcome {
                     Ok(result) => {
-                        self_lines.push(selfupdate::row(&result));
+                        let mark = selfupdate::mark(&result);
+                        self_lines.push(ui::outcome(
+                            ctx.out.palette(),
+                            mark,
+                            &selfupdate::row(&result),
+                        ));
                         // A swapped binary that ran its tool phase is done here (K96). A failed tool in that phase
                         // is named and the exit is 1 (K102).
                         match result {
@@ -110,7 +127,11 @@ pub fn run(cli: Cli) -> Result<i32> {
                     }
                     Err(err) => {
                         self_failed = true;
-                        self_lines.push(format!("relaxkit itself: failed: {err:#}"));
+                        self_lines.push(ui::outcome(
+                            ctx.out.palette(),
+                            Mark::Fail,
+                            &format!("relaxkit itself: failed: {err:#}"),
+                        ));
                     }
                 }
                 self_lines.extend(captured);
@@ -124,7 +145,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             }
             if self_only {
                 // K101: `--self` runs no tool phase, and the report says so.
-                ctx.out.info("tools: not run (--self)");
+                ctx.out.plan("tools: not run (--self)");
                 return Ok(if self_failed { 1 } else { 0 });
             }
             if tools_done_by_new_binary {
@@ -132,11 +153,23 @@ pub fn run(cli: Cli) -> Result<i32> {
             }
             // A failed self step does not stop the tool phase, which runs with the current binary (K92).
             let args = commands::update::UpdateArgs { check, tool };
-            let report = commands::update::run(&ctx, &args, &NvmSearch::from_env())?;
+            let spinner = (!cli.json).then(|| {
+                let label = if check {
+                    "checking the tools"
+                } else {
+                    "updating the tools"
+                };
+                Spinner::start(label, ctx.out.progress())
+            });
+            let report = commands::update::run(&ctx, &args, &NvmSearch::from_env());
+            if let Some(spinner) = spinner {
+                spinner.finish();
+            }
+            let report = report?;
             if cli.json {
                 println!("{}", commands::update::to_json(&report));
             } else {
-                for line in commands::update::lines(&report) {
+                for line in commands::update::lines(&report, ctx.out.palette()) {
                     ctx.out.info(&line);
                 }
             }
@@ -196,7 +229,10 @@ pub fn run(cli: Cli) -> Result<i32> {
         Command::Uninstall => {
             refuse_project(&cli, "uninstall")?;
             let ctx = Ctx::system(cli.dry_run, None, false)?;
-            for line in commands::uninstall::run(&ctx)? {
+            let spinner = Spinner::start("removing what relaxkit wrote", ctx.out.progress());
+            let lines = commands::uninstall::run(&ctx);
+            spinner.finish();
+            for line in lines? {
                 ctx.out.info(&line);
             }
             Ok(0)

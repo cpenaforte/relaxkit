@@ -171,7 +171,7 @@ pub(crate) fn run_read(ctx: &Ctx, cmd: &Cmd) -> Result<Output> {
 /// reports the command.
 pub(crate) fn edit_guarded(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<Output> {
     if ctx.dry_run {
-        ctx.out.info(&format!("would run {cmd}"));
+        ctx.out.plan(&format!("would run {cmd}"));
         return Ok(Output::ok(""));
     }
     let run = ctx.run.clone();

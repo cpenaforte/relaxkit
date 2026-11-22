@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use relaxkit::commands::doctor::{self, Check, CheckStatus};
-use relaxkit::commands::status::{self, StatusReport};
+use relaxkit::commands::status::{self, StatusReport, ToolState};
 use relaxkit::ctx::Ctx;
 use relaxkit::edit::block_upsert;
 use relaxkit::exec::{Cmd, FakeRunner, Output, Runner};
@@ -88,7 +88,7 @@ fn refusing_sandbox(root: &Path) -> FakeRunner {
 }
 
 fn status_text(report: &StatusReport) -> String {
-    report.lines.join("\n")
+    report.lines().join("\n")
 }
 
 // ---- doctor -------------------------------------------------------------------------------------------------
@@ -470,13 +470,14 @@ fn status_reads_a_git_plugin_spec_version_from_its_tag() {
 
     let report = status::report_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
 
-    let text = status_text(&report);
-    assert!(
-        text.contains(
-            "superpowers on opencode: installed 7.0.2, locked 7.0.2 (opencode-plugin); as locked"
-        ),
-        "{text}"
-    );
+    let row = report
+        .tools
+        .iter()
+        .find(|row| row.id == "superpowers" && row.host == HostKind::Opencode)
+        .unwrap_or_else(|| panic!("no superpowers row on opencode: {:?}", report.tools));
+    assert_eq!(row.installed.as_deref(), Some("7.0.2"), "{row:?}");
+    assert_eq!(row.locked, "7.0.2", "{row:?}");
+    assert_eq!(row.state, ToolState::AsLocked, "{row:?}");
 }
 
 #[test]
@@ -794,26 +795,24 @@ fn status_marks_each_role_advisory_or_enforced_per_host() {
     )
     .unwrap();
 
-    let text = status_text(&report);
-    let line = |role: &str| {
-        text.lines()
-            .find(|l| l.starts_with(role))
-            .unwrap_or_else(|| panic!("no line for {role} in:\n{text}"))
-            .to_string()
+    let role = |name: &str| {
+        report
+            .roles
+            .iter()
+            .find(|row| row.role == name)
+            .unwrap_or_else(|| panic!("no row for {name} in {:?}", report.roles))
+            .clone()
     };
-    let implementer = line("implementer");
-    assert!(
-        implementer.contains("claude haiku (advisory)"),
-        "{implementer}"
+    let implementer = role("implementer");
+    assert_eq!(implementer.claude, "haiku · advisory", "{implementer:?}");
+    assert_eq!(
+        implementer.opencode, "anthropic/claude-haiku-5-5 · enforced per agent",
+        "{implementer:?}"
     );
+    let planner = role("planner");
     assert!(
-        implementer.contains("opencode anthropic/claude-haiku-5-5 (enforced per agent)"),
-        "{implementer}"
-    );
-    let planner = line("planner");
-    assert!(
-        planner.contains("(advisory)") && !planner.contains("enforced"),
-        "{planner}"
+        planner.opencode.contains("advisory") && !planner.opencode.contains("enforced"),
+        "{planner:?}"
     );
 }
 
@@ -851,6 +850,26 @@ fn status_lists_other_node_installs_and_the_rtk_gain_line() {
     let context = ctx(root.path(), FakeRunner::new(), FakeNet::new());
     let text = status_text(&status::report_for(&context, &[]).unwrap());
     assert!(text.contains("rtk gain: n/a"), "{text}");
+}
+
+#[test]
+fn status_shows_the_savings_line_of_rtk_gain_not_its_title() {
+    let root = tempfile::tempdir().unwrap();
+    let runner = FakeRunner::new().reply(
+        "rtk gain",
+        Output::ok(
+            "RTK Token Savings (Global Scope)\n\nTotal commands:    11385\nTokens saved:      1.6M (41.5%)\n",
+        ),
+    );
+    let context = ctx(root.path(), runner, FakeNet::new());
+
+    let text = status_text(&status::report_for(&context, &[]).unwrap());
+
+    assert!(
+        text.contains("rtk gain: Tokens saved: 1.6M (41.5%)"),
+        "{text}"
+    );
+    assert!(!text.contains("rtk gain: RTK Token Savings"), "{text}");
 }
 
 #[test]

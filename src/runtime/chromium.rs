@@ -24,7 +24,7 @@ pub fn ensure_chromium(ctx: &Ctx, _run: &RunId, playwright_mcp_version: &str) ->
     })?;
     let spec = format!("{PLAYWRIGHT_MCP}@{version}");
     if ctx.dry_run {
-        ctx.out.info(&format!("would install Chromium for {spec}"));
+        ctx.out.plan(&format!("would install Chromium for {spec}"));
         return Ok(());
     }
     let npx = nvm::npx_bin(ctx);

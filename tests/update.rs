@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use relaxkit::commands::status::{Note, ToolRow, ToolState};
 use relaxkit::commands::update::{RowResult, UpdateArgs, UpdateReport, run_with_hosts, to_json};
 use relaxkit::ctx::{Ctx, Reporter};
 use relaxkit::exec::{Cmd, Output, Runner};
@@ -977,15 +978,18 @@ fn status_reports_no_drift_after_a_partial_update() {
 
     let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
 
-    let lines: Vec<&String> = report
-        .lines
+    let rows: Vec<&ToolRow> = report
+        .tools
         .iter()
-        .filter(|line| line.starts_with("superpowers on"))
+        .filter(|row| row.id == "superpowers")
         .collect();
-    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(rows.len(), 2, "{rows:?}");
     assert!(
-        lines.iter().all(|line| line.contains("as locked")),
-        "{lines:?}"
+        rows.iter().all(|row| matches!(
+            row.state,
+            ToolState::AsLocked | ToolState::AsLockedUnrecorded
+        )),
+        "{rows:?}"
     );
 }
 
@@ -1257,14 +1261,14 @@ fn an_unversioned_lock_entry_is_not_drift() {
 
     let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
 
-    let lines: Vec<&String> = report
-        .lines
+    let rows: Vec<&ToolRow> = report
+        .tools
         .iter()
-        .filter(|line| line.starts_with("superpowers on"))
+        .filter(|row| row.id == "superpowers")
         .collect();
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(!lines[0].contains("drift"), "{lines:?}");
-    assert!(lines[0].contains("version not recorded"), "{lines:?}");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_ne!(rows[0].state, ToolState::Drift, "{rows:?}");
+    assert_eq!(rows[0].state, ToolState::AsLockedUnrecorded, "{rows:?}");
 }
 
 #[test]
@@ -1735,14 +1739,14 @@ fn an_unversioned_entry_for_a_missing_tool_reports_not_found() {
 
     let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
 
-    let lines: Vec<&String> = report
-        .lines
+    let rows: Vec<&ToolRow> = report
+        .tools
         .iter()
-        .filter(|line| line.starts_with("superpowers on"))
+        .filter(|row| row.id == "superpowers")
         .collect();
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(lines[0].contains("not found"), "{lines:?}");
-    assert!(!lines[0].contains("as locked"), "{lines:?}");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].state, ToolState::NotFound, "{rows:?}");
+    assert_eq!(rows[0].installed, None, "{rows:?}");
 }
 
 #[test]
@@ -1813,16 +1817,14 @@ fn an_mcp_entry_is_shown_as_not_read_not_as_missing() {
 
     let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
 
-    let lines: Vec<&String> = report
-        .lines
+    let rows: Vec<&ToolRow> = report
+        .tools
         .iter()
-        .filter(|line| line.starts_with("playwright on"))
+        .filter(|row| row.id == "playwright")
         .collect();
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(lines[0].contains("MCP entry not read"), "{lines:?}");
-    assert!(lines[0].contains("0.0.86"), "{lines:?}");
-    assert!(!lines[0].contains("not found"), "{lines:?}");
-    assert!(!lines[0].contains("drift"), "{lines:?}");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].state, ToolState::McpNotRead, "{rows:?}");
+    assert_eq!(rows[0].locked, "0.0.86", "{rows:?}");
 }
 
 #[test]
@@ -1833,20 +1835,26 @@ fn status_reports_a_missing_gh_copy_and_not_a_present_one() {
     fx.lock(&[("gh", "9.9.9", "release", &[])]);
 
     let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
-    let gh_lines: Vec<&String> = report
-        .lines
+    let gh_notes: Vec<&Note> = report
+        .notes
         .iter()
-        .filter(|line| line.starts_with("gh:"))
+        .filter(|note| note.text.starts_with("gh:"))
         .collect();
-    assert_eq!(gh_lines.len(), 1, "{:?}", report.lines);
-    assert!(gh_lines[0].contains("pack copy missing"), "{gh_lines:?}");
+    assert_eq!(gh_notes.len(), 1, "{:?}", report.notes);
+    assert!(
+        gh_notes[0].text.contains("pack copy missing"),
+        "{gh_notes:?}"
+    );
 
     pack_gh(&fx);
     let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
     assert!(
-        report.lines.iter().all(|line| !line.starts_with("gh:")),
+        report
+            .notes
+            .iter()
+            .all(|note| !note.text.starts_with("gh:")),
         "{:?}",
-        report.lines
+        report.notes
     );
 }
 
@@ -2254,11 +2262,11 @@ fn report_ends_with_the_restart_list() {
     let report = fx.run(false, Some("playwright")).unwrap();
 
     assert_eq!(report.restart, vec![HostKind::Claude]);
-    let lines = relaxkit::commands::update::lines(&report);
+    let lines = relaxkit::commands::update::lines(&report, relaxkit::ui::Palette::PLAIN);
     assert!(
-        lines
-            .last()
-            .is_some_and(|line| line.starts_with("restart:") && line.contains("Claude Code")),
+        lines.last().is_some_and(|line| {
+            line.starts_with("!  restart Claude Code") && line.contains("hooks and plugins")
+        }),
         "{lines:?}"
     );
 }

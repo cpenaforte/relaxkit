@@ -25,7 +25,7 @@ pub fn pack_tools_off(ctx: &Ctx, _run: &RunId) -> Result<Vec<String>> {
     for argv in SWITCHES {
         let display = argv.join(" ");
         if ctx.dry_run {
-            ctx.out.info(&format!("would run {display}"));
+            ctx.out.plan(&format!("would run {display}"));
         } else {
             let cmd = Cmd::new(argv[0])
                 .args(&argv[1..])

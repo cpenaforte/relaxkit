@@ -1,7 +1,12 @@
 //! The end-to-end run for the `e2e-linux` CI job (plan Task 28, step 1): the real binary, the Claude Code stub on the PATH,
-//! and no prompt. The OpenCode side is not in CI: its stub writes no plugin config, and caveman's OpenCode step reads the
-//! network, so both are left to the owner's live run (docs/acceptance.md). The flow is a dry run, then setup, then the doctor report. Each step must exit 0. stdin is closed, so a
+//! and no prompt. The flow is a dry run, then setup, then the doctor report. Each step must exit 0. stdin is closed, so a
 //! prompt would fail the step instead of waiting for an answer.
+//!
+//! The run does not depend on what the host has installed. On Linux the sandbox needs bubblewrap and socat, and on Ubuntu
+//! 24.04 and later an AppArmor profile: the stub bin holds `bwrap` and `socat`, and every scratch points
+//! `RELAXKIT_APPARMOR_PROFILE` at a file that stands in for the profile. The prerequisite rules themselves are unit-tested in
+//! `src/platform.rs`. The OpenCode side is not in CI: its stub writes no plugin config, and caveman's OpenCode step reads the
+//! network, so the owner's live run covers it (docs/acceptance.md).
 
 mod support;
 

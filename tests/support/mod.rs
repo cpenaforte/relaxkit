@@ -12,9 +12,11 @@ use std::process::Stdio;
 
 use tempfile::TempDir;
 
-/// Host commands relaxkit may call. Each is a stub that logs its argv.
-pub const STUBS: [&str; 11] = [
+/// Host commands relaxkit may call. Each is a stub that logs its argv. `bwrap` and `socat` are the Linux sandbox packages:
+/// on the PATH they count as installed, so no test depends on what the machine has.
+pub const STUBS: [&str; 13] = [
     "claude", "opencode", "gh", "brew", "uv", "rtk", "npm", "npx", "serena", "caveman", "sudo",
+    "bwrap", "socat",
 ];
 
 /// The Chromium executable inside a `chromium-<revision>` directory, as Playwright lays it out on each OS.
@@ -139,6 +141,8 @@ impl Scratch {
             fs::create_dir_all(path).expect("scratch dir");
         }
         fs::write(&log, "").expect("call log");
+        // The AppArmor profile that Ubuntu 24.04 needs for the sandbox, stood in by a file so no test reads /etc.
+        fs::write(root.join("relaxkit-bwrap"), "").expect("profile stand-in");
         for name in STUBS {
             write_executable(&bin.join(name), STUB);
         }
@@ -249,10 +253,18 @@ impl Scratch {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_relaxkit"));
         command
             .env_clear()
+            .env("LC_ALL", "C.UTF-8")
             .env("HOME", &self.home)
             .env("PATH", self.path())
             .env("NVM_DIR", self.home.join(".nvm"))
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env(
+                "RELAXKIT_APPARMOR_PROFILE",
+                self.home
+                    .parent()
+                    .expect("scratch root")
+                    .join("relaxkit-bwrap"),
+            )
             .env("RELAXKIT_STUB_LOG", &self.log)
             .env("RELAXKIT_STUB_STATE", &self.state)
             .env("HTTPS_PROXY", CLOSED_PROXY)

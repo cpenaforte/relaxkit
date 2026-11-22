@@ -11,9 +11,11 @@ use anyhow::{Context, Result, anyhow};
 use crate::ctx::Ctx;
 use crate::state::lockfile::Lockfile;
 use crate::state::{RunId, group_of, journal, undo};
+use crate::ui::{Mark, detail, outcome};
 
 /// Reverts a group and returns the report lines. `group` is the run group to revert, `None` for the newest.
 pub fn run(ctx: &Ctx, group: Option<&str>) -> Result<Vec<String>> {
+    let palette = ctx.out.palette();
     let records = journal::read(&ctx.dirs)?;
     let target = match group {
         Some(text) => text
@@ -22,9 +24,11 @@ pub fn run(ctx: &Ctx, group: Option<&str>) -> Result<Vec<String>> {
         None => match records.last() {
             Some(last) => group_of(last).clone(),
             None => {
-                return Ok(vec![
-                    "nothing to undo: no changes are journaled".to_string(),
-                ]);
+                return Ok(vec![outcome(
+                    palette,
+                    Mark::Skip,
+                    "nothing to undo: no changes are journaled",
+                )]);
             }
         },
     };
@@ -43,24 +47,31 @@ pub fn run(ctx: &Ctx, group: Option<&str>) -> Result<Vec<String>> {
     let moved = claude_plugins_moved(now.as_ref(), before.as_ref());
 
     let touched = undo(ctx, Some(&target))?;
-    let verb = if ctx.dry_run {
-        "would revert"
+    // A dry run changed nothing, so its lines are plans, not outcomes.
+    let (verb, mark) = if ctx.dry_run {
+        ("would revert", Mark::Skip)
     } else {
-        "reverted"
+        ("reverted", Mark::Ok)
     };
-    let mut lines = vec![format!(
-        "{verb} run group {target}: {} file{}",
-        touched.len(),
-        if touched.len() == 1 { "" } else { "s" }
+    let mut lines = vec![outcome(
+        palette,
+        mark,
+        &format!(
+            "{verb} run group {target}: {} file{}",
+            touched.len(),
+            if touched.len() == 1 { "" } else { "s" }
+        ),
     )];
     for path in &touched {
-        lines.push(format!("  {}", path.display()));
+        lines.push(detail(palette, mark, &path.display().to_string()));
     }
-    lines.push(
-        "not restored: host registry state (the Claude plugin registry, Caveman state and Serena state)".to_string(),
-    );
+    lines.push(outcome(
+        palette,
+        Mark::Warn,
+        "not restored: host registry state (the Claude plugin registry, Caveman state and Serena state)",
+    ));
     for line in moved {
-        lines.push(line);
+        lines.push(outcome(palette, Mark::Warn, &line));
     }
     Ok(lines)
 }

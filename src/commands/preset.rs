@@ -12,6 +12,7 @@ use crate::host::{HostKind, detect_hosts};
 use crate::presets::Preset;
 use crate::roles::{Role, RoleSetting};
 use crate::state::{RunId, with_run_lock};
+use crate::ui::Mark;
 
 /// Applies `preset` to `config.toml` and to each detected host's roles and voice.
 pub fn run(ctx: &Ctx, preset: Preset) -> Result<()> {
@@ -30,11 +31,16 @@ pub fn run(ctx: &Ctx, preset: Preset) -> Result<()> {
         config.save(ctx, run)?;
         voice::apply(ctx, run, preset.voice(), false)?;
         apply_roles(ctx, run, &detect_hosts(ctx), &config, None)?;
-        ctx.out.info(&format!(
+        let text = format!(
             "preset {} with voice {}; pinned roles keep their pins",
             preset.as_str(),
             preset.voice().as_str()
-        ));
+        );
+        if ctx.dry_run {
+            ctx.out.plan(&format!("would apply {text}"));
+        } else {
+            ctx.out.outcome(Mark::Ok, &text);
+        }
         Ok(())
     };
     if ctx.dry_run {

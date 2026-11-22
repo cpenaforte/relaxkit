@@ -84,7 +84,7 @@ fn caveman_opencode(
         engine
             .ctx
             .out
-            .info("would copy caveman's OpenCode files from its latest tag");
+            .plan("would copy caveman's OpenCode files from its latest tag");
         return Ok(());
     }
     let source = caveman_rt::fetch_latest_source(engine.ctx, engine.run)

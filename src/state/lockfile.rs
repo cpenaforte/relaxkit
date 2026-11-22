@@ -117,7 +117,7 @@ impl Lockfile {
         let dir = ctx.dirs.backups.join(run.as_str());
         let path = dir.join("lock.toml");
         if ctx.dry_run {
-            ctx.out.info(&format!("would write {}", path.display()));
+            ctx.out.plan(&format!("would write {}", path.display()));
             return Ok(path);
         }
         self.validate()?;

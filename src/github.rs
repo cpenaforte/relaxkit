@@ -6,7 +6,7 @@
 use anyhow::{Result, bail};
 
 use crate::ctx::Ctx;
-use crate::exec::Cmd;
+use crate::exec::{Cmd, CommandFailed};
 use crate::host::Host;
 use crate::runtime::gh::ensure_gh;
 use crate::runtime::utf8;
@@ -57,7 +57,7 @@ pub fn login_with(ctx: &Ctx, run: &RunId, interactive: bool) -> Result<LoginOutc
     let setup_cmd = Cmd::new(program).args(&["auth", "setup-git"]);
 
     if ctx.dry_run {
-        ctx.out.info(&format!(
+        ctx.out.plan(&format!(
             "would run {login_cmd} and then {setup_cmd}, unless gh auth status passes"
         ));
         return Ok(LoginOutcome::Planned);
@@ -79,7 +79,8 @@ pub fn login_with(ctx: &Ctx, run: &RunId, interactive: bool) -> Result<LoginOutc
         return Ok(LoginOutcome::ManualStep { command });
     }
 
-    ctx.out.step(
+    // Printed plainly, not as a result: the web flow that follows prompts the owner and cannot show a spinner.
+    ctx.out.info(
         "logging in to GitHub: a browser opens and a one-time code is copied for you to paste",
     );
     let login = ctx.runner.run(&login_cmd.inherit_terminal())?;
@@ -91,11 +92,12 @@ pub fn login_with(ctx: &Ctx, run: &RunId, interactive: bool) -> Result<LoginOutc
     }
     let setup = ctx.runner.run(&setup_cmd)?;
     if setup.code != 0 {
-        bail!(
-            "gh auth setup-git failed with exit {}: {}",
-            setup.code,
-            setup.stderr.trim()
-        );
+        return Err(CommandFailed {
+            command: setup_cmd.to_string(),
+            code: setup.code,
+            output: setup.stderr.trim().to_string(),
+        }
+        .into());
     }
     Ok(LoginOutcome::LoggedIn)
 }

@@ -129,12 +129,16 @@ fn script(ctx: &Ctx, index: usize) -> Result<String> {
         ),
         1 => "curl --noproxy '*' -sS -o /dev/null https://api.github.com/; echo \"status=$?\""
             .to_string(),
-        _ => "curl -sS -o /dev/null -w '%{http_code}' https://example.com/; echo \"status=$?\""
-            .to_string(),
+        _ => http_code_probe("https://example.com/"),
     })
 }
 
-/// Whether probe `index` passed, from its output, and the reason in words.
+/// The HTTP probe: curl prints the status code on a line of its own, then the script prints the attempt's exit status.
+/// curl's `-w` adds no line break, so the `\n` is written into the format.
+fn http_code_probe(url: &str) -> String {
+    format!("curl -sS -o /dev/null -w '%{{http_code}}\\n' {url}; echo \"status=$?\"")
+}
+
 /// The exit status the probe script printed as `status=<n>`, or `None` when the script did not run.
 fn reported_status(text: &str) -> Option<i32> {
     text.lines()
@@ -289,5 +293,37 @@ mod tests {
 
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|result| !result.passed), "{results:?}");
+    }
+
+    /// A local address with nothing listening on it (the discard port), so a connection to it is refused at once.
+    fn closed_local_url() -> String {
+        "http://127.0.0.1:9/".to_string()
+    }
+
+    #[test]
+    fn the_http_probe_reads_a_refused_connection_as_refused() {
+        // Runs the probe's real shell and curl. curl prints its status code with no line break, so the code and the
+        // `status=` marker must not share a line (the self-test failed on Ubuntu and macOS for that reason).
+        let script = http_code_probe(&closed_local_url());
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .env_remove("http_proxy")
+            .env_remove("HTTP_PROXY")
+            .env_remove("https_proxy")
+            .env_remove("HTTPS_PROXY")
+            .env_remove("all_proxy")
+            .env_remove("ALL_PROXY")
+            .output()
+            .unwrap();
+        let out = Output {
+            code: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        };
+
+        let (passed, detail) = judge(2, &out);
+
+        assert!(passed, "{detail}; the probe printed {:?}", out.stdout);
     }
 }

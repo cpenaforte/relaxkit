@@ -9,6 +9,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -109,7 +110,13 @@ impl Release {
     }
 
     fn run(&self, bin: &Path, flags: &[&str]) -> Output {
-        Command::new("sh")
+        self.run_with("sh", bin, flags)
+    }
+
+    /// `run` under `shell`, with no controlling terminal, as a CI runner has none: `/dev/tty` cannot open there.
+    fn run_with(&self, shell: &str, bin: &Path, flags: &[&str]) -> Output {
+        let mut command = Command::new(shell);
+        command
             .arg(script())
             .args(flags)
             .env("RELAXKIT_VERSION", VERSION)
@@ -118,9 +125,17 @@ impl Release {
                 format!("file://{}/download", self.root.path().display()),
             )
             .env("RELAXKIT_BIN_DIR", bin)
-            .stdin(Stdio::null())
-            .output()
-            .unwrap()
+            .stdin(Stdio::null());
+        // SAFETY: the closure runs in the forked child before exec and only calls setsid.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        command.output().unwrap()
     }
 }
 
@@ -169,6 +184,24 @@ fn installs_the_binary_for_the_platform_and_verifies_the_checksum() {
             .is_some_and(|calls| calls.contains("setup")),
         "setup did not run by default"
     );
+}
+
+#[test]
+fn installs_under_dash_without_a_terminal() {
+    // Ubuntu's `sh` is dash. A failed redirect on the `:` builtin makes dash exit silently, which is what the terminal
+    // probe did on a CI runner: /dev/tty cannot open there, and the install stopped with no message.
+    let release = Release::new();
+    let bin = release.root.path().join("bin");
+
+    let out = release.run_with("/bin/dash", &bin, &[]);
+
+    assert!(
+        out.status.success(),
+        "install failed under dash (status {:?}): {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(release.calls().is_some(), "setup did not run under dash");
 }
 
 #[test]
