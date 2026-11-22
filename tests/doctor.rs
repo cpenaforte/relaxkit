@@ -372,6 +372,37 @@ fn doctor_fails_when_a_locked_mcp_command_is_missing_from_the_mcp_path() {
 }
 
 #[test]
+fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
+    // The probe's program lives only in relaxkit's bin directory, which the stub PATH does not hold. The engine finds it
+    // there, so doctor must run it by its full path rather than by its bare name (ruling Important 6).
+    let root = tempfile::tempdir().unwrap();
+    let program = ctx(root.path(), FakeRunner::new(), FakeNet::new())
+        .dirs
+        .bin
+        .join("rtk");
+    write(&program, "#!/bin/sh\n");
+    fs::set_permissions(
+        &program,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    lock(root.path(), &[("rtk", "1.2.1", "script", &["claude"])]);
+    let runner = refusing_sandbox(root.path()).reply(
+        &format!("{} gain", program.display()),
+        Output::ok("rtk 1.2.1\n"),
+    );
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner, FakeNet::new()),
+        &[claude(root.path())],
+    )
+    .unwrap();
+
+    let probe = find(&checks, "tool.rtk.claude");
+    assert_eq!(probe.status, CheckStatus::Ok, "{probe:?}");
+}
+
+#[test]
 fn doctor_exits_nonzero_when_a_check_fails() {
     let scratch = Scratch::claude_only();
     fs::create_dir_all(scratch.home().join(".claude")).unwrap();

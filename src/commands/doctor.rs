@@ -2,6 +2,8 @@
 //! sound. Read-only: nothing here rewrites a file. Each check has a stable id, its outcome, what it found, and a fix
 //! when it is not ok (rulings K47, K50, K53).
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use serde_json::{Value, json};
 
@@ -322,8 +324,21 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
                 ));
                 continue;
             }
-            let cmd = args.iter().fold(Cmd::new(program), |cmd, arg| cmd.arg(arg));
-            let shown = cmd.to_string();
+            let shown = std::iter::once(program.as_str())
+                .chain(args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let Some(path) = probe_program(ctx, program) else {
+                checks.push(Check::fail(
+                    &check_id,
+                    format!("`{shown}` cannot run: {program} is not found on the probe PATH"),
+                    "run `relaxkit setup` again",
+                ));
+                continue;
+            };
+            let cmd = args
+                .iter()
+                .fold(Cmd::new(&path.to_string_lossy()), |cmd, arg| cmd.arg(arg));
             checks.push(match ctx.runner.run(&cmd) {
                 Ok(out) if out.code == 0 => Check::ok(&check_id, format!("`{shown}` passed")),
                 Ok(out) => Check::fail(
@@ -400,6 +415,22 @@ fn mcp_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Re
         }
     }
     Ok(())
+}
+
+/// The file a probe's program runs from, looked up the way the engine looks: the Node link, the pack bin, `~/.local/bin`,
+/// the system directories, then the PATH. Doctor runs that file by its full path (ruling Important 6).
+fn probe_program(ctx: &Ctx, program: &str) -> Option<PathBuf> {
+    let dirs = [
+        ctx.dirs.data.join("node").join("bin"),
+        ctx.dirs.bin.clone(),
+        ctx.dirs.home.join(".local").join("bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ];
+    dirs.iter()
+        .map(|dir| dir.join(program))
+        .find(|path| is_executable(path))
+        .or_else(|| ctx.runner.which(program))
 }
 
 /// The JSON document `doctor --json` prints: `{"checks":[{"id","status","message","fix"}]}`.
