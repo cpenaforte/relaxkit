@@ -426,3 +426,25 @@ fn setup_rewrites_a_hand_edited_relaxkit_key() {
         "{value}"
     );
 }
+
+#[test]
+fn a_failed_check_takes_precedence_over_a_pending_login() {
+    // Ruling D5: a failed check (exit 1) wins over the login that needs the owner (exit 3), and the login line is
+    // still printed.
+    let mut scratch = Scratch::claude_only();
+    scratch.gh_auth_status(1);
+    let settings = scratch.home().join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        "{\"statusLine\": {\"type\": \"command\", \"command\": \"caveman-badge\"}}\n",
+    )
+    .unwrap();
+
+    let output = scratch.relaxkit().arg("setup").assert().code(1);
+
+    let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned()
+        + &String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(text.contains("fail claude.status_line"), "{text}");
+    assert!(text.contains("gh auth login --web --clipboard"), "{text}");
+}
