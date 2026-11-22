@@ -6,7 +6,7 @@ Status: pre-release. The install line below works only after the owner publishes
 
 ## Install
 
-The repository path in the line below is a placeholder. It stays a placeholder until the owner publishes the first release.
+The repository path and the branch `main` in the line below are placeholders. They stay placeholders until the owner publishes the first release and confirms the default branch.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/OWNER/relaxkit/main/scripts/install.sh | sh
@@ -48,7 +48,9 @@ Add `--dry-run` to any command to see what it would change without writing anyth
 | `relaxkit uninstall` | Removes relaxkit and what it installed. |
 | `relaxkit usage [ARGS...]` | Runs the usage tool. Arguments go to the tool; a `--help` after the first argument goes to the tool too. |
 
-Global flags, which go before or after the command:
+Global flags go before the command. `usage` passes everything after its first argument to the usage tool, so for `usage` the global flags must come before the command too.
+
+The global flags are:
 
 - `--dry-run` shows what would change without writing anything.
 - `--project` applies the change to the current project, where the tool or host supports project scope. `preset`, `privacy` and `uninstall` are global, so they refuse `--project`.
@@ -73,7 +75,7 @@ relaxkit config show
 - Without `--host`, a change covers both hosts. `--host claude` or `--host opencode` limits it to one.
 - On Claude Code the `#variant` is ignored. OpenCode gets the full `provider/model#variant`.
 - On OpenCode, an exact model must be in the list that `opencode models` prints, or the command refuses it. If that list cannot be read, the value is accepted with a warning.
-- On Claude Code, an exact model that is not an alias or a `claude-*` id draws a warning.
+- On Claude Code, an Anthropic exact model that is not an alias or a `claude-*` id draws a warning. A pin to another provider is not used by Claude Code, and the role keeps its tier there.
 
 Other keys include `voice` and `compact-at`, for example `relaxkit config set compact-at 256k`.
 
@@ -81,8 +83,8 @@ Other keys include `voice` and `compact-at`, for example `relaxkit config set co
 
 relaxkit has no telemetry of its own, and it has no background update checks: nothing runs on a timer. It uses the network only when you run one of these commands:
 
-- `setup` and `update` download the pack from GitHub, the npm registry, PyPI, nodejs.org and astral.sh.
-- `status` and `doctor` read the npm registry to report the age of the sandbox plugin.
+- `setup` and `update` download the pack from GitHub, the npm registry, PyPI, nodejs.org and astral.sh, and Playwright's browser download host (for the Chromium that the playwright tool installs).
+- `status` reads the npm registry for the sandbox plugin's age. `doctor` does the same, and its sandbox self-test runs the pinned sandbox runtime through npx (which can fetch it from npm) and makes two curl requests (api.github.com and example.com).
 - `login github` runs the `gh` CLI, which talks to GitHub.
 
 `relaxkit usage` runs the usage tool with `--offline` added unless you pass that flag yourself.
