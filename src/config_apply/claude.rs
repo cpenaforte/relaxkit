@@ -41,13 +41,23 @@ pub fn apply_compact(ctx: &Ctx, run: &RunId, host: &dyn Host, tokens: u64) -> Re
     write_if_changed(ctx, run, &path, &old, &text)
 }
 
+/// The Claude Code alias a role runs with. A pin to another provider has no alias on Claude Code, so the role
+/// keeps its tier instead: the tier it would have without that pin (spec 6.1, rule 1).
+fn claude_alias(config: &KitConfig, role: Role) -> Option<String> {
+    resolve_claude(&effective(config, role)).or_else(|| {
+        let mut tiered = config.clone();
+        tiered.roles.remove(&role);
+        resolve_claude(&effective(&tiered, role))
+    })
+}
+
 /// Writes the `roles` block into CLAUDE.md: the model each subagent role should use, as Claude Code aliases.
 /// A role whose setting names a non-Anthropic model has no alias and is left out. With no alias at all, the
 /// block is removed.
 pub fn apply_roles(ctx: &Ctx, run: &RunId, host: &dyn Host, config: &KitConfig) -> Result<()> {
     let path = host.instructions_file(ctx);
     let old = read_text(&path)?;
-    let alias = |role: Role| resolve_claude(&effective(config, role));
+    let alias = |role: Role| claude_alias(config, role);
     let subagents: Vec<String> = [
         (Role::Implementer, "implementer"),
         (Role::Reviewer, "reviewer"),
@@ -275,7 +285,8 @@ mod tests {
     }
 
     #[test]
-    fn roles_block_omits_a_role_that_resolves_to_none() {
+    fn roles_block_keeps_the_tier_of_a_non_anthropic_planner_pin() {
+        // Spec 6.1 rule 1: Claude Code takes only Anthropic models, so the planner keeps its role tier.
         let root = tempfile::tempdir().unwrap();
         let ctx = ctx(root.path());
         let mut config = KitConfig::default();
@@ -288,7 +299,8 @@ mod tests {
 
         let text = fs::read_to_string(root.path().join(".claude/CLAUDE.md")).unwrap();
         let body = block_get(&text, "roles").expect("roles block");
-        assert!(!body.contains("planner"), "{body}");
+        assert!(body.contains("planner → opus"), "{body}");
+        assert!(!body.contains("gpt-x"), "{body}");
         assert!(body.contains("implementer → haiku"), "{body}");
     }
 
