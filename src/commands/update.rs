@@ -24,7 +24,7 @@ use crate::runtime::nvm::{
 use crate::sandbox::opencode::sandbox_config_path;
 use crate::sandbox::selftest::selftest;
 use crate::state::lockfile::{LockedTool, Lockfile};
-use crate::state::record_backup;
+use crate::state::{record_backup, record_link};
 use crate::tools::engine::Engine;
 
 /// The rows in run order (K80): rtk first, the pinned tools and Node before the tools that run on Node, then the rest.
@@ -440,6 +440,7 @@ fn node_flow(
                 next.version
             );
         }
+        record_link(ctx, &ctx.run, &ctx.dirs.data.join("node"))?;
         link_node(ctx, &next)?;
         Ok(next)
     });

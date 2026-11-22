@@ -121,6 +121,7 @@ fn install_latest(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<String> 
         .symlink_metadata()
         .is_ok_and(|meta| meta.file_type().is_symlink())
     {
+        crate::state::record_link(ctx, run, &bin)?;
         fs::remove_file(&bin)
             .with_context(|| format!("cannot remove the link {}", bin.display()))?;
     }

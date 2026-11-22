@@ -219,6 +219,7 @@ fn journal_creation(ctx: &Ctx, file: &Path) -> Result<()> {
             file: target,
             backup: None,
             created: true,
+            link: None,
         },
     )
 }

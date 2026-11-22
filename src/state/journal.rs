@@ -75,6 +75,9 @@ pub struct EditRecord {
     pub file: PathBuf,
     pub backup: Option<PathBuf>,
     pub created: bool,
+    /// For a link the update replaced or removed: the target it pointed at, which undo puts back. Absent for files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<PathBuf>,
 }
 
 /// All records in order, oldest first. A missing journal is empty.
@@ -199,6 +202,7 @@ mod tests {
             file: PathBuf::from(file),
             backup: None,
             created: true,
+            link: None,
         }
     }
 

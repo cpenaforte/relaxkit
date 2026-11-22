@@ -756,6 +756,73 @@ fn node_stays_inside_24x() {
 }
 
 #[test]
+fn undo_points_the_node_link_back_at_the_previous_node() {
+    let fx = Fixture::new();
+    fx.lock(&[]);
+    fx.serve(
+        "https://nodejs.org/dist/index.json",
+        r#"[{"version":"v24.22.3"},{"version":"v24.13.0"}]"#,
+    );
+    let new_root = fx.root().join(".nvm/versions/node/v24.22.3");
+    fs::create_dir_all(new_root.join("bin")).unwrap();
+    fs::write(new_root.join("bin/node"), "").unwrap();
+    fx.shell.on(
+        "bash -c",
+        Output::ok("Now using node v24.22.3 (npm v11.6.0)\n"),
+    );
+    fx.shell.on(
+        &format!("{} --version", new_root.join("bin/node").display()),
+        Output::ok("v24.22.3\n"),
+    );
+    let link = fx.root().join(".local/share/relaxkit/node");
+
+    fx.run(false, Some("node")).unwrap();
+    assert_eq!(fs::read_link(&link).unwrap(), new_root);
+    undo(&fx.ctx(), Some(&fx.run)).unwrap();
+
+    assert_eq!(
+        fs::read_link(&link).unwrap(),
+        fx.root().join(".nvm/versions/node/v24.13.0"),
+        "undo did not put the Node link back"
+    );
+}
+
+#[test]
+fn undo_puts_back_the_pack_rtk_link_an_update_removed() {
+    let fx = Fixture::new();
+    fx.lock(&[("rtk", "1.1.0", "script", &["claude"])]);
+    serve_rtk(&fx);
+    let pack_rtk = fx.root().join(".local/share/relaxkit/bin/rtk");
+    let elsewhere = fx.root().join("elsewhere/rtk");
+    fs::create_dir_all(pack_rtk.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &pack_rtk).unwrap();
+    fx.shell.program("rtk", Path::new("/opt/homebrew/bin/rtk"));
+    fx.shell.on(
+        &format!("{} gain", pack_rtk.display()),
+        Output::ok("gain\n"),
+    );
+    fx.shell.on("rtk init -g", Output::ok(""));
+    fx.shell.on("rtk telemetry disable", Output::ok(""));
+
+    fx.run(false, Some("rtk")).unwrap();
+    assert!(
+        !pack_rtk
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    undo(&fx.ctx(), Some(&fx.run)).unwrap();
+
+    let meta = fs::symlink_metadata(&pack_rtk).unwrap();
+    assert!(
+        meta.file_type().is_symlink(),
+        "undo did not restore the link"
+    );
+    assert_eq!(fs::read_link(&pack_rtk).unwrap(), elsewhere);
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

@@ -78,6 +78,7 @@ pub fn record_backup(ctx: &Ctx, run: &RunId, path: &Path) -> Result<()> {
             file: target.clone(),
             backup: Some(backup),
             created: false,
+            link: None,
         }
     } else {
         EditRecord {
@@ -85,9 +86,43 @@ pub fn record_backup(ctx: &Ctx, run: &RunId, path: &Path) -> Result<()> {
             file: target.clone(),
             backup: None,
             created: true,
+            link: None,
         }
     };
     journal::append(&ctx.dirs, &record)
+}
+
+/// Journals the link at `path` before an update replaces or removes it, so `undo` can point the link back at the
+/// target it had. The path must be a link now: an update only replaces links it already found. A dry run journals
+/// nothing, and a link already journaled in this run is kept as first recorded.
+pub fn record_link(ctx: &Ctx, run: &RunId, path: &Path) -> Result<()> {
+    if ctx.dry_run {
+        return Ok(());
+    }
+    let file = std::path::absolute(path)
+        .with_context(|| format!("cannot make {} absolute", path.display()))?;
+    let journaled = journal::read(&ctx.dirs)?
+        .iter()
+        .any(|record| record.run == *run && record.file == file);
+    if journaled {
+        return Ok(());
+    }
+    let target = fs::read_link(&file).with_context(|| {
+        format!(
+            "{} is not a link, so its target cannot be journaled",
+            file.display()
+        )
+    })?;
+    journal::append(
+        &ctx.dirs,
+        &EditRecord {
+            run: run.clone(),
+            file,
+            backup: None,
+            created: false,
+            link: Some(target),
+        },
+    )
 }
 
 /// Flushes the directories from the backup's parent up to `dirs.home`, inclusive, so the backup's
@@ -188,7 +223,10 @@ fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
         return Err(anyhow!("no journaled changes for run {target}"));
     }
     // Checked before any write, removal or keep backup, so a refused undo leaves the run whole.
-    if let Some(record) = mine.iter().find(|record| record.file.is_symlink()) {
+    if let Some(record) = mine
+        .iter()
+        .find(|record| record.link.is_none() && record.file.is_symlink())
+    {
         return Err(symlink_refusal(&record.file));
     }
     // Every backup must open too, or undo would stop halfway through the run.
@@ -259,6 +297,9 @@ fn symlink_refusal(file: &Path) -> anyhow::Error {
 /// Puts one journaled file back: the backup's bytes, or nothing if the file was new.
 /// The current content is kept in a backup first.
 fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
+    if let Some(target) = &record.link {
+        return restore_link(ctx, &record.file, target);
+    }
     // Undo neither writes through nor removes a symlink: the journal describes the file, not the
     // link's target, and a link put back by the user is not something undo may change.
     if record.file.is_symlink() {
@@ -294,6 +335,25 @@ fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
         }
         (None, false) => Ok(()),
     }
+}
+
+/// Points the link at `file` back at `target`. Whatever an update put in its place (a new link, or a regular file
+/// written after the link was removed) is kept as a backup first when it is a file.
+fn restore_link(ctx: &Ctx, file: &Path, target: &Path) -> Result<()> {
+    if ctx.dry_run {
+        ctx.out
+            .info(&format!("would restore the link {}", file.display()));
+        return Ok(());
+    }
+    if let Ok(meta) = file.symlink_metadata() {
+        if !meta.file_type().is_symlink() {
+            keep_current(ctx, file)?;
+        }
+        fs::remove_file(file).with_context(|| format!("cannot remove {}", file.display()))?;
+    }
+    ensure_parent(file)?;
+    std::os::unix::fs::symlink(target, file)
+        .with_context(|| format!("cannot restore the link {}", file.display()))
 }
 
 #[cfg(test)]
