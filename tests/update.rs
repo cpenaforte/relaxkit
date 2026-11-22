@@ -2195,6 +2195,32 @@ fn undo_puts_back_the_previous_gh_copy_and_its_lock_entry() {
 }
 
 #[test]
+fn a_gh_move_from_an_unversioned_entry_is_recorded_not_updated() {
+    // The lock never recorded gh's version, so the move records it: the row says so, and does not claim an update (K88, G4).
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "unversioned", "release", &[])]);
+    let bin = pack_gh(&fx);
+    serve_gh(
+        &fx,
+        "9.9.9",
+        b"archive",
+        None,
+        "#!/bin/sh\necho gh version 9.9.9\n",
+    );
+    fx.shell.on(
+        &format!("{} --version", bin.display()),
+        Output::ok("gh version 9.9.9 (2026-01-01)\n"),
+    );
+
+    let report = fx.run(false, Some("gh")).unwrap();
+
+    let row = row(&report, "gh");
+    assert!(matches!(row.result, RowResult::Recorded), "{row:?}");
+    assert_eq!(fx.read_lock().tools["gh"].version, "9.9.9");
+    assert!(report.failed.is_empty());
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

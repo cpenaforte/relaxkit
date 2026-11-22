@@ -534,6 +534,17 @@ fn gh_flow(ctx: &Ctx, plan: &Plan<'_>, report: &mut UpdateReport) -> (UpdateRow,
         .and_then(|()| gh::probe(ctx, &bin, &fetched.version))
         .and_then(|()| gh::record_version(ctx, &ctx.run, &fetched.version));
     match outcome {
+        // A move from a version that was never recorded records the version now, which is not an update (K88).
+        Ok(()) if plan.installed.as_deref() == Some(UNVERSIONED) => (
+            row(
+                RowResult::Recorded,
+                Some(
+                    "the previous version was not recorded, so the new version is recorded now"
+                        .to_string(),
+                ),
+            ),
+            Vec::new(),
+        ),
         Ok(()) => (row(RowResult::Updated, None), Vec::new()),
         Err(err) => {
             report.failed.push(plan.id.to_string());
