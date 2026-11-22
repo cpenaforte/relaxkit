@@ -257,11 +257,13 @@ pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<Node
     // alias that was absent before the install is removed again. A fresh install keeps nvm's default.
     let default = nvm.dir.join("alias").join("default");
     let had_default = default.symlink_metadata().is_ok();
-    let out = ctx.runner.run(&nvm_cmd(&nvm, &action)?)?;
+    // The result is held, not propagated, so the alias is cleared even when the runner itself fails.
+    let ran = ctx.runner.run(&nvm_cmd(&nvm, &action)?);
     if reused && !had_default && default.symlink_metadata().is_ok() {
         fs::remove_file(&default)
             .with_context(|| format!("cannot remove {}", default.display()))?;
     }
+    let out = ran?;
     if out.code != 0 {
         bail!("{action} failed (exit {}): {}", out.code, out.stderr.trim());
     }
@@ -748,6 +750,57 @@ mod tests {
             .as_ref()
             .expect("an existing file has a backup");
         assert_eq!(fs::read_to_string(backup).unwrap(), "zdot zprofile\n");
+    }
+
+    /// Writes `alias` and then fails with a runner error, as an install that dies after nvm wrote its
+    /// default would. Other commands go to `inner`.
+    struct CreatesThenFails {
+        inner: Recorder,
+        install: String,
+        alias: PathBuf,
+    }
+
+    impl crate::exec::Runner for CreatesThenFails {
+        fn run(&self, cmd: &crate::exec::Cmd) -> Result<crate::exec::Output> {
+            if cmd.to_string().starts_with(&self.install) {
+                write(&self.alias, "24\n");
+                anyhow::bail!("the runner lost the nvm install");
+            }
+            self.inner.run(cmd)
+        }
+
+        fn which(&self, program: &str) -> Option<PathBuf> {
+            self.inner.which(program)
+        }
+    }
+
+    #[test]
+    fn a_failed_reused_nvm_install_still_clears_the_default_alias_it_created() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        nvm_at(&home.join(".nvm"));
+        let alias = home.join(".nvm/alias/default");
+        let runner = CreatesThenFails {
+            inner: Recorder::new(FakeRunner::new()),
+            install: install_prefix(home),
+            alias: alias.clone(),
+        };
+        let ctx = Ctx {
+            dirs: crate::platform::KitDirs::rooted(home),
+            runner: Box::new(runner),
+            net: Box::new(FakeNet::new()),
+            out: crate::ctx::Reporter::capture(),
+            dry_run: false,
+            project: None,
+            run: RunId::new(),
+        };
+
+        assert!(ensure_node_in(&ctx, &RunId::new(), &none()).is_err());
+
+        assert!(
+            alias.symlink_metadata().is_err(),
+            "a failed install left the default alias it created"
+        );
     }
 
     #[test]
