@@ -44,8 +44,9 @@ pub enum SelfUpdate {
         to: String,
         reason: String,
     },
-    /// A Homebrew-owned binary was updated by `brew upgrade relaxkit` (K93).
-    DelegatedToBrew,
+    /// A Homebrew-owned binary was upgraded by `brew upgrade relaxkit` (K93). `from` and `to` are the versions the
+    /// brew-managed link reports before and after; equal versions are current (K103).
+    DelegatedToBrew { from: String, to: String },
     /// The embedded key is the placeholder, so nothing was fetched or swapped (K91).
     NotConfigured,
     /// A check could not reach the release repository, so the newest version is unknown (K98).
@@ -90,17 +91,7 @@ pub fn apply_with(
     }
     let act = !check_only && !ctx.dry_run;
     if act && is_homebrew_path(exe) {
-        let out = ctx
-            .runner
-            .run(&Cmd::new("brew").args(&["upgrade", "relaxkit"]))?;
-        if out.code != 0 {
-            bail!(
-                "brew upgrade relaxkit exited {}: {}",
-                out.code,
-                out.stderr.trim()
-            );
-        }
-        return Ok(SelfUpdate::DelegatedToBrew);
+        return brew_upgrade(ctx, exe, tools);
     }
     let newest = match newest_version(ctx) {
         Ok(version) => version,
@@ -196,9 +187,19 @@ pub fn row(outcome: &SelfUpdate) -> String {
         }
         SelfUpdate::Updated { from, to } => format!("relaxkit {from} -> {to}: updated"),
         SelfUpdate::UpdatedToolsFailed { from, to, reason } => {
-            format!("relaxkit {from} -> {to}: updated, but a tool failed: {reason}")
+            let moved = if from == to {
+                format!("{to}: current")
+            } else {
+                format!("{from} -> {to}: updated")
+            };
+            format!("relaxkit {moved}, but a tool failed: {reason}")
         }
-        SelfUpdate::DelegatedToBrew => "relaxkit: updated by brew upgrade relaxkit".to_string(),
+        SelfUpdate::DelegatedToBrew { from, to } if from != to => {
+            format!("relaxkit {from} -> {to}: updated by brew upgrade relaxkit")
+        }
+        SelfUpdate::DelegatedToBrew { to, .. } => {
+            format!("relaxkit {to}: current (brew upgrade relaxkit made no change)")
+        }
         SelfUpdate::NotConfigured => {
             "relaxkit: the release signing key is not configured, so the self update did nothing"
                 .to_string()
@@ -207,6 +208,57 @@ pub fn row(outcome: &SelfUpdate) -> String {
             format!("relaxkit {INSTALLED} -> newest unknown: {reason}")
         }
     }
+}
+
+/// Upgrades a Homebrew-owned binary, then runs the new one through the brew-managed link (K103). The Cellar path may be
+/// gone after the upgrade, so the link is the only path used after it. A failed upgrade is an error. A failed re-run is
+/// a result that names the tool that failed.
+fn brew_upgrade(ctx: &Ctx, exe: &Path, tools: bool) -> Result<SelfUpdate> {
+    let link = brew_link(exe)?;
+    let from = reported_version(ctx, &link)?;
+    let out = ctx
+        .runner
+        .run(&Cmd::new("brew").args(&["upgrade", "relaxkit"]))?;
+    if out.code != 0 {
+        bail!(
+            "brew upgrade relaxkit exited {}: {}",
+            out.code,
+            out.stderr.trim()
+        );
+    }
+    let to = reported_version(ctx, &link)?;
+    if tools && let Some(reason) = rerun(ctx, &link)? {
+        return Ok(SelfUpdate::UpdatedToolsFailed { from, to, reason });
+    }
+    Ok(SelfUpdate::DelegatedToBrew { from, to })
+}
+
+/// The brew-managed link of a Cellar binary: `<prefix>/bin/relaxkit`, where the prefix is the directory above `Cellar`.
+fn brew_link(exe: &Path) -> Result<PathBuf> {
+    let prefix = exe
+        .ancestors()
+        .find(|dir| dir.file_name() == Some(std::ffi::OsStr::new("Cellar")))
+        .and_then(Path::parent)
+        .ok_or_else(|| anyhow!("{} is not under a Homebrew Cellar", exe.display()))?;
+    Ok(prefix.join("bin").join("relaxkit"))
+}
+
+/// The version a binary reports with `--version`: the last word of its output, which must be a version.
+fn reported_version(ctx: &Ctx, bin: &Path) -> Result<String> {
+    let program = utf8(bin)?;
+    let out = ctx
+        .runner
+        .run(&Cmd::new(program).arg("--version"))
+        .with_context(|| format!("cannot run {}", bin.display()))?;
+    let word = out
+        .stdout
+        .split_whitespace()
+        .last()
+        .filter(|_| out.code == 0)
+        .ok_or_else(|| anyhow!("{} did not report a version", bin.display()))?;
+    semver::Version::parse(word)
+        .with_context(|| format!("{} reported {word}, which is not a version", bin.display()))?;
+    Ok(word.to_string())
 }
 
 /// The newest release of relaxkit, without its leading `v`, from the latest GitHub release (K97).

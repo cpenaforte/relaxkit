@@ -98,6 +98,10 @@ pub fn run(cli: Cli) -> Result<i32> {
                                 tools_done_by_new_binary = true;
                                 self_failed = true;
                             }
+                            // Brew's new binary ran the tool phase through the link (K103).
+                            selfupdate::SelfUpdate::DelegatedToBrew { .. } => {
+                                tools_done_by_new_binary = true;
+                            }
                             _ => {}
                         }
                     }

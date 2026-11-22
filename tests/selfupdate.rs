@@ -7,6 +7,7 @@
 //! answers every other command with success.
 #![cfg(unix)]
 
+use std::collections::VecDeque;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -87,6 +88,10 @@ struct Recorder {
     rerun_exit: i32,
     /// Makes `update --tools` fail to start, which is a spawn error (K102).
     rerun_spawn_error: bool,
+    /// The exit code of `brew upgrade relaxkit` (K103). Zero by default.
+    brew_exit: i32,
+    /// What `<bin> --version` reports, in order, for the brew-managed link (K103). `0.1.0` once the queue is empty.
+    versions: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl Recorder {
@@ -110,6 +115,16 @@ impl Runner for Recorder {
             return SystemRunner.run(cmd);
         }
         let words: Vec<&str> = cmd.argv().iter().map(String::as_str).collect();
+        if cmd.program() == "brew" && self.brew_exit != 0 {
+            return Ok(Output::fail(self.brew_exit, "brew refused"));
+        }
+        if words == ["--version"] {
+            let next = self.versions.lock().unwrap().pop_front();
+            return Ok(Output::ok(&format!(
+                "relaxkit {}\n",
+                next.unwrap_or_else(|| INSTALLED.to_string())
+            )));
+        }
         if words == ["update", "--tools"] {
             if self.rerun_spawn_error {
                 anyhow::bail!("cannot run {}", cmd.program());
@@ -302,13 +317,124 @@ fn homebrew_owned_binary_delegates_to_brew_upgrade() {
     )
     .unwrap();
 
-    assert_eq!(outcome, SelfUpdate::DelegatedToBrew);
     assert_eq!(
-        runner.calls(),
-        vec![(
+        outcome,
+        SelfUpdate::DelegatedToBrew {
+            from: INSTALLED.to_string(),
+            to: INSTALLED.to_string(),
+        }
+    );
+    let calls = runner.calls();
+    assert!(
+        calls.contains(&(
             "brew".to_string(),
             vec!["upgrade".into(), "relaxkit".into()]
-        )]
+        )),
+        "{calls:?}"
+    );
+}
+
+/// The brew-managed link for the Cellar binary used below.
+const BREW_LINK: &str = "/opt/homebrew/bin/relaxkit";
+const CELLAR_EXE: &str = "/opt/homebrew/Cellar/relaxkit/0.1.0/bin/relaxkit";
+
+/// A runner whose link reports `before`, then `after`, around the brew upgrade (K103).
+fn brew_runner(before: &str, after: &str) -> Recorder {
+    let runner = Recorder::default();
+    runner
+        .versions
+        .lock()
+        .unwrap()
+        .extend([before.to_string(), after.to_string()]);
+    runner
+}
+
+#[test]
+fn brew_upgrade_is_followed_by_a_re_run_through_the_link_and_is_updated_when_the_version_moves() {
+    // K103 (F22-3): after `brew upgrade relaxkit`, the new binary runs `update --tools` through the brew link. The row
+    // says "updated" because the link now reports a different version.
+    let root = temp();
+    let runner = brew_runner(INSTALLED, VERSION);
+    let ctx = ctx_for(root.path(), &runner, FakeNet::new());
+
+    let outcome = selfupdate::apply(&ctx, Path::new(CELLAR_EXE), &test_key(), false).unwrap();
+
+    assert_eq!(
+        outcome,
+        SelfUpdate::DelegatedToBrew {
+            from: INSTALLED.to_string(),
+            to: VERSION.to_string(),
+        }
+    );
+    assert!(selfupdate::row(&outcome).contains("updated"), "{outcome:?}");
+    let calls = runner.calls();
+    assert!(
+        calls.contains(&(
+            BREW_LINK.to_string(),
+            vec!["update".into(), "--tools".into()]
+        )),
+        "{calls:?}"
+    );
+    assert!(
+        calls.iter().all(|(program, _)| program != CELLAR_EXE),
+        "the Cellar path was run after the upgrade: {calls:?}"
+    );
+}
+
+#[test]
+fn brew_upgrade_to_the_same_version_is_current() {
+    let root = temp();
+    let runner = brew_runner(INSTALLED, INSTALLED);
+    let ctx = ctx_for(root.path(), &runner, FakeNet::new());
+
+    let outcome = selfupdate::apply(&ctx, Path::new(CELLAR_EXE), &test_key(), false).unwrap();
+
+    let row = selfupdate::row(&outcome);
+    assert!(row.contains("current") && !row.contains("updated"), "{row}");
+}
+
+#[test]
+fn a_failing_brew_upgrade_is_named_and_runs_no_re_run() {
+    let root = temp();
+    let runner = Recorder {
+        brew_exit: 1,
+        ..brew_runner(INSTALLED, VERSION)
+    };
+    let ctx = ctx_for(root.path(), &runner, FakeNet::new());
+
+    let err = selfupdate::apply(&ctx, Path::new(CELLAR_EXE), &test_key(), false)
+        .expect_err("a failing brew upgrade was accepted");
+
+    assert!(
+        format!("{err:#}").contains("brew upgrade relaxkit exited 1"),
+        "{err:#}"
+    );
+    assert!(
+        runner
+            .calls()
+            .iter()
+            .all(|(_, argv)| argv != &["update", "--tools"]),
+        "{:?}",
+        runner.calls()
+    );
+}
+
+#[test]
+fn self_only_on_brew_runs_no_re_run() {
+    // K101 applies to brew too: `--self` upgrades through brew and runs no tool.
+    let root = temp();
+    let runner = brew_runner(INSTALLED, VERSION);
+    let ctx = ctx_for(root.path(), &runner, FakeNet::new());
+
+    selfupdate::apply_with(&ctx, Path::new(CELLAR_EXE), &test_key(), false, false).unwrap();
+
+    assert!(
+        runner
+            .calls()
+            .iter()
+            .all(|(_, argv)| argv != &["update", "--tools"]),
+        "{:?}",
+        runner.calls()
     );
 }
 
