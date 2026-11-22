@@ -220,6 +220,25 @@ mod tests {
         assert!(!missing.exists(), "download created the missing directory");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn download_over_a_symlink_writes_through_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("tool.bin");
+        let link = dir.path().join("link.bin");
+        fs::write(&real, "previous").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let (url, server) = serve_once("new body");
+        let net = HttpNet::new().unwrap();
+
+        net.download(&url, &link).unwrap();
+
+        server.join().unwrap();
+        assert!(link.is_symlink(), "the link was replaced by a regular file");
+        assert_eq!(fs::read_link(&link).unwrap(), real);
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new body");
+    }
+
     #[test]
     fn github_latest_tag_parses_tag_name() {
         let net = FakeNet::new().with(

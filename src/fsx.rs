@@ -68,6 +68,7 @@ mod tests {
         write_atomic(&link, b"new").unwrap();
 
         assert!(link.is_symlink(), "the link was replaced by a regular file");
+        assert_eq!(fs::read_link(&link).unwrap(), real);
         assert_eq!(fs::read_to_string(&real).unwrap(), "new");
     }
 }
