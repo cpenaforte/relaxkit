@@ -2,7 +2,7 @@
 
 relaxkit sets up and manages a curated set of agent tools for Claude Code and OpenCode. It installs the pack (such as rtk, caveman and gh), writes each host's config, sets a model tier or an exact model per role, keeps the tools updated, and can revert its last change. It runs on Linux and macOS.
 
-Status: pre-release. The install line below works only after the owner publishes the first release.
+Status: early release. The install line below fetches the latest release from https://github.com/cpenaforte/relaxkit/releases.
 
 ## Install
 
