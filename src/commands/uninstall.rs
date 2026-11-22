@@ -351,23 +351,48 @@ fn remove_bin_copies_except(
     Ok(())
 }
 
-/// Removes relaxkit's lock file. It is journaled before it goes, so `relaxkit undo` restores it. A dry run only reports
-/// the removal, and an absent lock has nothing to remove.
-fn remove_lock(ctx: &Ctx, run: &RunId, lines: &mut Vec<String>) -> Result<()> {
+/// Whether uninstall removes the lock: it exists and is not a link. A link is never removed, since that would delete
+/// the owner's file while undo restores only the bytes (as for CLAUDE.md, Task 8).
+fn lock_is_removed(ctx: &Ctx) -> bool {
     let path = ctx.dirs.config.join("lock.toml");
-    if !path.exists() {
+    path.exists() && !path.is_symlink()
+}
+
+/// Removes relaxkit's lock file. It is journaled before it goes, so `relaxkit undo` restores it. A dry run only reports
+/// the removal. A link or an absent lock is left alone.
+fn remove_lock(ctx: &Ctx, run: &RunId, lines: &mut Vec<String>) -> Result<()> {
+    if !lock_is_removed(ctx) {
         return Ok(());
     }
+    let path = ctx.dirs.config.join("lock.toml");
     record_backup(ctx, run, &path)?;
     if !ctx.dry_run {
         fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
     }
     lines.push(removal(
         ctx,
-        &format!("removed relaxkit's lock file {}", path.display()),
-        &format!("would remove relaxkit's lock file {}", path.display()),
+        &format!(
+            "removed relaxkit's lock file {}, and undo restores it",
+            path.display()
+        ),
+        &format!("relaxkit's lock file {} would be removed", path.display()),
     ));
     Ok(())
+}
+
+/// What the config line says about the lock. The lock is named as removed only when uninstall removes it: a dry run
+/// says the removal is still to come, a link is said to be kept, and an absent lock is not mentioned.
+fn lock_note(ctx: &Ctx) -> &'static str {
+    let path = ctx.dirs.config.join("lock.toml");
+    if path.is_symlink() {
+        "; the lock is a symlink, so it is kept"
+    } else if !path.exists() {
+        ""
+    } else if ctx.dry_run {
+        "; the lock would be removed, and undo would restore it"
+    } else {
+        "; the lock is removed, and undo restores it"
+    }
 }
 
 /// A removal this run made, or in a dry run the removal it would make, since a dry run removes nothing.
@@ -398,9 +423,10 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
         palette,
         Mark::Skip,
         &format!(
-            "relaxkit's config and journal under {} and {}: kept so `relaxkit undo` still works; the lock is removed, and undo restores it",
+            "relaxkit's config and journal under {} and {}: kept so `relaxkit undo` still works{}",
             ctx.dirs.config.display(),
-            ctx.dirs.data.display()
+            ctx.dirs.data.display(),
+            lock_note(ctx)
         ),
     ));
     lines.push(detail(
