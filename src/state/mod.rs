@@ -10,7 +10,7 @@ pub use run::with_run_lock;
 
 use std::path::{Path, PathBuf};
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::path::Component;
 
 use anyhow::{Context, Result, anyhow};
@@ -38,6 +38,13 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
             }
             fs::copy(&target, &backup)
                 .with_context(|| format!("cannot back up {}", target.display()))?;
+            // The copy must reach the disk before the journal record that names it is synced.
+            // Write access is needed for sync_all on Windows; opening does not truncate.
+            OpenOptions::new()
+                .write(true)
+                .open(&backup)
+                .and_then(|file| file.sync_all())
+                .with_context(|| format!("cannot flush the backup {}", backup.display()))?;
             EditRecord {
                 run: run.clone(),
                 file: target.clone(),
