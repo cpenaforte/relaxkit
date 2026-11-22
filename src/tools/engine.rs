@@ -19,14 +19,17 @@ use crate::state::RunId;
 use crate::state::lockfile::{LockedTool, Lockfile, check_version};
 use crate::tools::detect::{Route, install_route, plugin_name, plugin_spec, uses_uv};
 
+/// The version recorded for a tool that has no version source (a plugin that the host versions itself). Such a
+/// tool is not written to the lock, because the lock stores only exact versions.
+pub const UNVERSIONED: &str = "unversioned";
+
 /// A named code path a recipe may run with a `handler` step. It receives the host and the variables that later
 /// steps expand with, so it can hand a value (a marketplace, a Chromium path) to them.
 pub type HandlerFn = for<'a> fn(&Engine<'a>, &Recipe, &dyn Host, &mut Vars) -> Result<()>;
 
-/// The handler registry. Task 12 has none; Task 13 adds the four handlers in the batch.
+/// The handler registry: the code path a handler name runs, or `None` when this build does not implement it.
 pub fn handler(name: &str) -> Option<HandlerFn> {
-    let _ = name;
-    None
+    crate::tools::handlers::lookup(name)
 }
 
 /// What the engine did for one tool on one host.
@@ -81,7 +84,7 @@ impl<'a> Engine<'a> {
             let version = found
                 .version
                 .or_else(|| recipe.pin.clone())
-                .unwrap_or_default();
+                .unwrap_or_else(|| UNVERSIONED.to_string());
             return Ok(Some((version, route)));
         }
         // An MCP entry is always written again, because the entry may be missing or different.
@@ -167,7 +170,7 @@ impl<'a> Engine<'a> {
         let version = recipe
             .pin
             .clone()
-            .ok_or_else(|| anyhow!("recipe `{}` has no pinned version to install", recipe.id))?;
+            .unwrap_or_else(|| UNVERSIONED.to_string());
         let vars = self.run_steps(recipe, host)?;
         let route = install_route(recipe, kind, &vars.marketplace);
         Ok((Outcome::Installed { version }, Some(route)))

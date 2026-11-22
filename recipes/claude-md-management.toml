@@ -1,4 +1,4 @@
-# Open item: membership in anthropic-plugin-directory is not checked for this plugin. Task 28 confirms it.
+# The marketplace is resolved on each install by the claude_marketplace handler (spec 5.1), never hard-coded.
 id = "claude-md-management"
 title = "Claude MD Management"
 kind = "plugin"
@@ -10,7 +10,10 @@ telemetry_default_off = true
 claude = "2.1.330"
 
 [[install.claude]]
-plugin = "claude-md-management@anthropic-plugin-directory"
+handler = "claude_marketplace"
+
+[[install.claude]]
+plugin = "claude-md-management@{marketplace}"
 
 [probe.claude]
 argv = ["claude", "plugin", "list"]
