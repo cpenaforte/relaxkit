@@ -153,6 +153,14 @@ fn keep_current(ctx: &Ctx, file: &Path) -> Result<()> {
 /// Puts one journaled file back: the backup's bytes, or nothing if the file was new.
 /// The current content is kept in a backup first.
 fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
+    // Undo neither writes through nor removes a symlink: the journal describes the file, not the
+    // link's target, and a link put back by the user is not something undo may change.
+    if record.file.is_symlink() {
+        return Err(anyhow!(
+            "{} is now a symlink; undo leaves symlinks alone, so it was not restored",
+            record.file.display()
+        ));
+    }
     match (&record.backup, record.created) {
         (Some(backup), _) => {
             if ctx.dry_run {
@@ -471,6 +479,35 @@ mod tests {
         holder.unlock().unwrap();
         writer.join().unwrap().unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "orig");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn undo_refuses_a_journaled_path_that_is_now_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "orig").unwrap();
+        safe_write(&ctx, &RunId::new(), &file, "setup").unwrap();
+        // The user moves the file to a dotfiles copy and links it back.
+        let linked = dir.path().join("dotfiles-settings.json");
+        fs::rename(&file, &linked).unwrap();
+        fs::write(&linked, "other bytes").unwrap();
+        std::os::unix::fs::symlink(&linked, &file).unwrap();
+
+        let error = undo(&ctx, None).expect_err("undo wrote through a symlink");
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("undo leaves symlinks alone"),
+            "message: {message}"
+        );
+        assert!(
+            message.contains(&file.display().to_string()),
+            "message: {message}"
+        );
+        assert_eq!(fs::read_to_string(&linked).unwrap(), "other bytes");
+        assert_eq!(journal::read(&ctx.dirs).unwrap().len(), 1);
     }
 
     #[test]
