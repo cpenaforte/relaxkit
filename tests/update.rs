@@ -1639,6 +1639,7 @@ fn a_host_already_at_the_newest_version_is_not_touched_when_another_host_is_behi
         "a probe failure on OpenCode must roll OpenCode back, not fail the rollback: {row:?}"
     );
     assert_eq!(report.failed, vec!["superpowers".to_string()]);
+    assert_eq!(report.restart, vec![HostKind::Opencode], "{report:?}");
 }
 
 #[test]
@@ -1706,6 +1707,7 @@ fn an_mcp_host_already_at_the_newest_version_keeps_its_entry() {
         fx.read_lock().tools["playwright"].version_for("opencode"),
         "0.0.87"
     );
+    assert!(!report.restart.contains(&HostKind::Claude), "{report:?}");
 }
 
 #[test]
