@@ -524,4 +524,31 @@ mod tests {
             "the old plugin entry was lost"
         );
     }
+
+    #[test]
+    fn a_dangling_config_link_stops_the_command_before_it_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join(".config/opencode");
+        fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(
+            root.path().join("nowhere.jsonc"),
+            dir.join("opencode.jsonc"),
+        )
+        .unwrap();
+        let fake = FakeRunner::new().reply("opencode plugin add", Output::ok(""));
+        let result = host(root.path()).plugin_install(
+            &ctx(root.path(), Box::new(fake.clone())),
+            "opencode-sandbox@0.7.0",
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("dangling"), "unexpected error: {err}");
+        assert!(
+            err.contains("opencode.jsonc"),
+            "the error must name the link: {err}"
+        );
+        assert!(
+            fake.calls().is_empty(),
+            "the command ran through a dangling link"
+        );
+    }
 }

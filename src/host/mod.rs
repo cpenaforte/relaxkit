@@ -188,10 +188,14 @@ pub(crate) fn edit_guarded(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<Ou
 }
 
 /// Journals a file that is absent before a command, as created, with no backup. If the command creates it,
-/// undo removes it again. A symlink is left alone, because undo refuses to touch one.
+/// undo removes it again. A dangling symlink fails closed: the command would write through the link to a file
+/// that undo cannot track, and the same reasoning as `state::resolve` applies, so nothing runs.
 fn journal_creation(ctx: &Ctx, file: &Path) -> Result<()> {
     if file.is_symlink() {
-        return Ok(());
+        bail!(
+            "{} is a symbolic link that does not resolve; undo cannot track a file behind a dangling link. Fix the link, then retry",
+            file.display()
+        );
     }
     let target = std::path::absolute(file)
         .with_context(|| format!("cannot make {} absolute", file.display()))?;
