@@ -2,7 +2,7 @@
 //! do not reinstall), runs the recipe's install steps at the pinned version, and records the result in the lock.
 //! Install steps run in order and stop at the first failure. A tool whose steps fail is not locked.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -518,12 +518,18 @@ impl<'a> Engine<'a> {
             relaxkit: env!("CARGO_PKG_VERSION").to_string(),
             tools: BTreeMap::new(),
         });
+        // The hosts already locked for this tool stay locked: a run on some hosts only adds to the list (ruling K56).
+        let mut hosts: BTreeSet<String> =
+            rows.iter().map(|(kind, _, _)| kind.to_string()).collect();
+        if let Some(existing) = lock.tools.get(&recipe.id) {
+            hosts.extend(existing.hosts.iter().cloned());
+        }
         lock.tools.insert(
             recipe.id.clone(),
             LockedTool {
                 version: version.clone(),
                 route,
-                hosts: rows.iter().map(|(kind, _, _)| kind.to_string()).collect(),
+                hosts: hosts.into_iter().collect(),
             },
         );
         lock.save(self.ctx, self.run)
@@ -596,6 +602,7 @@ fn pypi_latest(net: &dyn Net, package: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs;
     use std::path::{Path, PathBuf};
 
     use super::*;
@@ -1553,6 +1560,52 @@ handler = "rtk_claude_hook"
             Outcome::Skipped {
                 reason: "claude is not installed".to_string()
             }
+        );
+    }
+
+    #[test]
+    fn a_partial_run_keeps_the_hosts_already_locked() {
+        let root = tempfile::tempdir().unwrap();
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let recipe = load_all()
+            .unwrap()
+            .into_iter()
+            .find(|recipe| recipe.id == "rtk")
+            .unwrap();
+        let node = NodeInstall {
+            version: "v24.13.0".to_string(),
+            root: root.path().join("node"),
+        };
+        let engine = Engine {
+            ctx: &ctx,
+            run: &ctx.run,
+            hosts: &[],
+            recipes: &[],
+            node: &node,
+        };
+        let lock = ctx.dirs.config.join("lock.toml");
+        fs::create_dir_all(&ctx.dirs.config).unwrap();
+        fs::write(
+            &lock,
+            "relaxkit = \"0.1.0\"\n\n[tools.rtk]\nversion = \"1.2.1\"\nroute = \"script\"\nhosts = [\"claude\", \"opencode\"]\n",
+        )
+        .unwrap();
+
+        // A run that installs rtk on Claude Code only must not drop the OpenCode host from the lock (ruling K56).
+        engine
+            .record(
+                &recipe,
+                &[(HostKind::Claude, "1.2.1".to_string(), Route::Script)],
+            )
+            .unwrap();
+
+        let text = fs::read_to_string(&lock).unwrap();
+        let locked = Lockfile::load(&ctx).unwrap().unwrap();
+        assert_eq!(
+            locked.tools["rtk"].hosts,
+            vec!["claude".to_string(), "opencode".to_string()],
+            "{text}"
         );
     }
 }
