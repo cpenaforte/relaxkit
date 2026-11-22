@@ -12,7 +12,7 @@ use crate::config::{KitConfig, effective, parse_compact};
 use crate::config_apply::{claude, opencode, voice};
 use crate::ctx::Ctx;
 use crate::edit::jsonc_remove;
-use crate::exec::Cmd;
+use crate::host::opencode::list_models;
 use crate::host::{Host, HostInfo, HostKind, InstalledPlugin, detect_hosts};
 use crate::presets::Voice;
 use crate::roles::{ModelSpec, Role, RoleSetting, resolve_claude, resolve_opencode};
@@ -511,20 +511,9 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
 
 // ---- host access -----------------------------------------------------------------------------------------------
 
-/// The OpenCode model ids from `opencode models`, or `None` when the list cannot be read or is empty.
+/// The OpenCode model ids, or `None` when the list cannot be read or is empty.
 fn listing(ctx: &Ctx, host: &dyn Host) -> Option<Vec<String>> {
-    let binary = host.info().binary.to_string_lossy().into_owned();
-    let out = ctx.runner.run(&Cmd::new(&binary).arg("models")).ok()?;
-    if out.code != 0 {
-        return None;
-    }
-    let ids: Vec<String> = out
-        .stdout
-        .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .map(str::to_string)
-        .collect();
-    (!ids.is_empty()).then_some(ids)
+    list_models(ctx, host)
 }
 
 /// The hosts this command acts on. With `--project` they are wrapped so their files are the project's.

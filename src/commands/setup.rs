@@ -12,6 +12,7 @@ use crate::config_apply::{claude, opencode, voice};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::github::{self, LoginOutcome};
+use crate::host::opencode::list_models;
 use crate::host::{Host, HostKind, detect_hosts};
 use crate::platform::{
     PrereqPlan, apparmor_profile_present, is_executable, plan_needs_apparmor_profile,
@@ -265,16 +266,7 @@ pub fn unapplied_tiers_note(own: &KitConfig, available: &[String]) -> Option<Str
 /// The OpenCode models the roles can map onto. A host that cannot list them yields none, so each agent inherits
 /// the host's default model.
 pub fn opencode_models(ctx: &Ctx, host: &dyn Host) -> Vec<String> {
-    let binary = host.info().binary.to_string_lossy().into_owned();
-    match ctx.runner.run(&Cmd::new(&binary).arg("models")) {
-        Ok(out) if out.code == 0 => out
-            .stdout
-            .lines()
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
+    list_models(ctx, host).unwrap_or_default()
 }
 
 /// The sandbox of each host (spec section 7). Claude Code always takes `gh` outside its sandbox (ruling K42).

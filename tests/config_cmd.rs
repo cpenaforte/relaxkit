@@ -185,7 +185,7 @@ fn opencode_pin_without_opencode_warns_and_is_still_stored() {
 
 #[test]
 fn unknown_opencode_model_is_accepted_with_a_warning_when_the_list_is_unreadable() {
-    // No listing file: the stub `opencode models` exits 1, so the list cannot be read.
+    // No listing file: the stub `opencode models --standalone` exits 1, so the list cannot be read.
     let scratch = Scratch::new();
 
     let assert = scratch

@@ -113,6 +113,27 @@ fn to_plugin(spec: &str) -> InstalledPlugin {
     }
 }
 
+/// The OpenCode model ids, from `opencode models --standalone`. The flag runs a private server, so the list reads
+/// even while another OpenCode service holds the managed port, where the plain command waits and fails. `None` when
+/// the command fails or lists nothing.
+pub fn list_models(ctx: &Ctx, host: &dyn Host) -> Option<Vec<String>> {
+    let binary = host.info().binary.to_string_lossy().into_owned();
+    let out = ctx
+        .runner
+        .run(&Cmd::new(&binary).args(&["models", "--standalone"]))
+        .ok()?;
+    if out.code != 0 {
+        return None;
+    }
+    let ids: Vec<String> = out
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect();
+    (!ids.is_empty()).then_some(ids)
+}
+
 impl Host for OpencodeHost {
     fn info(&self) -> &HostInfo {
         &self.info
@@ -590,5 +611,46 @@ mod tests {
             fake.calls().is_empty(),
             "the command ran through a dangling link"
         );
+    }
+
+    #[test]
+    fn opencode_models_are_read_from_a_private_server() {
+        let root = tempfile::tempdir().unwrap();
+        let fake = FakeRunner::new().reply(
+            "/usr/bin/opencode models --standalone",
+            Output::ok("opencode/big-pickle\nanthropic/claude-sonnet-5-5\n"),
+        );
+        let models = list_models(
+            &ctx(root.path(), Box::new(fake.clone())),
+            &host(root.path()),
+        );
+        assert_eq!(
+            models,
+            Some(vec![
+                "opencode/big-pickle".into(),
+                "anthropic/claude-sonnet-5-5".into(),
+            ])
+        );
+        assert_eq!(fake.calls(), vec!["/usr/bin/opencode models --standalone"]);
+    }
+
+    #[test]
+    fn a_failed_model_list_is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let fake = FakeRunner::new().reply(
+            "/usr/bin/opencode models --standalone",
+            Output::fail(1, "Managed service port 49374 is already in use"),
+        );
+        let models = list_models(&ctx(root.path(), Box::new(fake)), &host(root.path()));
+        assert_eq!(models, None);
+    }
+
+    #[test]
+    fn an_empty_model_list_is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let fake =
+            FakeRunner::new().reply("/usr/bin/opencode models --standalone", Output::ok("\n"));
+        let models = list_models(&ctx(root.path(), Box::new(fake)), &host(root.path()));
+        assert_eq!(models, None);
     }
 }

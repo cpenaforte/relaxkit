@@ -782,7 +782,7 @@ fn status_lists_installed_versus_locked_versions_and_flags_drift() {
 fn status_marks_each_role_advisory_or_enforced_per_host() {
     let root = tempfile::tempdir().unwrap();
     let runner = FakeRunner::new().reply(
-        "/usr/local/bin/opencode models",
+        "/usr/local/bin/opencode models --standalone",
         Output::ok(
             "anthropic/claude-haiku-5-5\nanthropic/claude-sonnet-5-5\nanthropic/claude-opus-5-5\n",
         ),
