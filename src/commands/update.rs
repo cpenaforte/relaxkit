@@ -281,7 +281,11 @@ fn plan<'r>(
                         plan.note = Some(format!("{err:#}"));
                     }
                     Ok(newest) => {
-                        plan.needs = plan.installed.as_deref() != Some(newest.as_str());
+                        // A locked gh whose pack copy is missing is installed again, even at the newest release (F7-2).
+                        let copy_missing =
+                            !crate::platform::is_executable(&engine.ctx.dirs.bin.join("gh"));
+                        plan.needs =
+                            plan.installed.as_deref() != Some(newest.as_str()) || copy_missing;
                         plan.newest = Some(newest);
                         if !plan.needs {
                             plan.skip = Some(RowResult::Current);
@@ -557,7 +561,11 @@ fn gh_flow(ctx: &Ctx, plan: &Plan<'_>, report: &mut UpdateReport) -> (UpdateRow,
             ),
             Vec::new(),
         ),
-        Ok(()) => (row(RowResult::Updated, None), Vec::new()),
+        Ok(()) => {
+            let note = matches!(before, FileState::Absent)
+                .then(|| "the pack copy was missing, so it was installed again".to_string());
+            (row(RowResult::Updated, note), Vec::new())
+        }
         Err(err) => {
             report.failed.push(plan.id.to_string());
             match before.restore(&bin) {

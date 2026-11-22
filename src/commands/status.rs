@@ -65,8 +65,17 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
     };
     if let Some(lock) = &lock {
         for (id, tool) in &lock.tools {
-            // gh is not a recipe, and status does not read it: its pack copy is shown by the update report only (K84).
+            // gh is not a recipe, and status does not read its version (parked). A missing pack copy is the one line
+            // status shows for it (F7-2, K84).
             if id == crate::runtime::gh::GH_ID {
+                let bin = ctx.dirs.bin.join("gh");
+                if !crate::platform::is_executable(&bin) {
+                    lines.push(format!(
+                        "gh: pack copy missing at {} (locked {})",
+                        bin.display(),
+                        tool.version
+                    ));
+                }
                 continue;
             }
             let Some(recipe) = recipes.iter().find(|recipe| &recipe.id == id) else {

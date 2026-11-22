@@ -1912,18 +1912,60 @@ fn an_mcp_entry_is_shown_as_not_read_not_as_missing() {
 
 #[test]
 fn gh_is_not_reported_as_a_tool_without_a_recipe() {
-    // gh is not a recipe: its lock entry is the pack copy's record, and status does not read it (parked). It must not
-    // print the "no recipe carries it" line (K84, G1).
+    // gh is not a recipe: status does not print the "no recipe carries it" line for its entry (K84, G1). Its one line
+    // is shown only when the pack copy is missing, which names gh and the path (F7-2).
     let fx = Fixture::new();
     fx.lock(&[("gh", "9.9.9", "release", &[])]);
 
     let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
+    let gh_lines: Vec<&String> = report
+        .lines
+        .iter()
+        .filter(|line| line.starts_with("gh:"))
+        .collect();
+    assert_eq!(gh_lines.len(), 1, "{:?}", report.lines);
+    assert!(gh_lines[0].contains("pack copy missing"), "{gh_lines:?}");
 
+    pack_gh(&fx);
+    let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
     assert!(
         report.lines.iter().all(|line| !line.starts_with("gh:")),
         "{:?}",
         report.lines
     );
+}
+
+#[test]
+fn a_locked_gh_with_no_pack_copy_is_installed_again_and_is_not_current() {
+    // The lock says 9.9.9 and the newest release is 9.9.9, but the pack copy is gone: the update installs it again
+    // rather than reporting Current (F7-2).
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.9", "release", &[])]);
+    serve_gh(
+        &fx,
+        "9.9.9",
+        b"archive",
+        None,
+        "#!/bin/sh\necho gh version 9.9.9\n",
+    );
+    let bin = KitDirs::rooted(fx.root()).bin.join("gh");
+    fx.shell.on(
+        &format!("{} --version", bin.display()),
+        Output::ok("gh version 9.9.9 (2026-01-01)\n"),
+    );
+
+    let report = fx.run(false, Some("gh")).unwrap();
+
+    assert!(
+        !matches!(row(&report, "gh").result, RowResult::Current),
+        "{:?}",
+        row(&report, "gh")
+    );
+    assert_eq!(
+        fs::read_to_string(&bin).unwrap(),
+        "#!/bin/sh\necho gh version 9.9.9\n"
+    );
+    assert!(report.failed.is_empty(), "{report:?}");
 }
 
 /// The gh release archive for this platform, named as the release publishes it (K84).
@@ -1992,6 +2034,7 @@ fn pack_gh(fx: &Fixture) -> PathBuf {
 fn gh_at_the_newest_release_is_current_with_no_download() {
     let fx = Fixture::new();
     fx.lock(&[("gh", "9.9.9", "release", &[])]);
+    pack_gh(&fx);
     serve_gh(&fx, "9.9.9", b"archive", None, "");
 
     let report = fx.run(false, Some("gh")).unwrap();
