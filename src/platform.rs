@@ -129,8 +129,18 @@ pub struct PrereqPlan {
 
 /// The AppArmor profile that lets bubblewrap create user namespaces on Ubuntu 24.04 and later. The Linux sandbox
 /// needs it, because that release restricts unprivileged user namespaces by default (spec 7; spike B4).
-const BWRAP_PROFILE_PATH: &str = "/etc/apparmor.d/relaxkit-bwrap";
+pub const BWRAP_PROFILE_PATH: &str = "/etc/apparmor.d/relaxkit-bwrap";
 const BWRAP_PROFILE: &str = "abi <abi/4.0>,\ninclude <tunables/global>\nprofile relaxkit-bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n";
+
+/// Whether the AppArmor profile file is on disk. Read-only: relaxkit never writes it outside the sudo plan.
+pub fn apparmor_profile_present() -> bool {
+    std::path::Path::new(BWRAP_PROFILE_PATH).exists()
+}
+
+/// Whether a plan writes the AppArmor profile, which only Ubuntu 24.04 and later need (spec 7).
+pub fn plan_needs_apparmor_profile(plan: &PrereqPlan) -> bool {
+    plan.sudo.iter().any(|arg| arg.contains(BWRAP_PROFILE_PATH))
+}
 
 /// The plan for `os`. `os_release` is the text of `/etc/os-release` on Linux. Nothing here runs a command.
 pub fn prerequisite_plan(os: Os, os_release: Option<&str>) -> PrereqPlan {

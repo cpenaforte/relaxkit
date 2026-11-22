@@ -12,7 +12,9 @@ use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::github::{self, LoginOutcome};
 use crate::host::{Host, HostKind, detect_hosts};
-use crate::platform::{PrereqPlan, is_executable};
+use crate::platform::{
+    PrereqPlan, apparmor_profile_present, is_executable, plan_needs_apparmor_profile,
+};
 use crate::recipe::{Recipe, load_all};
 use crate::runtime::{gh, nvm, uv};
 use crate::sandbox::{self, GhPath};
@@ -266,7 +268,9 @@ fn sudo_step(ctx: &Ctx, plan: &PrereqPlan) -> Result<String> {
     let have = ["bwrap", "socat"]
         .iter()
         .all(|program| ctx.runner.which(program).is_some());
-    if have {
+    // On Ubuntu 24.04 and later the AppArmor profile is part of the same sudo plan, so it must be on disk too (ruling K57).
+    let profile_ready = !plan_needs_apparmor_profile(plan) || apparmor_profile_present();
+    if have && profile_ready {
         return Ok("bubblewrap and socat are already installed".to_string());
     }
     if ctx.allow_sudo {
@@ -494,5 +498,34 @@ mod tests {
 
         let position = |id: &str| ordered.iter().position(|r| r.id == id).unwrap();
         assert!(position("playwright") < position("chrome-devtools"));
+    }
+
+    const UBUNTU_2404: &str = "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n";
+
+    #[test]
+    fn sudo_plan_runs_on_ubuntu_2404_when_the_apparmor_profile_is_missing() {
+        // bubblewrap and socat are present, but Ubuntu 24.04 also needs the AppArmor profile, which is part of the same
+        // sudo plan (spec 7; ruling K57). The plan runs with --allow-sudo and is only printed without it.
+        let root = tempfile::tempdir().unwrap();
+        let plan = prerequisite_plan(Os::Linux, Some(UBUNTU_2404));
+        let programs = |fake: FakeRunner| {
+            fake.with_program("bwrap", Path::new("/usr/bin/bwrap"))
+                .with_program("socat", Path::new("/usr/bin/socat"))
+        };
+        let fake = programs(FakeRunner::new().reply("sudo", Output::ok("")));
+        let mut ctx = Ctx::for_test(root.path(), fake.clone(), FakeNet::new());
+        ctx.allow_sudo = true;
+
+        let line = sudo_step(&ctx, &plan).unwrap();
+
+        let calls = fake.calls();
+        assert_eq!(calls.len(), 1, "{line}");
+        assert!(calls[0].contains("apparmor_parser"), "{calls:?}");
+
+        let fake = programs(FakeRunner::new());
+        let ctx = Ctx::for_test(root.path(), fake.clone(), FakeNet::new());
+        let line = sudo_step(&ctx, &plan).unwrap();
+        assert!(line.contains("apparmor_parser"), "{line}");
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
     }
 }

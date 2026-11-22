@@ -13,7 +13,10 @@ use crate::ctx::Ctx;
 use crate::edit::jsonc_get;
 use crate::exec::Cmd;
 use crate::host::{Host, HostKind, detect_hosts, v1_mcp_entries};
-use crate::platform::{PrereqPlan, is_executable};
+use crate::platform::{
+    BWRAP_PROFILE_PATH, PrereqPlan, apparmor_profile_present, is_executable,
+    plan_needs_apparmor_profile,
+};
 use crate::recipe::{Kind, Step, load_all};
 use crate::runtime::nvm::{node_bin, npx_bin};
 use crate::sandbox::selftest::selftest;
@@ -115,17 +118,29 @@ pub fn prerequisites_check(plan: &PrereqPlan, have: impl Fn(&str) -> bool) -> Ch
         .into_iter()
         .filter(|program| !have(program))
         .collect();
-    if missing.is_empty() {
-        return Check::ok(
-            "sandbox.prerequisites",
-            "bubblewrap and socat are installed",
-        );
+    // On Ubuntu 24.04 and later the AppArmor profile is part of the plan, so a check without it fails (ruling K57).
+    let needs_profile = plan_needs_apparmor_profile(plan);
+    let profile_missing = needs_profile && !apparmor_profile_present();
+    let mut needs = Vec::new();
+    if !missing.is_empty() {
+        needs.push(format!("{} on the PATH", missing.join(" and ")));
+    }
+    if profile_missing {
+        needs.push(format!("the AppArmor profile {BWRAP_PROFILE_PATH}"));
+    }
+    if needs.is_empty() {
+        let message = if needs_profile {
+            "bubblewrap, socat and the AppArmor profile are in place"
+        } else {
+            "bubblewrap and socat are installed"
+        };
+        return Check::ok("sandbox.prerequisites", message);
     }
     Check::fail(
         "sandbox.prerequisites",
         format!(
-            "the sandbox needs {} on the PATH, and it is missing",
-            missing.join(" and ")
+            "the sandbox needs {}, and it is missing",
+            needs.join(" and ")
         ),
         format!(
             "run this once yourself (relaxkit does not run sudo without --allow-sudo): {}",
@@ -501,5 +516,21 @@ mod tests {
         let check = prerequisites_check(&prerequisite_plan(Os::MacOs, None), |_| false);
 
         assert_eq!(check.status, CheckStatus::Ok);
+    }
+
+    const UBUNTU_2404: &str = "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n";
+
+    #[test]
+    fn a_missing_apparmor_profile_on_ubuntu_2404_fails_with_the_full_sudo_plan() {
+        // bubblewrap and socat are present, but the AppArmor profile is not. The fix prints the whole plan, profile step
+        // included, so no user is told to run an incomplete command (ruling K57).
+        let plan = prerequisite_plan(Os::Linux, Some(UBUNTU_2404));
+
+        let check = prerequisites_check(&plan, |_| true);
+
+        assert_eq!(check.status, CheckStatus::Fail, "{check:?}");
+        let fix = check.fix.clone().unwrap_or_default();
+        assert!(fix.starts_with("run this once yourself"), "{check:?}");
+        assert!(fix.contains("apparmor_parser"), "{check:?}");
     }
 }
