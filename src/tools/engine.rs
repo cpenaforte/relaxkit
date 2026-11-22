@@ -126,6 +126,14 @@ impl<'a> Engine<'a> {
     /// Returns an error for the first failed step; the lock is only written for hosts that succeeded and only
     /// when every host of the tool succeeded.
     pub fn install(&self, recipe: &Recipe) -> Result<Vec<(HostKind, Outcome)>> {
+        // A recipe that sets a workdir cannot be applied through the Host API (SA-1). Until the owner decides how
+        // it is applied, the install is refused before any step, so the process never starts without it.
+        if recipe.workdir.is_some() {
+            bail!(
+                "workdir not applied (SA-1, owner decision pending): {}",
+                recipe.id
+            );
+        }
         let mut outcomes = Vec::new();
         let mut rows: Vec<(HostKind, String, Route)> = Vec::new();
         for &kind in &recipe.hosts {

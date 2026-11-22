@@ -475,72 +475,20 @@ fn chrome_devtools_on_opencode_uses_the_same_entry_shape() {
     );
 }
 
+/// Serena sets a workdir, which the Host API cannot apply (SA-1, owner decision pending). Until the owner decides,
+/// its install is refused before any command runs, on both hosts.
 #[test]
-fn serena_on_claude_installs_pinned_uv_tool_inits_and_registers_with_the_pinned_flags() {
-    let rig = prepared();
-    let (result, calls) = install(&rig, "serena", HostKind::Claude);
-    assert!(result.is_ok(), "{result:?}");
-    expect_calls(
-        &calls,
-        vec![
-            tokens(&["uv", "tool", "install", "-p", "3.13", "serena-agent==2.1.0"]),
-            tokens(&["serena", "init"]),
-            tokens(&["claude", "mcp", "remove", "--scope", "user", "serena"]),
-            vec![
-                "claude".into(),
-                "mcp".into(),
-                "add".into(),
-                "--scope".into(),
-                "user".into(),
-                "serena".into(),
-                "--env".into(),
-                mcp_path(&rig),
-                "--env".into(),
-                "SERENA_USAGE_REPORTING=false".into(),
-                "--".into(),
-                "serena".into(),
-                "start-mcp-server".into(),
-                "--context".into(),
-                "claude-code".into(),
-                "--project-from-cwd".into(),
-                "--enable-web-dashboard".into(),
-                "False".into(),
-            ],
-        ],
-    );
-}
-
-#[test]
-fn serena_on_opencode_uses_the_ide_context() {
-    let rig = prepared();
-    let (result, calls) = install(&rig, "serena", HostKind::Opencode);
-    assert!(result.is_ok(), "{result:?}");
-    expect_calls(
-        &calls,
-        vec![
-            tokens(&["uv", "tool", "install", "-p", "3.13", "serena-agent==2.1.0"]),
-            tokens(&["serena", "init"]),
-            vec![
-                "opencode".into(),
-                "mcp".into(),
-                "add".into(),
-                "--global".into(),
-                "--env".into(),
-                mcp_path(&rig),
-                "--env".into(),
-                "SERENA_USAGE_REPORTING=false".into(),
-                "serena".into(),
-                "--".into(),
-                "serena".into(),
-                "start-mcp-server".into(),
-                "--context".into(),
-                "ide".into(),
-                "--project-from-cwd".into(),
-                "--enable-web-dashboard".into(),
-                "False".into(),
-            ],
-        ],
-    );
+fn serena_is_refused_before_any_command_while_the_workdir_decision_is_pending() {
+    for kind in [HostKind::Claude, HostKind::Opencode] {
+        let rig = prepared();
+        let (result, calls) = install(&rig, "serena", kind);
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("workdir not applied (SA-1, owner decision pending): serena"),
+            "{err}"
+        );
+        assert!(calls.is_empty(), "{kind}: {calls:?}");
+    }
 }
 
 #[test]
