@@ -1,6 +1,7 @@
 pub mod brand;
 pub mod cli;
 pub mod config;
+pub mod config_apply;
 pub mod ctx;
 pub mod edit;
 pub mod exec;
