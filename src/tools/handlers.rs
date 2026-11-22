@@ -1,5 +1,5 @@
 //! The named code paths a recipe's `handler` steps run. Each one does a step that data alone cannot express.
-//! Handlers that belong to later tasks (rtk_claude_hook, caveman_opencode, opencode_sandbox_config) are not here,
+//! Handlers that belong to later tasks (caveman_opencode, opencode_sandbox_config) are not here,
 //! so the engine refuses them by name before any command runs.
 
 use std::path::Path;
@@ -7,6 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
+use crate::config_apply::claude::apply_rtk_hook;
 use crate::exec::{Cmd, Output};
 use crate::host::{Host, HostKind};
 use crate::recipe::{Recipe, Step, Vars, VersionSource};
@@ -26,6 +27,7 @@ pub fn lookup(name: &str) -> Option<HandlerFn> {
         "caveman_cli" => Some(caveman_cli),
         "serena_init" => Some(serena_init),
         "claude_marketplace" => Some(claude_marketplace),
+        "rtk_claude_hook" => Some(rtk_claude_hook),
         _ => None,
     }
 }
@@ -188,6 +190,23 @@ fn catalog_lists(config_dir: &Path, marketplace: &str, plugin: &str) -> Result<b
                 .iter()
                 .any(|entry| entry.get("name").and_then(Value::as_str) == Some(plugin))
         }))
+}
+
+/// Writes rtk's `PreToolUse` hook into Claude Code's settings (spike A C6). `rtk init -g` does not write it when it
+/// runs without a terminal, so relaxkit does, once, and keeps the other hooks.
+fn rtk_claude_hook(
+    engine: &Engine<'_>,
+    _recipe: &Recipe,
+    host: &dyn Host,
+    _vars: &mut Vars,
+) -> Result<()> {
+    if host.info().kind != HostKind::Claude {
+        bail!(
+            "rtk_claude_hook only applies to Claude Code, not {}",
+            host.info().kind
+        );
+    }
+    apply_rtk_hook(engine.ctx, engine.run, host)
 }
 
 fn pinned(recipe: &Recipe) -> Result<&str> {

@@ -302,12 +302,38 @@ fn superpowers_on_opencode_pins_the_git_tag_under_plugins() {
 }
 
 #[test]
-fn rtk_on_claude_stops_at_the_unimplemented_hook_before_any_command() {
+fn rtk_on_claude_runs_init_then_writes_the_hook_then_telemetry_off() {
     let rig = prepared();
     let (result, calls) = install(&rig, "rtk", HostKind::Claude);
-    let err = format!("{:#}", result.unwrap_err());
-    assert!(err.contains("rtk_claude_hook"), "{err}");
-    assert!(calls.is_empty(), "{calls:?}");
+    assert!(result.is_ok(), "{result:?}");
+    expect_calls(
+        &calls,
+        vec![
+            tokens(&["rtk", "init", "-g"]),
+            tokens(&["rtk", "telemetry", "disable"]),
+        ],
+    );
+    let settings = std::fs::read_to_string(rig.root.path().join(".claude/settings.json")).unwrap();
+    assert!(settings.contains("rtk hook claude"), "{settings}");
+}
+
+#[test]
+fn adopted_rtk_on_claude_still_gets_the_hook() {
+    let rig = prepared();
+    rig.rec.with_program("rtk", "/usr/local/bin/rtk");
+    rig.rec.reply("rtk --version", Output::ok("rtk 1.2.1\n"));
+    let (result, calls) = install(&rig, "rtk", HostKind::Claude);
+    assert!(result.is_ok(), "{result:?}");
+    expect_calls(
+        &calls,
+        vec![
+            tokens(&["rtk", "--version"]),
+            tokens(&["rtk", "init", "-g"]),
+            tokens(&["rtk", "telemetry", "disable"]),
+        ],
+    );
+    let settings = std::fs::read_to_string(rig.root.path().join(".claude/settings.json")).unwrap();
+    assert!(settings.contains("rtk hook claude"), "{settings}");
 }
 
 #[test]

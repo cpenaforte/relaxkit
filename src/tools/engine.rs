@@ -61,8 +61,12 @@ impl Plan {
     }
 }
 
-/// The exec steps of a recipe on `kind` that install or add nothing: the configuration an adopted install still
-/// needs (for example `rtk init -g` or `caveman telemetry off`).
+/// Handlers that only configure a tool that is already installed. An adopted install runs them too (ruling T12-2
+/// covers configuration steps), so rtk on Claude gets its hook whether relaxkit installed rtk or found it.
+const CONFIGURATION_HANDLERS: [&str; 1] = ["rtk_claude_hook"];
+
+/// The steps of a recipe on `kind` that install or add nothing: the configuration an adopted install still
+/// needs (for example `rtk init -g`, `caveman telemetry off` or the rtk hook).
 fn config_steps(recipe: &Recipe, kind: HostKind) -> Vec<Step> {
     recipe
         .install
@@ -73,6 +77,7 @@ fn config_steps(recipe: &Recipe, kind: HostKind) -> Vec<Step> {
             Step::Exec { argv, .. } => !argv
                 .iter()
                 .any(|token| token == "install" || token == "add"),
+            Step::Handler { name } => CONFIGURATION_HANDLERS.contains(&name.as_str()),
             _ => false,
         })
         .cloned()
@@ -331,15 +336,25 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    /// Runs the configuration steps of an adopted install: the exec steps that do not install or add anything.
+    /// Runs the configuration steps of an adopted install, in order: the exec steps that do not install or add
+    /// anything, and the configuration handlers.
     fn run_config_steps(&self, recipe: &Recipe, host: &dyn Host) -> Result<Vars> {
         let kind = host.info().kind;
-        let vars = self.vars(recipe)?;
+        let mut vars = self.vars(recipe)?;
         for step in config_steps(recipe, kind) {
-            if let Step::Exec { argv, .. } = step {
-                let argv = recipe.expand(&argv, &vars)?;
-                let cmd = self.command(&argv)?;
-                self.run_checked(host, &cmd)?;
+            match step {
+                Step::Exec { argv, .. } => {
+                    let argv = recipe.expand(&argv, &vars)?;
+                    let cmd = self.command(&argv)?;
+                    self.run_checked(host, &cmd)?;
+                }
+                Step::Handler { name } => {
+                    let run = handler(&name).ok_or_else(|| {
+                        anyhow!("handler `{name}` is not implemented in this build")
+                    })?;
+                    run(self, recipe, host, &mut vars)?;
+                }
+                _ => {}
             }
         }
         Ok(vars)
@@ -1187,7 +1202,7 @@ argv = ["fixture-pkg", "--help"]
 exec = ["fixture-pkg", "install"]
 
 [[install.opencode]]
-handler = "rtk_claude_hook"
+handler = "caveman_opencode"
 "#;
         let recipe = fixture(text);
         let runner = Recorder::new(FakeRunner::new());
@@ -1199,7 +1214,7 @@ handler = "rtk_claude_hook"
 
         let err = eng.install(&recipe).unwrap_err();
 
-        assert!(format!("{err:#}").contains("rtk_claude_hook"), "{err:#}");
+        assert!(format!("{err:#}").contains("caveman_opencode"), "{err:#}");
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
     }
 
@@ -1381,7 +1396,7 @@ handler = "rtk_claude_hook"
         let root = tempfile::tempdir().unwrap();
         let text = EXEC_FIXTURE.replace(
             "[[install.claude]]\nexec = [\"rtk\", \"telemetry\", \"disable\"]",
-            "[[install.claude]]\nhandler = \"rtk_claude_hook\"",
+            "[[install.claude]]\nhandler = \"opencode_sandbox_config\"",
         );
         let recipe = fixture(&text);
         let runner = Recorder::new(FakeRunner::new().reply("fixture-pkg install", Output::ok("")));
@@ -1393,7 +1408,51 @@ handler = "rtk_claude_hook"
 
         let err = eng.install(&recipe).unwrap_err();
 
-        assert!(format!("{err:#}").contains("rtk_claude_hook"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("opencode_sandbox_config"),
+            "{err:#}"
+        );
+        assert!(runner.lines().is_empty(), "{:?}", runner.lines());
+    }
+
+    #[test]
+    fn rtk_claude_hook_refuses_an_opencode_host_before_any_command() {
+        let root = tempfile::tempdir().unwrap();
+        let text = r#"
+id = "fixture"
+title = "Fixture"
+kind = "npm"
+hosts = ["opencode"]
+needs_login = false
+telemetry_default_off = true
+
+[version]
+npm = "fixture-pkg"
+pin = "1.2.3"
+
+[minimum_host]
+opencode = "2.2.6"
+
+[probe.opencode]
+argv = ["fixture-pkg", "--help"]
+
+[[install.opencode]]
+handler = "rtk_claude_hook"
+"#;
+        let recipe = fixture(text);
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let hosts = vec![opencode(root.path())];
+        let node = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node);
+
+        let err = eng.install(&recipe).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("only applies to Claude Code"),
+            "{err:#}"
+        );
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
     }
 

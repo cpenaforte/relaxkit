@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use crate::config::{KitConfig, effective};
@@ -76,6 +76,43 @@ pub fn apply_roles(ctx: &Ctx, run: &RunId, host: &dyn Host, config: &KitConfig) 
         block_upsert(&old, ROLES_BLOCK, &sentences.join(" "))
     };
     write_if_changed(ctx, run, &path, &old, &text)
+}
+
+/// Writes rtk's Claude Code hook (spike A C6): a `PreToolUse` command `rtk hook claude` for the `Bash` tool.
+/// `rtk init -g` does not write it non-interactively. Other hooks are kept, and a second run changes nothing.
+pub fn apply_rtk_hook(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
+    let path = host.config_file(ctx);
+    let old = read_text(&path)?;
+    let mut entries = match json_get(&old, &["hooks", "PreToolUse"])? {
+        None => Vec::new(),
+        Some(Value::Array(entries)) => entries,
+        Some(_) => bail!("hooks.PreToolUse in {} is not a list", path.display()),
+    };
+    if entries.iter().any(is_rtk_hook) {
+        return Ok(());
+    }
+    entries.push(json!({
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": RTK_HOOK_COMMAND}]
+    }));
+    let text = json_set(&old, &["hooks", "PreToolUse"], &Value::Array(entries))?;
+    write_if_changed(ctx, run, &path, &old, &text)
+}
+
+/// The command rtk registers for Claude Code's `PreToolUse` hook.
+const RTK_HOOK_COMMAND: &str = "rtk hook claude";
+
+/// Whether a `PreToolUse` entry is rtk's Bash hook.
+fn is_rtk_hook(entry: &Value) -> bool {
+    entry.get("matcher").and_then(Value::as_str) == Some("Bash")
+        && entry
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|hooks| {
+                hooks.iter().any(|hook| {
+                    hook.get("command").and_then(Value::as_str) == Some(RTK_HOOK_COMMAND)
+                })
+            })
 }
 
 /// Sets `env.SUPERPOWERS_DISABLE_TELEMETRY` to "1", the one privacy switch relaxkit writes by default.
@@ -280,6 +317,79 @@ mod tests {
         ] {
             assert!(!text.contains(banned), "{banned} must not be written");
         }
+    }
+
+    #[test]
+    fn rtk_hook_is_written_as_a_bash_pretooluse_command() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = ctx(root.path());
+
+        apply_rtk_hook(&ctx, &ctx.run, &host(root.path())).unwrap();
+
+        let value = read_json(&settings_path(root.path()));
+        assert_eq!(
+            value["hooks"]["PreToolUse"],
+            json!([{"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]}])
+        );
+    }
+
+    #[test]
+    fn rtk_hook_is_written_once() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = ctx(root.path());
+        apply_rtk_hook(&ctx, &ctx.run, &host(root.path())).unwrap();
+        let once = fs::read_to_string(settings_path(root.path())).unwrap();
+
+        apply_rtk_hook(&ctx, &ctx.run, &host(root.path())).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(settings_path(root.path())).unwrap(),
+            once
+        );
+        assert_eq!(once.matches("rtk hook claude").count(), 1, "{once}");
+    }
+
+    #[test]
+    fn rtk_hook_keeps_other_hooks_and_settings() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join(".claude")).unwrap();
+        fs::write(
+            settings_path(root.path()),
+            r#"{
+  "effortLevel": "high",
+  "hooks": {"PreToolUse": [{"matcher": "Write", "hooks": [{"type": "command", "command": "lint"}]}]}
+}
+"#,
+        )
+        .unwrap();
+        let ctx = ctx(root.path());
+
+        apply_rtk_hook(&ctx, &ctx.run, &host(root.path())).unwrap();
+
+        let value = read_json(&settings_path(root.path()));
+        assert_eq!(value["effortLevel"], json!("high"));
+        assert_eq!(
+            value["hooks"]["PreToolUse"],
+            json!([
+                {"matcher": "Write", "hooks": [{"type": "command", "command": "lint"}]},
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]}
+            ])
+        );
+    }
+
+    #[test]
+    fn rtk_hook_refuses_a_pretooluse_value_that_is_not_a_list() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join(".claude")).unwrap();
+        let original = r#"{"hooks": {"PreToolUse": {}}}"#;
+        fs::write(settings_path(root.path()), original).unwrap();
+        let ctx = ctx(root.path());
+
+        assert!(apply_rtk_hook(&ctx, &ctx.run, &host(root.path())).is_err());
+        assert_eq!(
+            fs::read_to_string(settings_path(root.path())).unwrap(),
+            original
+        );
     }
 
     #[test]
