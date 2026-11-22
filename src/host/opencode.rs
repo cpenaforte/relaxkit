@@ -98,9 +98,57 @@ pub fn package_name(spec: &str) -> &str {
     }
 }
 
-/// Reads one `plugins` entry as a plugin. The version is whatever follows the package name, except that a git spec
-/// names its release after the last `#`: `#v7.0.2` is version 7.0.2 (ruling R8-1).
+/// The plugin name of a local path spec: its last component without a `.ts`, `.js`, `.mjs` or `.cjs` extension.
+/// `None` for any other spec, which names a package.
+fn local_plugin_name(spec: &str) -> Option<&str> {
+    let is_path = ["./", "../", "/", "~/"]
+        .iter()
+        .any(|prefix| spec.starts_with(prefix));
+    if !is_path {
+        return None;
+    }
+    let last = spec.trim_end_matches('/').rsplit('/').next()?;
+    let stem = [".ts", ".js", ".mjs", ".cjs"]
+        .iter()
+        .find_map(|ext| last.strip_suffix(ext))
+        .unwrap_or(last);
+    Some(stem)
+}
+
+/// The names of the `.ts` and `.js` files directly in `dir/plugins`, sorted. OpenCode loads these without a config
+/// entry. A missing `plugins` directory has none, and directories and other files are skipped.
+fn autoloaded_plugin_names(dir: &Path) -> Result<Vec<String>> {
+    let plugins = dir.join("plugins");
+    let entries = match fs::read_dir(&plugins) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("cannot read {}", plugins.display())),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let path = entry
+            .with_context(|| format!("cannot read {}", plugins.display()))?
+            .path();
+        let is_script = matches!(path.extension().and_then(OsStr::to_str), Some("ts" | "js"));
+        if is_script && path.is_file() {
+            names.extend(path.file_stem().and_then(OsStr::to_str).map(String::from));
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// Reads one `plugins` entry as a plugin. A local path has no version, and it is named by its last component. A
+/// package's version is whatever follows the package name, except that a git spec names its release after the last
+/// `#`: `#v7.0.2` is version 7.0.2 (ruling R8-1).
 fn to_plugin(spec: &str) -> InstalledPlugin {
+    if let Some(name) = local_plugin_name(spec) {
+        return InstalledPlugin {
+            name: name.to_string(),
+            marketplace: None,
+            version: None,
+        };
+    }
     let name = package_name(spec);
     let version = match spec.rsplit_once('#') {
         Some((_, tag)) => Some(tag.strip_prefix('v').unwrap_or(tag).to_string()),
@@ -111,6 +159,11 @@ fn to_plugin(spec: &str) -> InstalledPlugin {
         marketplace: None,
         version,
     }
+}
+
+/// The name `plugin_list` gives a `plugins` entry, so a caller can match a spec against the listed names.
+pub fn listed_name(spec: &str) -> String {
+    to_plugin(spec).name
 }
 
 /// The OpenCode model ids, from `opencode models --standalone`. The flag runs a private server, so the list reads
@@ -230,14 +283,26 @@ impl Host for OpencodeHost {
         })
     }
 
-    /// Reads the `plugins` array from the config file. `plugin list` is not used: it needs the managed
-    /// service on a fixed port, and `--standalone` did not show loaded plugins (spike A1).
+    /// Lists the plugins OpenCode loads. It reads the `plugins` array of the config file, then the `.ts` and `.js`
+    /// files directly in `plugins/` that no entry already names, because OpenCode loads those without a config entry.
+    /// `opencode plugin list` is not used: it needs the managed service on a fixed port, and `--standalone` did not
+    /// show loaded plugins (spike A1).
     fn plugin_list(&self, _ctx: &Ctx) -> Result<Vec<InstalledPlugin>> {
-        Ok(self
+        let mut plugins: Vec<InstalledPlugin> = self
             .plugin_specs()?
             .iter()
             .map(|spec| to_plugin(spec))
-            .collect())
+            .collect();
+        for name in autoloaded_plugin_names(&self.dir)? {
+            if !plugins.iter().any(|plugin| plugin.name == name) {
+                plugins.push(InstalledPlugin {
+                    name,
+                    marketplace: None,
+                    version: None,
+                });
+            }
+        }
+        Ok(plugins)
     }
 
     fn marketplace_add(&self, _ctx: &Ctx, source: &str) -> Result<()> {
@@ -452,11 +517,108 @@ mod tests {
                     version: Some("0.7.0".into()),
                 },
                 InstalledPlugin {
-                    name: "./plugins/caveman".into(),
+                    name: "caveman".into(),
                     marketplace: None,
                     version: None,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn opencode_plugin_list_names_path_entries_by_their_last_component() {
+        let root = tempfile::tempdir().unwrap();
+        write_config(
+            root.path(),
+            "{\"plugins\": [\"./plugins/caveman\", \"/abs/plugins/rtk.ts\", \"~/p/notes.js\", \"./a.b\"]}",
+        );
+        let plugins = host(root.path())
+            .plugin_list(&ctx(root.path(), Box::new(FakeRunner::new())))
+            .unwrap();
+        let names: Vec<&str> = plugins.iter().map(|plugin| plugin.name.as_str()).collect();
+        assert_eq!(names, vec!["caveman", "rtk", "notes", "a.b"]);
+        assert!(plugins.iter().all(|plugin| plugin.version.is_none()));
+    }
+
+    #[test]
+    fn a_path_spec_has_no_version_even_with_an_at_sign() {
+        let root = tempfile::tempdir().unwrap();
+        write_config(root.path(), "{\"plugins\": [\"~/work@home/notes.js\"]}");
+        let plugins = host(root.path())
+            .plugin_list(&ctx(root.path(), Box::new(FakeRunner::new())))
+            .unwrap();
+        assert_eq!(
+            plugins,
+            vec![InstalledPlugin {
+                name: "notes".into(),
+                marketplace: None,
+                version: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn opencode_plugin_list_includes_the_plugin_files_the_host_loads_by_itself() {
+        let root = tempfile::tempdir().unwrap();
+        let plugins_dir = root.path().join(".config/opencode/plugins");
+        fs::create_dir_all(plugins_dir.join("caveman")).unwrap();
+        for file in ["rtk.ts", "helper.js", "README.md", ".DS_Store"] {
+            fs::write(plugins_dir.join(file), "").unwrap();
+        }
+        let plugins = host(root.path())
+            .plugin_list(&ctx(root.path(), Box::new(FakeRunner::new())))
+            .unwrap();
+        assert_eq!(
+            plugins,
+            vec![
+                InstalledPlugin {
+                    name: "helper".into(),
+                    marketplace: None,
+                    version: None,
+                },
+                InstalledPlugin {
+                    name: "rtk".into(),
+                    marketplace: None,
+                    version: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_plugin_file_that_the_config_also_lists_appears_once() {
+        let root = tempfile::tempdir().unwrap();
+        write_config(root.path(), "{\"plugins\": [\"./plugins/rtk.ts\"]}");
+        let plugins_dir = root.path().join(".config/opencode/plugins");
+        fs::create_dir_all(&plugins_dir).unwrap();
+        fs::write(plugins_dir.join("rtk.ts"), "").unwrap();
+        let plugins = host(root.path())
+            .plugin_list(&ctx(root.path(), Box::new(FakeRunner::new())))
+            .unwrap();
+        assert_eq!(
+            plugins,
+            vec![InstalledPlugin {
+                name: "rtk".into(),
+                marketplace: None,
+                version: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_missing_plugins_directory_adds_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        write_config(root.path(), "{\"plugins\": [\"opencode-sandbox@0.7.0\"]}");
+        let plugins = host(root.path())
+            .plugin_list(&ctx(root.path(), Box::new(FakeRunner::new())))
+            .unwrap();
+        assert_eq!(
+            plugins,
+            vec![InstalledPlugin {
+                name: "opencode-sandbox".into(),
+                marketplace: None,
+                version: Some("0.7.0".into()),
+            }]
         );
     }
 

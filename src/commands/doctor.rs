@@ -14,7 +14,7 @@ use crate::config_apply::caveman::PLUGIN_SPEC;
 use crate::ctx::Ctx;
 use crate::edit::jsonc_get;
 use crate::exec::Cmd;
-use crate::host::{Host, HostKind, detect_hosts, v1_mcp_entries};
+use crate::host::{Host, HostKind, detect_hosts, opencode, v1_mcp_entries};
 use crate::platform::{
     BWRAP_PROFILE_PATH, PrereqPlan, apparmor_profile_present, is_executable,
     plan_needs_apparmor_profile,
@@ -440,16 +440,20 @@ fn unlisted_plugin(
     kind: HostKind,
     check_id: &str,
 ) -> Option<Check> {
-    let name = match plugin_spec(recipe, kind) {
-        Some(spec) => plugin_name(spec).to_string(),
+    let spec = match plugin_spec(recipe, kind) {
+        Some(spec) => spec,
         // caveman's OpenCode entry is the path its config step writes, not a recipe plugin spec (ruling R5-2).
-        None if recipe.id == "caveman" && kind == HostKind::Opencode => {
-            plugin_name(PLUGIN_SPEC).to_string()
-        }
+        None if recipe.id == "caveman" && kind == HostKind::Opencode => PLUGIN_SPEC,
         None => return None,
     };
+    let name = plugin_name(spec);
+    // Match the name `plugin_list` gives the entry: on OpenCode a path entry is named by its last component.
+    let listed = match kind {
+        HostKind::Opencode => opencode::listed_name(spec),
+        HostKind::Claude => name.to_string(),
+    };
     match host.plugin_list(ctx) {
-        Ok(plugins) if plugins.iter().any(|plugin| plugin.name == name) => None,
+        Ok(plugins) if plugins.iter().any(|plugin| plugin.name == listed) => None,
         Ok(_) => Some(Check::fail(
             check_id,
             format!("{name} is not listed in the {kind} config"),
