@@ -3,5 +3,6 @@
 
 pub mod caveman;
 pub mod claude;
+pub mod opencode;
 pub mod privacy;
 pub mod voice;
