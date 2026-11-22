@@ -49,6 +49,7 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
             opened
                 .and_then(|file| file.sync_all())
                 .with_context(|| format!("cannot flush the backup {}", backup.display()))?;
+            sync_backup_dirs(ctx, &backup)?;
             EditRecord {
                 run: run.clone(),
                 file: target.clone(),
@@ -67,6 +68,40 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
     }
     ensure_parent(&target)?;
     write_atomic(&target, text.as_bytes())
+}
+
+/// Flushes the directories from the backup's parent up to `dirs.data`, so the backup's entry and
+/// any directories made for it survive a crash before the journal record is synced. `dirs.backups`
+/// lies under `dirs.data`, so the walk stops at `dirs.data`. If it ever did not, the walk would stop
+/// at `dirs.backups` instead.
+fn sync_backup_dirs(ctx: &Ctx, backup: &Path) -> Result<()> {
+    let stop = if ctx.dirs.backups.starts_with(&ctx.dirs.data) {
+        &ctx.dirs.data
+    } else {
+        &ctx.dirs.backups
+    };
+    for dir in backup
+        .ancestors()
+        .skip(1)
+        .take_while(|dir| dir.starts_with(stop))
+    {
+        sync_dir(dir)?;
+    }
+    Ok(())
+}
+
+/// Flushes a directory, so entries created in it survive a crash.
+#[cfg(unix)]
+fn sync_dir(path: &Path) -> Result<()> {
+    fs::File::open(path)
+        .and_then(|dir| dir.sync_all())
+        .with_context(|| format!("cannot flush the directory {}", path.display()))
+}
+
+/// Opening a directory to flush it is not possible on this platform, so there is nothing to do.
+#[cfg(not(unix))]
+fn sync_dir(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 /// Creates the directory that will hold `path`. `write_atomic` does not create directories,
@@ -418,6 +453,24 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), "new");
         let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o444);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_write_syncs_backup_directories_on_a_fresh_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "old").unwrap();
+        let run = RunId::new();
+
+        // No data or backup directory exists yet, so every directory on the walk is new.
+        safe_write(&ctx, &run, &file, "new").unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new");
+        let records = journal::read(&ctx.dirs).unwrap();
+        let backup = records[0].backup.clone().expect("backup path");
+        assert_eq!(fs::read_to_string(backup).unwrap(), "old");
     }
 
     /// True when some file under `root` holds exactly `text`.
