@@ -221,6 +221,7 @@ pub fn ensure_node(ctx: &Ctx, run: &RunId) -> Result<NodeInstall> {
 /// The Node 24 that nvm installs for relaxkit. `nvm install 24` is the only Node command run,
 /// so a Node already installed is reused by nvm itself and the default alias is left alone.
 pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NodeInstall> {
+    let reused = find_nvm_in(ctx, search).is_some();
     let nvm = ensure_nvm_in(ctx, run, search)?;
     let action = format!("nvm install {NODE_MAJOR}");
     if ctx.dry_run {
@@ -231,7 +232,15 @@ pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<Node
             version,
         });
     }
+    // nvm sets a default alias when none exists. A reused nvm keeps its default as it was, so an
+    // alias that was absent before the install is removed again. A fresh install keeps nvm's default.
+    let default = nvm.dir.join("alias").join("default");
+    let had_default = default.symlink_metadata().is_ok();
     let out = ctx.runner.run(&nvm_cmd(&nvm, &action)?)?;
+    if reused && !had_default && default.symlink_metadata().is_ok() {
+        fs::remove_file(&default)
+            .with_context(|| format!("cannot remove {}", default.display()))?;
+    }
     if out.code != 0 {
         bail!("{action} failed (exit {}): {}", out.code, out.stderr.trim());
     }
@@ -625,6 +634,50 @@ mod tests {
                 .all(|line| !line.starts_with("bash /")),
             "the installer ran: {:?}",
             runner.lines()
+        );
+    }
+
+    #[test]
+    fn a_reused_nvm_keeps_its_default_alias_unset() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        nvm_at(&home.join(".nvm"));
+        node_at(home, "v24.22.3");
+        let default = home.join(".nvm/alias/default");
+        // nvm's own install writes the default alias when none is set.
+        let runner = Recorder::new(FakeRunner::new().reply(
+            &install_prefix(home),
+            Output::ok("Downloading and installing node v24.22.3...\n"),
+        ))
+        .effect(&install_prefix(home), default.clone(), "24\n");
+        let ctx = ctx_with(home, &runner, FakeNet::new());
+
+        ensure_node_in(&ctx, &RunId::new(), &none()).unwrap();
+
+        assert!(
+            default.symlink_metadata().is_err(),
+            "the reused nvm kept a default alias it did not have before"
+        );
+    }
+
+    #[test]
+    fn a_reused_nvm_keeps_an_existing_default_alias() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        nvm_at(&home.join(".nvm"));
+        write(&home.join(".nvm/alias/default"), "22\n");
+        node_at(home, "v24.22.3");
+        let runner = Recorder::new(FakeRunner::new().reply(
+            &install_prefix(home),
+            Output::ok("Downloading and installing node v24.22.3...\n"),
+        ));
+        let ctx = ctx_with(home, &runner, FakeNet::new());
+
+        ensure_node_in(&ctx, &RunId::new(), &none()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(home.join(".nvm/alias/default")).unwrap(),
+            "22\n"
         );
     }
 
