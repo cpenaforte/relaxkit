@@ -297,6 +297,8 @@ impl<'a> Engine<'a> {
     /// host. Unlike `install`, an adopted tool is not skipped, and the steps include the MCP entry, which the
     /// configuration of an adopted install does not rerun. Setup uses this to repair a failing check (ruling OWNER-3).
     pub fn reinstall(&self, recipe: &Recipe, kind: HostKind) -> Result<Outcome> {
+        let locked = self.at_locked_version(recipe, kind)?;
+        let recipe = &locked;
         refuse_workdir(recipe)?;
         let Some(host) = self.hosts.iter().find(|host| host.info().kind == kind) else {
             bail!(
@@ -516,6 +518,8 @@ impl<'a> Engine<'a> {
 
     /// Adds one locked MCP entry again through the host's MCP step, without reinstalling its tool (ruling R2-1).
     pub fn readd_mcp(&self, recipe: &Recipe, kind: HostKind) -> Result<()> {
+        let locked = self.at_locked_version(recipe, kind)?;
+        let recipe = &locked;
         let Some(host) = self.hosts.iter().find(|host| host.info().kind == kind) else {
             bail!(
                 "{kind} is not installed, so {} cannot be re-added on it",
@@ -536,6 +540,25 @@ impl<'a> Engine<'a> {
         };
         let vars = self.vars(recipe)?;
         self.add_mcp(recipe, host.as_ref(), name, argv, &vars)
+    }
+
+    /// The recipe at the version the lock records for `kind`, so a repair puts back the locked version and not the
+    /// recipe's pin (K67, OWNER-3). A tool with no lock entry keeps its pin, which is the fresh-install version.
+    /// rtk is the exception: it is always the latest release (K65), so its recipe is returned unchanged.
+    fn at_locked_version(&self, recipe: &Recipe, kind: HostKind) -> Result<Recipe> {
+        if recipe.id == "rtk" {
+            return Ok(recipe.clone());
+        }
+        let Some(lock) = Lockfile::load(self.ctx)? else {
+            return Ok(recipe.clone());
+        };
+        match lock.tools.get(&recipe.id) {
+            Some(entry) => Ok(crate::tools::update::pinned(
+                recipe,
+                entry.version_for(kind.as_str()),
+            )),
+            None => Ok(recipe.clone()),
+        }
     }
 
     /// The variables steps expand with. Node and npx come from the fixed link; Chromium is resolved only when a

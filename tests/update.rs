@@ -20,6 +20,7 @@ use relaxkit::platform::{Arch, KitDirs, Os, current_arch, current_os};
 use relaxkit::runtime::nvm::NvmSearch;
 use relaxkit::state::lockfile::{LockedTool, Lockfile};
 use relaxkit::state::{RunId, journal, undo};
+use relaxkit::tools::engine::Engine;
 use support::{Scratch, tree};
 
 type Answer = Arc<dyn Fn(&Cmd) -> Output + Send + Sync>;
@@ -821,6 +822,44 @@ fn undo_puts_back_the_pack_rtk_link_an_update_removed() {
         "undo did not restore the link"
     );
     assert_eq!(fs::read_link(&pack_rtk).unwrap(), elsewhere);
+}
+
+#[test]
+fn repair_re_adds_the_mcp_entry_at_the_locked_version_not_the_pin() {
+    // The recipe pins Playwright 0.0.86, but the lock records 0.0.87 on this host. A repair puts back what the lock
+    // says (K67, OWNER-3), and the lock itself is not rewritten by a repair.
+    let fx = Fixture::new();
+    fx.lock(&[("playwright", "0.0.87", "npm", &["claude"])]);
+    let before = fx.read_lock();
+    fx.shell.on("claude mcp remove", Output::ok(""));
+    fx.shell.on("claude mcp add", Output::ok(""));
+    let recipes = relaxkit::recipe::load_all().unwrap();
+    let playwright = recipes.iter().find(|r| r.id == "playwright").unwrap();
+    assert_eq!(
+        playwright.pin.as_deref(),
+        Some("0.0.86"),
+        "the fixture expects the 0.0.86 pin"
+    );
+    let ctx = fx.ctx();
+    let node = relaxkit::runtime::nvm::current_node(&ctx).unwrap();
+    let engine = Engine {
+        ctx: &ctx,
+        run: &ctx.run,
+        hosts: &fx.hosts,
+        recipes: &recipes,
+        node: &node,
+    };
+
+    engine.readd_mcp(playwright, HostKind::Claude).unwrap();
+
+    let lines = fx.shell.lines();
+    let add = lines
+        .iter()
+        .find(|l| l.starts_with("claude mcp add"))
+        .unwrap_or_else(|| panic!("no MCP entry was added: {lines:?}"));
+    assert!(add.contains("@playwright/mcp@0.0.87"), "{add}");
+    assert!(!add.contains("0.0.86"), "{add}");
+    assert_eq!(fx.read_lock(), before, "a repair rewrote the lock");
 }
 
 #[test]
