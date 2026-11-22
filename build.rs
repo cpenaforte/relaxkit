@@ -2,4 +2,5 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=recipes");
+    println!("cargo:rerun-if-changed=src/recipe/testdata/nested");
 }
