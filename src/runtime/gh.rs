@@ -39,6 +39,10 @@ pub fn record_pack_copy(ctx: &Ctx, run: &RunId, gh: &GhInstall) -> Result<()> {
     if ctx.dry_run || !gh.owned_by_pack || gh.path != ctx.dirs.bin.join("gh") {
         return Ok(());
     }
+    // A link is never the pack copy: its target belongs to another install (K84, F7-1).
+    if is_link(&gh.path) {
+        return Ok(());
+    }
     if let Some(lock) = Lockfile::load(ctx)?
         && lock.tools.contains_key(GH_ID)
     {
@@ -46,6 +50,12 @@ pub fn record_pack_copy(ctx: &Ctx, run: &RunId, gh: &GhInstall) -> Result<()> {
     }
     let version = reported_version(ctx, &gh.path);
     record_version(ctx, run, &version)
+}
+
+/// Whether `path` is a symbolic link (the link itself, not its target).
+pub fn is_link(path: &Path) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|meta| meta.file_type().is_symlink())
 }
 
 /// Writes the gh entry for `version`, the release relaxkit placed in the pack bin directory.
@@ -383,6 +393,36 @@ mod tests {
             runner.lines().iter().all(|line| !line.starts_with("tar")),
             "an unverified archive was extracted: {:?}",
             runner.lines()
+        );
+    }
+
+    #[test]
+    fn a_link_at_the_pack_path_is_never_recorded() {
+        // The copy is a link to a file elsewhere: it is not the pack copy, so no entry is written (K84, F7-1).
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("elsewhere").join("gh");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "#!/bin/sh\necho gh\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let bin = KitDirs::rooted(root.path()).bin;
+        fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(&target, bin.join("gh")).unwrap();
+        let runner = Recorder::new(version_reply(
+            &bin.join("gh"),
+            "gh version 9.9.9 (2026-01-01)\n",
+        ));
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let run = RunId::new();
+
+        let gh = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap();
+        record_pack_copy(&ctx, &run, &gh).unwrap();
+
+        assert!(
+            lock_in(&ctx).is_none(),
+            "a link was recorded as the pack copy"
         );
     }
 

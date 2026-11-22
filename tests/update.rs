@@ -2221,6 +2221,56 @@ fn a_gh_move_from_an_unversioned_entry_is_recorded_not_updated() {
 }
 
 #[test]
+fn a_link_at_the_gh_pack_path_is_not_written_through() {
+    // The pack path is a link to a file elsewhere. The update never writes through it: the target and the lock stay
+    // byte-identical, the link stays, and the row is not Updated (K84, F7-1).
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.8", "release", &[])]);
+    let target = fx.root().join("elsewhere").join("gh");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    fs::write(&target, "elsewhere bytes\n").unwrap();
+    let bin = KitDirs::rooted(fx.root()).bin.join("gh");
+    fs::create_dir_all(bin.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, &bin).unwrap();
+    let before_target = fs::read(&target).unwrap();
+    let lock_path = KitDirs::rooted(fx.root()).config.join("lock.toml");
+    let before_lock = fs::read(&lock_path).unwrap();
+    serve_gh(
+        &fx,
+        "9.9.9",
+        b"archive",
+        None,
+        "#!/bin/sh\necho gh version 9.9.9\n",
+    );
+    fx.shell.on(
+        &format!("{} --version", bin.display()),
+        Output::ok("gh version 9.9.9 (2026-01-01)\n"),
+    );
+
+    let report = fx.run(false, Some("gh")).unwrap();
+
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        before_target,
+        "the link target changed"
+    );
+    assert_eq!(
+        fs::read(&lock_path).unwrap(),
+        before_lock,
+        "the lock changed"
+    );
+    assert!(
+        bin.symlink_metadata().unwrap().file_type().is_symlink(),
+        "the link was replaced"
+    );
+    assert!(
+        !matches!(row(&report, "gh").result, RowResult::Updated),
+        "{:?}",
+        row(&report, "gh")
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

@@ -508,6 +508,18 @@ fn gh_flow(ctx: &Ctx, plan: &Plan<'_>, report: &mut UpdateReport) -> (UpdateRow,
         note,
     };
     let bin = ctx.dirs.bin.join("gh");
+    // A link at the pack path is not the pack copy, and its target is never written through (K84, F7-1).
+    if gh::is_link(&bin) {
+        return (
+            row(
+                RowResult::NotTouched(
+                    "the pack path is a link; relaxkit does not write through it".to_string(),
+                ),
+                None,
+            ),
+            Vec::new(),
+        );
+    }
     let before = match FileState::capture(&bin) {
         Ok(before) => before,
         Err(err) => {
