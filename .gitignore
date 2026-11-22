@@ -1,2 +1,5 @@
 /target
 /.superpowers/
+
+# Design docs from the superpowers workflow stay on disk, out of the repository.
+/docs/superpowers/
