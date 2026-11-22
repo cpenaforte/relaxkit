@@ -174,6 +174,8 @@ fn run_installer(
 ) -> Result<()> {
     let url = format!("https://raw.githubusercontent.com/nvm-sh/nvm/{NVM_VERSION}/install.sh");
     let installer = download_verified(ctx, run, "nvm", &url, expected_sha256)?;
+    // nvm 0.41 refuses an NVM_DIR that is set, missing and not its default, and NVM_DIR is always set here.
+    fs::create_dir_all(&nvm.dir).with_context(|| format!("cannot create {}", nvm.dir.display()))?;
     let cmd = Cmd::new("bash")
         .arg(utf8(&installer)?)
         .env("NVM_DIR", utf8(&nvm.dir)?);
@@ -533,6 +535,74 @@ mod tests {
             fs::read_to_string(home.join(".zshrc")).unwrap(),
             "export ZSH=1\n"
         );
+    }
+
+    /// Notes whether `dir` exists when an installer script runs. A script is recognised by its first
+    /// argument, an absolute path.
+    struct Probe {
+        inner: Recorder,
+        dir: PathBuf,
+        seen: std::sync::Arc<std::sync::Mutex<Vec<bool>>>,
+    }
+
+    impl crate::exec::Runner for Probe {
+        fn run(&self, cmd: &crate::exec::Cmd) -> Result<crate::exec::Output> {
+            if cmd.argv().first().is_some_and(|arg| arg.starts_with('/')) {
+                self.seen.lock().unwrap().push(self.dir.is_dir());
+            }
+            self.inner.run(cmd)
+        }
+
+        fn which(&self, program: &str) -> Option<PathBuf> {
+            self.inner.which(program)
+        }
+    }
+
+    #[test]
+    fn the_nvm_directory_exists_before_the_installer_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let nvm_dir = home.join(".nvm");
+        let node_bin = nvm_dir.join("versions/node/v24.22.3/bin/node");
+        let inner = Recorder::new(
+            FakeRunner::new()
+                .reply("bash /", Output::ok(""))
+                .reply(
+                    &format!(
+                        "bash -c '. \"{}/.nvm/nvm.sh\" && command -v nvm'",
+                        home.display()
+                    ),
+                    Output::ok("nvm\n"),
+                )
+                .reply(
+                    &install_prefix(home),
+                    Output::ok("Downloading and installing node v24.22.3...\n"),
+                ),
+        )
+        .effect(&install_prefix(home), node_bin, "#!/bin/sh\n");
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let probe = Probe {
+            inner,
+            dir: nvm_dir.clone(),
+            seen: seen.clone(),
+        };
+        let ctx = Ctx {
+            dirs: crate::platform::KitDirs::rooted(home),
+            runner: Box::new(probe),
+            net: Box::new(net_with_installer(INSTALLER)),
+            out: crate::ctx::Reporter::capture(),
+            dry_run: false,
+            project: None,
+            run: RunId::new(),
+        };
+        let search = NvmSearch {
+            xdg_config_home: Some(home.join("xdg")),
+            ..pinned()
+        };
+
+        ensure_node_in(&ctx, &RunId::new(), &search).unwrap();
+
+        assert_eq!(*seen.lock().unwrap(), vec![true]);
     }
 
     #[test]
