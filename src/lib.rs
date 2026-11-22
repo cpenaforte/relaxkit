@@ -174,6 +174,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Command::Privacy { claude_code } => {
+            refuse_project(&cli, "privacy")?;
             let ctx = Ctx::system(cli.dry_run, None, false)?;
             commands::privacy::run(&ctx, claude_code)?;
             Ok(0)
@@ -206,7 +207,7 @@ pub fn run(cli: Cli) -> Result<i32> {
     }
 }
 
-/// `preset` and `uninstall` are global by spec (K113), so `--project` is refused rather than ignored.
+/// `preset`, `privacy` and `uninstall` are global by spec (K113, K115), so `--project` is refused rather than ignored.
 fn refuse_project(cli: &Cli, command: &str) -> Result<()> {
     if cli.project {
         anyhow::bail!("--project does not apply to {command}; it is global");
