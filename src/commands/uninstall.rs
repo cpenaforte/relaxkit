@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::config::KitConfig;
 use crate::config_apply::claude;
@@ -94,7 +94,13 @@ fn remove_claude(
     let original = original_text(ctx, run, &path)?;
     let original = original.as_deref();
     let rtk_command = format!("\"{}\" hook claude", ctx.dirs.bin.join("rtk").display());
-    let mut text = restore_or_remove(&old, original, &["env", "SUPERPOWERS_DISABLE_TELEMETRY"])?;
+    // F23-8: a scalar key goes only while it still holds the value setup or privacy wrote.
+    let mut text = remove_if_written(
+        &old,
+        original,
+        &["env", "SUPERPOWERS_DISABLE_TELEMETRY"],
+        &json!("1"),
+    )?;
     if !rtk_hook_in(original, &rtk_command)? {
         text = remove_rtk_hook(&text, &rtk_command)?;
     }
@@ -104,7 +110,7 @@ fn remove_claude(
         "failIfUnavailable",
         "enableWeakerNetworkIsolation",
     ] {
-        text = restore_or_remove(&text, original, &["sandbox", key])?;
+        text = remove_if_written(&text, original, &["sandbox", key], &json!(true))?;
     }
     let domains = not_in_original(
         original,
@@ -272,6 +278,21 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// Removes a scalar key only while it still holds `written`, the value relaxkit set. A value the owner changed by hand
+/// stays (F23-8).
+fn remove_if_written(
+    text: &str,
+    original: Option<&str>,
+    path: &[&str],
+    written: &Value,
+) -> Result<String> {
+    if jsonc_get(text, path)?.as_ref() == Some(written) {
+        restore_or_remove(text, original, path)
+    } else {
+        Ok(text.to_string())
+    }
+}
+
 /// Puts back the value the file held before relaxkit wrote the key, or removes the key when the user had none.
 fn restore_or_remove(text: &str, original: Option<&str>, path: &[&str]) -> Result<String> {
     match original
@@ -416,6 +437,76 @@ mod tests {
         assert_eq!(
             get(&text, &["sandbox", "enableWeakerNetworkIsolation"]),
             None,
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_hand_changed_sandbox_value_survives_uninstall() {
+        // F23-8: a key is removed only while it still holds the value setup wrote, so a value the owner changed stays.
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+        let host = ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/bin/claude"),
+                version: "2.1.330".into(),
+            },
+            root.path().join(".claude"),
+            root.path().join(".claude.json"),
+        );
+        let settings = host.config_file(&ctx);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let user = "{\"env\": {\"USER_KEY\": \"keep\"}}";
+        fs::write(&settings, user).unwrap();
+        let pack =
+            sandbox::claude::settings_text(user, Os::Linux, GhPath::ExcludedFallback).unwrap();
+        let pack = jsonc_set(
+            &pack,
+            &["env", "SUPERPOWERS_DISABLE_TELEMETRY"],
+            &json!("1"),
+        )
+        .unwrap();
+        safe_write(&ctx, &RunId::new(), &settings, &pack).unwrap();
+        // The owner changes one setup key by hand after setup.
+        let changed = jsonc_set(
+            &fs::read_to_string(&settings).unwrap(),
+            &["sandbox", "autoAllowBashIfSandboxed"],
+            &json!(false),
+        )
+        .unwrap();
+        fs::write(&settings, changed).unwrap();
+
+        let mut lines = Vec::new();
+        remove_claude(
+            &ctx,
+            &RunId::new(),
+            &host,
+            &KitConfig::default(),
+            &mut lines,
+        )
+        .unwrap();
+
+        let text = fs::read_to_string(&settings).unwrap();
+        assert_eq!(
+            get(&text, &["sandbox", "autoAllowBashIfSandboxed"]),
+            Some(json!(false)),
+            "a value the owner changed stays: {text}"
+        );
+        assert_eq!(get(&text, &["sandbox", "enabled"]), None, "{text}");
+        assert_eq!(
+            get(&text, &["sandbox", "failIfUnavailable"]),
+            None,
+            "{text}"
+        );
+        assert_eq!(
+            get(&text, &["env", "SUPERPOWERS_DISABLE_TELEMETRY"]),
+            None,
+            "{text}"
+        );
+        assert_eq!(
+            get(&text, &["env", "USER_KEY"]),
+            Some(json!("keep")),
             "{text}"
         );
     }
