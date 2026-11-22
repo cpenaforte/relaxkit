@@ -216,9 +216,17 @@ fn write_catalog(rig: &Rig, marketplace: &str, plugins: &[&str]) {
 }
 
 /// The PATH every MCP entry carries: the node link, then the system directories (spec 4).
+/// The literal PATH serena's MCP entries run with: the node link, the uv tool bin (`~/.local/bin`), then the system
+/// directories. Spelled out from the layout, not computed by the engine's helper.
 fn mcp_path(rig: &Rig) -> String {
-    let link = rig.ctx.dirs.data.join("node").join("bin");
-    format!("PATH={}:/usr/bin:/bin", link.display())
+    format!(
+        "PATH={}:{}:/usr/bin:/bin",
+        rig.root
+            .path()
+            .join(".local/share/relaxkit/node/bin")
+            .display(),
+        rig.root.path().join(".local/bin").display()
+    )
 }
 
 fn npx(rig: &Rig) -> String {

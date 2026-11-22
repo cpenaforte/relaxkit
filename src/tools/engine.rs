@@ -395,9 +395,12 @@ impl<'a> Engine<'a> {
     }
 
     /// PATH for an MCP entry: the node link, then the system directories.
+    /// The PATH an MCP entry runs with: the node link, then the uv tool bin (where `uv tool install` puts `serena`),
+    /// then the system directories.
     fn mcp_path(&self) -> String {
-        let link = self.ctx.dirs.data.join("node").join("bin");
-        format!("{}:/usr/bin:/bin", link.display())
+        let node = self.ctx.dirs.data.join("node").join("bin");
+        let uv = self.ctx.dirs.home.join(".local").join("bin");
+        format!("{}:{}:/usr/bin:/bin", node.display(), uv.display())
     }
 
     fn search_path(&self) -> Result<String> {
@@ -882,8 +885,12 @@ exec = ["caveman", "telemetry", "off"]
             .find(|cmd| cmd.to_string().starts_with("claude mcp add"))
             .expect("an mcp add was run");
         let argv = add.argv().to_vec();
-        let link = ctx.dirs.data.join("node").join("bin");
-        let expected = format!("PATH={}:/usr/bin:/bin", link.display());
+        // Spelled out from the layout, not from the engine's helper, so a drift in either side fails the test.
+        let expected = format!(
+            "PATH={}:{}:/usr/bin:/bin",
+            root.path().join(".local/share/relaxkit/node/bin").display(),
+            root.path().join(".local/bin").display()
+        );
         let flag = argv
             .iter()
             .position(|a| a == "--env")
