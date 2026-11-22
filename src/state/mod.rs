@@ -84,14 +84,20 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
 /// survive a crash before the journal record is synced. `dirs.backups` is under `dirs.data`, which
 /// is under `dirs.home`, so the walk reaches both.
 fn sync_backup_dirs(ctx: &Ctx, backup: &Path) -> Result<()> {
-    for dir in backup
+    for dir in backup_dirs(ctx, backup) {
+        sync_dir(&dir)?;
+    }
+    Ok(())
+}
+
+/// The directories `sync_backup_dirs` flushes: from the backup's parent up to `dirs.home`, inclusive.
+fn backup_dirs(ctx: &Ctx, backup: &Path) -> Vec<PathBuf> {
+    backup
         .ancestors()
         .skip(1)
         .take_while(|dir| dir.starts_with(&ctx.dirs.home))
-    {
-        sync_dir(dir)?;
-    }
-    Ok(())
+        .map(Path::to_path_buf)
+        .collect()
 }
 
 /// Flushes a directory, so entries created in it survive a crash.
@@ -517,6 +523,29 @@ mod tests {
         safe_write(&ctx, &run, &file, "newer").unwrap();
 
         assert_eq!(fs::read_to_string(&file).unwrap(), "newer");
+    }
+
+    #[test]
+    fn backup_dirs_lists_the_directories_up_to_home_and_nothing_above() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let backup = ctx
+            .dirs
+            .backups
+            .join("run-1")
+            .join("nested")
+            .join("settings.json");
+
+        let dirs = backup_dirs(&ctx, &backup);
+
+        assert_eq!(dirs.first().map(PathBuf::as_path), backup.parent());
+        assert_eq!(dirs.last(), Some(&ctx.dirs.home));
+        assert!(dirs.contains(&ctx.dirs.backups));
+        assert!(dirs.contains(&ctx.dirs.data));
+        assert!(
+            dirs.iter().all(|d| d.starts_with(&ctx.dirs.home)),
+            "a directory above home is listed: {dirs:?}"
+        );
     }
 
     /// True when some file under `root` holds exactly `text`.
