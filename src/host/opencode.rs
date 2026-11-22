@@ -67,16 +67,14 @@ pub fn opencode_dir(home: &Path, xdg: Option<&OsStr>) -> PathBuf {
     }
 }
 
-/// The config file in `dir`: an existing `opencode.jsonc`, else an existing `opencode.json`, else `opencode.jsonc`.
+/// The config file in `dir`: `opencode.jsonc` when it exists, otherwise `opencode.json`. With neither file,
+/// `opencode plugin add` creates `opencode.json` (spike B2), so that is the default.
 pub fn config_file_in(dir: &Path) -> PathBuf {
     let jsonc = dir.join("opencode.jsonc");
-    let json = dir.join("opencode.json");
     if jsonc.exists() {
         jsonc
-    } else if json.exists() {
-        json
     } else {
-        jsonc
+        dir.join("opencode.json")
     }
 }
 
@@ -438,11 +436,22 @@ mod tests {
             PathBuf::from("/x/opencode")
         );
         let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("opencode.json"), "{}").unwrap();
+        assert_eq!(
+            config_file_in(root.path()),
+            root.path().join("opencode.json")
+        );
+        fs::write(root.path().join("opencode.jsonc"), "{}").unwrap();
         assert_eq!(
             config_file_in(root.path()),
             root.path().join("opencode.jsonc")
         );
-        fs::write(root.path().join("opencode.json"), "{}").unwrap();
+    }
+
+    #[test]
+    fn config_file_defaults_to_json_on_an_empty_home() {
+        // Spike B2: `opencode plugin add` on an empty home creates opencode.json.
+        let root = tempfile::tempdir().unwrap();
         assert_eq!(
             config_file_in(root.path()),
             root.path().join("opencode.json")
