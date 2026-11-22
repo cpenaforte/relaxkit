@@ -560,11 +560,13 @@ fn rtk_flow(
                 .copied()
                 .filter(|kind| entry.version_for(kind.as_str()) != target)
                 .collect();
+            // Every host whose configuration ran against the binary restarts, moved or not (F3-4). Only the label and the
+            // lock write follow the moved filter.
             if moved.is_empty() {
-                return (row(RowResult::Current, note), Vec::new());
+                return (row(RowResult::Current, note), out.updated);
             }
             match record_moves(ctx, plan.id, &moves_to(&moved, &target), Some("script")) {
-                Ok(()) => (row(RowResult::Updated, note), moved),
+                Ok(()) => (row(RowResult::Updated, note), out.updated.clone()),
                 Err(err) => {
                     report.failed.push(plan.id.to_string());
                     // The pack copy was written before the lock failed, so the hosts are still listed to restart (K69).

@@ -1433,6 +1433,69 @@ fn a_blocked_brew_rtk_does_not_claim_it_was_updated() {
 }
 
 #[test]
+fn rtk_restarts_every_host_whose_config_ran_not_only_the_moved_ones() {
+    // Claude is already at the newest 1.2.1 and OpenCode is stale at 1.1.0. Only OpenCode moves, but both hosts'
+    // configuration steps run against the new binary, so both hosts are listed to restart (F3-4).
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    fx.hosts = vec![
+        Box::new(ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/local/bin/claude"),
+                version: "2.1.340".to_string(),
+            },
+            root.join(".claude"),
+            root.join(".claude.json"),
+        )),
+        Box::new(OpencodeHost::new(
+            HostInfo {
+                kind: HostKind::Opencode,
+                binary: PathBuf::from("/usr/local/bin/opencode"),
+                version: "2.2.6".to_string(),
+            },
+            root.join(".config/opencode"),
+        )),
+    ];
+    let mut tools = BTreeMap::new();
+    tools.insert(
+        "rtk".to_string(),
+        LockedTool {
+            version: "1.2.1".to_string(),
+            route: "script".to_string(),
+            hosts: vec!["claude".to_string(), "opencode".to_string()],
+            host_versions: BTreeMap::from([("opencode".to_string(), "1.1.0".to_string())]),
+        },
+    );
+    Lockfile {
+        relaxkit: "0.1.0".to_string(),
+        tools,
+    }
+    .save(&fx.ctx(), &fx.run)
+    .unwrap();
+    serve_rtk(&fx);
+    let pack_rtk = root.join(".local/share/relaxkit/bin/rtk");
+    fx.shell.on(
+        &format!("{} gain", pack_rtk.display()),
+        Output::ok("gain\n"),
+    );
+    fx.shell.on("rtk init -g", Output::ok(""));
+    fx.shell.on("rtk init -g --opencode", Output::ok(""));
+    fx.shell.on("rtk telemetry disable", Output::ok(""));
+
+    let report = fx.run(false, Some("rtk")).unwrap();
+
+    let rtk = row(&report, "rtk");
+    assert!(matches!(rtk.result, RowResult::Updated), "{rtk:?}");
+    assert!(
+        report.restart.contains(&HostKind::Claude),
+        "the at-target host's configuration ran but it is not listed: {report:?}"
+    );
+    assert!(report.restart.contains(&HostKind::Opencode), "{report:?}");
+    assert_eq!(fx.read_lock().tools["rtk"].version_for("opencode"), "1.2.1");
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
