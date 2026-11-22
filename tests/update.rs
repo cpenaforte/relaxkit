@@ -1888,6 +1888,27 @@ fn a_rollback_never_pins_an_unversioned_locked_version() {
 }
 
 #[test]
+fn an_mcp_entry_is_shown_as_not_read_not_as_missing() {
+    // Playwright is locked at 0.0.86 on Claude. Status cannot read an MCP entry, so the line says so: no "not found",
+    // and no drift line (F5-2).
+    let fx = Fixture::new();
+    fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
+
+    let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
+
+    let lines: Vec<&String> = report
+        .lines
+        .iter()
+        .filter(|line| line.starts_with("playwright on"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("MCP entry not read"), "{lines:?}");
+    assert!(lines[0].contains("0.0.86"), "{lines:?}");
+    assert!(!lines[0].contains("not found"), "{lines:?}");
+    assert!(!lines[0].contains("drift"), "{lines:?}");
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

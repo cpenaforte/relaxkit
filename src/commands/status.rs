@@ -13,6 +13,7 @@ use crate::edit::{block_get, jsonc_get};
 use crate::exec::Cmd;
 use crate::host::{Host, HostCheck, HostKind, check_minimum, detect_hosts};
 use crate::recipe::load_all;
+use crate::recipe::schema::Kind;
 use crate::roles::{Role, resolve_claude, resolve_opencode};
 use crate::runtime::nvm::{NodeInstall, other_nodes};
 use crate::sandbox::opencode::sandbox_config_path;
@@ -82,30 +83,39 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                     ));
                     continue;
                 };
-                let installed = match engine.detect(recipe, host.as_ref()) {
-                    Ok(Some((version, _))) => version,
-                    Ok(None) => "not found".to_string(),
-                    Err(err) => format!("unreadable ({err:#})"),
-                };
                 // Each host is compared with the version its own lock entry records (K73).
                 let locked = tool.version_for(host_name);
-                // A version that was never recorded cannot drift: its host version is shown, not compared (F3-1).
-                // A tool that is missing or unreadable says so first: neither can be compared with anything (F4-3).
-                let state = if installed == "not found" {
-                    "not found".to_string()
-                } else if installed.starts_with("unreadable") {
-                    "unreadable".to_string()
-                } else if locked == crate::tools::engine::UNVERSIONED {
-                    "as locked (version not recorded)".to_string()
-                } else if installed == locked {
-                    "as locked".to_string()
+                // An MCP entry is not read by status (engine.detect returns nothing for it), so it is neither "not found"
+                // nor compared: its locked version is shown with that state (F5-2).
+                if recipe.kind == Kind::Mcp {
+                    lines.push(format!(
+                        "{id} on {kind}: locked {locked} ({}); MCP entry not read",
+                        tool.route
+                    ));
                 } else {
-                    format!("drift: locked {locked}")
-                };
-                lines.push(format!(
-                    "{id} on {kind}: installed {installed}, locked {locked} ({}); {state}",
-                    tool.route
-                ));
+                    let installed = match engine.detect(recipe, host.as_ref()) {
+                        Ok(Some((version, _))) => version,
+                        Ok(None) => "not found".to_string(),
+                        Err(err) => format!("unreadable ({err:#})"),
+                    };
+                    // A version that was never recorded cannot drift: its host version is shown, not compared (F3-1).
+                    // A tool that is missing or unreadable says so first: neither can be compared with anything (F4-3).
+                    let state = if installed == "not found" {
+                        "not found".to_string()
+                    } else if installed.starts_with("unreadable") {
+                        "unreadable".to_string()
+                    } else if locked == crate::tools::engine::UNVERSIONED {
+                        "as locked (version not recorded)".to_string()
+                    } else if installed == locked {
+                        "as locked".to_string()
+                    } else {
+                        format!("drift: locked {locked}")
+                    };
+                    lines.push(format!(
+                        "{id} on {kind}: installed {installed}, locked {locked} ({}); {state}",
+                        tool.route
+                    ));
+                }
                 if let Some(need) = recipe.minimum_host.get(&kind)
                     && let HostCheck::TooOld { have, need } = check_minimum(host.info(), need)
                 {
