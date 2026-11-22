@@ -535,17 +535,19 @@ fn rtk_flow(
         },
         Err(err) => {
             report.failed.push(plan.id.to_string());
+            // The hosts' configuration may have been rewritten before the failure, so they are listed to restart (K69).
+            let changed = present_hosts(recipe, entry, engine.hosts);
             match before.restore(&bin) {
                 Ok(()) => (
                     row(RowResult::RolledBack, Some(format!("{err:#}"))),
-                    Vec::new(),
+                    changed,
                 ),
                 Err(restore) => (
                     row(
                         RowResult::RollbackFailed(format!("{restore:#}")),
                         Some(format!("{err:#}")),
                     ),
-                    Vec::new(),
+                    changed,
                 ),
             }
         }
@@ -698,6 +700,8 @@ fn tool_flow(
         Err(err) => {
             report.failed.push(plan.id.to_string());
             let note = Some(format!("{err:#}"));
+            // The hosts were updated before the probe failed, so they are listed to restart whatever the result (K69).
+            let changed = present.clone();
             if !every_pinnable || old_versions.len() != 1 {
                 let reason = if !every_pinnable {
                     "a Claude Code plugin cannot be pinned, so its locked version cannot be restored".to_string()
@@ -705,14 +709,14 @@ fn tool_flow(
                     "its hosts are on different versions, so one locked version cannot be restored"
                         .to_string()
                 };
-                return (row(RowResult::RollbackFailed(reason), note), Vec::new());
+                return (row(RowResult::RollbackFailed(reason), note), changed);
             }
             let old = old_versions.into_iter().next().unwrap_or_default();
             match engine.update(&scope, &old) {
-                Ok(_) => (row(RowResult::RolledBack, note), Vec::new()),
+                Ok(_) => (row(RowResult::RolledBack, note), changed),
                 Err(again) => (
                     row(RowResult::RollbackFailed(format!("{again:#}")), note),
-                    Vec::new(),
+                    changed,
                 ),
             }
         }

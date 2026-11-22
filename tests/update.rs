@@ -890,6 +890,36 @@ fn rtk_below_its_minimum_host_is_not_touched_and_its_lock_stays() {
 }
 
 #[test]
+fn a_failed_claude_update_still_restarts_claude() {
+    // The plugin is updated on disk before its probe fails. The probe finds no superpowers listing, so the update is
+    // not confirmed, but Claude's plugin changed and must be listed to restart (K69).
+    let fx = Fixture::new();
+    fx.shell
+        .on("claude plugin marketplace update", Output::ok(""));
+    fx.shell.on("claude plugin list", Output::ok(""));
+    fx.shell
+        .on("claude plugin update superpowers@", Output::ok(""));
+    fx.lock(&[(
+        "superpowers",
+        "7.0.2",
+        "claude-plugin:anthropic-plugin-directory",
+        &["claude"],
+    )]);
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.3"}"#,
+    );
+
+    let report = fx.run(false, Some("superpowers")).unwrap();
+
+    assert_eq!(report.failed, vec!["superpowers".to_string()], "{report:?}");
+    assert!(
+        report.restart.contains(&HostKind::Claude),
+        "a changed Claude plugin was not listed to restart: {report:?}"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
