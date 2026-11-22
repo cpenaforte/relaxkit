@@ -168,6 +168,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Command::Preset { name } => {
+            refuse_project(&cli, "preset")?;
             let ctx = Ctx::system(cli.dry_run, None, false)?;
             commands::preset::run(&ctx, preset_of(name))?;
             Ok(0)
@@ -191,8 +192,8 @@ pub fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Command::Uninstall => {
-            let project = cli.project.then(std::env::current_dir).transpose()?;
-            let ctx = Ctx::system(cli.dry_run, project, false)?;
+            refuse_project(&cli, "uninstall")?;
+            let ctx = Ctx::system(cli.dry_run, None, false)?;
             for line in commands::uninstall::run(&ctx)? {
                 ctx.out.info(&line);
             }
@@ -203,6 +204,14 @@ pub fn run(cli: Cli) -> Result<i32> {
             commands::usage::run(&ctx, &args)
         }
     }
+}
+
+/// `preset` and `uninstall` are global by spec (K113), so `--project` is refused rather than ignored.
+fn refuse_project(cli: &Cli, command: &str) -> Result<()> {
+    if cli.project {
+        anyhow::bail!("--project does not apply to {command}; it is global");
+    }
+    Ok(())
 }
 
 /// The host a `--host` flag names.

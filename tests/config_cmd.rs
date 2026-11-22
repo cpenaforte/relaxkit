@@ -690,6 +690,37 @@ fn lock_with(version: &str) -> Lockfile {
     }
 }
 
+#[test]
+fn preset_and_uninstall_refuse_project_and_write_nothing() {
+    // K113 / F23-5: both are global by spec, so --project is refused rather than ignored.
+    let scratch = Scratch::new();
+    let before = tree(scratch.home());
+
+    for (command, args) in [
+        ("preset", vec!["preset", "balanced"]),
+        ("uninstall", vec!["uninstall"]),
+    ] {
+        let assert = scratch
+            .relaxkit()
+            .arg("--project")
+            .args(&args)
+            .assert()
+            .failure();
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+        assert!(
+            stderr.contains(&format!(
+                "--project does not apply to {command}; it is global"
+            )),
+            "{stderr}"
+        );
+    }
+    assert_eq!(
+        tree(scratch.home()),
+        before,
+        "a refused --project writes nothing"
+    );
+}
+
 // ---- uninstall -------------------------------------------------------------------------------------------------
 
 #[test]
