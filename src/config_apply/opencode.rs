@@ -179,8 +179,9 @@ fn key_restores(
     id: &str,
     key: &str,
 ) -> Result<bool> {
+    // K122 follows in F23-19: an absent model is not restored either. Until then only model is restored from absent.
     let Some(current) = jsonc_get(text, &["agents", id, key])? else {
-        return Ok(true);
+        return Ok(key == "model");
     };
     if let Some(expected) = written_value(config, available, id, key) {
         return Ok(current == expected);
@@ -807,6 +808,39 @@ mod tests {
         assert_eq!(
             plan_model(&read(&config_path(root.path()))),
             Some(json!("anthropic/claude-sonnet-5-5"))
+        );
+    }
+
+    #[test]
+    fn a_description_the_owner_deleted_after_setup_stays_absent_through_unset() {
+        // F23-18 / K122: an absent mode or description is the owner's removal, so it is not restored.
+        let root = tempfile::tempdir().unwrap();
+        let before = jsonc_set(
+            FIXTURE,
+            &["agents", "implementer", "description"],
+            &json!("my own description"),
+        )
+        .unwrap();
+        seed(root.path(), &before);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+        apply_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+        let by_hand = jsonc_remove(
+            &read(&config_path(root.path())),
+            &["agents", "implementer", "description"],
+        )
+        .unwrap();
+        fs::write(config_path(root.path()), &by_hand).unwrap();
+
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+
+        assert_eq!(
+            get(
+                &read(&config_path(root.path())),
+                &["agents", "implementer", "description"]
+            ),
+            None,
+            "the deleted description stays absent"
         );
     }
 }
