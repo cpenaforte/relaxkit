@@ -1,5 +1,6 @@
 //! The coding-agent adapters that relaxkit installs into a host (spec section 9). The Claude Code adapter is a plugin
-//! that lives in this repository, and the repository's marketplace file lists it. The OpenCode adapter comes later.
+//! that lives in this repository, and the repository's marketplace file lists it. The OpenCode adapter is a plugin in
+//! `adapters/opencode-plugin`, installed from its pinned release tag.
 
 use anyhow::Result;
 
@@ -33,6 +34,46 @@ pub fn install_claude(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
         host.marketplace_add(ctx, brand::REPO)?;
     }
     host.plugin_install(ctx, &format!("{PLUGIN}@{MARKETPLACE}"))
+}
+
+/// The OpenCode plugin's package name, the `name` in `adapters/opencode-plugin/package.json`.
+const OPENCODE_PLUGIN: &str = "relaxkit-opencode";
+/// The plugin's directory in this repository, which the install spec names after `::path:`.
+const OPENCODE_PATH: &str = "adapters/opencode-plugin";
+
+/// The OpenCode install spec for a release tag: the plugin from this repository at that tag, from its subdirectory.
+fn opencode_spec(release_tag: &str) -> String {
+    format!(
+        "{OPENCODE_PLUGIN}@git+https://github.com/{}.git#{release_tag}::path:{OPENCODE_PATH}",
+        brand::REPO
+    )
+}
+
+/// The version an OpenCode host reports for an installed spec: the text after the last `#`, without a leading `v`.
+/// This mirrors `to_plugin` in `host/opencode.rs`, which is private, so the adapter compares the value the host reads.
+fn listed_version(spec: &str) -> Option<String> {
+    spec.rsplit_once('#')
+        .map(|(_, tag)| tag.strip_prefix('v').unwrap_or(tag).to_string())
+}
+
+/// Installs the OpenCode adapter into an OpenCode host at `release_tag`, which must be a pinned tag. An entry already
+/// at that tag is left alone, so a second run changes nothing. An entry at another tag is replaced by
+/// `plugin_update`, which removes the old entry and adds the new one.
+pub fn install_opencode(ctx: &Ctx, run: &RunId, host: &dyn Host, release_tag: &str) -> Result<()> {
+    debug_assert_eq!(
+        run, &ctx.run,
+        "the adapter install must run under the context's run"
+    );
+    let spec = opencode_spec(release_tag);
+    let listed = host
+        .plugin_list(ctx)?
+        .into_iter()
+        .find(|plugin| plugin.name == OPENCODE_PLUGIN);
+    match listed {
+        Some(plugin) if plugin.version == listed_version(&spec) => Ok(()),
+        Some(_) => host.plugin_update(ctx, &spec),
+        None => host.plugin_install(ctx, &spec),
+    }
 }
 
 /// Whether Claude already lists the marketplace. A listing that fails counts as not listed, so the add runs and

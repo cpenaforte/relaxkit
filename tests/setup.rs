@@ -727,6 +727,31 @@ fn setup_does_not_record_a_brew_or_system_gh() {
 }
 
 #[test]
+fn setup_installs_the_opencode_adapter_for_an_opencode_host() {
+    // Task 25b: configure installs the OpenCode adapter after the OpenCode roles. Every recipe is locked, so the
+    // install loop does not reach GitHub, and the run gets as far as configure. The stubs do not write the config,
+    // so the adapter is added once. Only the calls matter: the run may still exit non-zero.
+    let scratch = Scratch::new();
+    scratch.without("claude");
+    write_lock_except(&scratch, None);
+
+    let _ = scratch.relaxkit().arg("setup").output().unwrap();
+
+    let calls = scratch.calls();
+    let spec = format!(
+        "opencode plugin add relaxkit-opencode@git+https://github.com/{}.git#v{}::path:adapters/opencode-plugin",
+        relaxkit::brand::REPO,
+        env!("CARGO_PKG_VERSION")
+    );
+    let count = calls.iter().filter(|call| **call == spec).count();
+    assert_eq!(count, 1, "{calls:?}");
+    assert!(
+        calls.iter().all(|call| !call.starts_with("claude ")),
+        "{calls:?}"
+    );
+}
+
+#[test]
 fn setup_installs_the_adapter_for_each_detected_host() {
     // Task 24 part A: configure installs the Claude adapter for each detected Claude host. A Claude-only home gets
     // only that adapter, and no OpenCode call runs.
