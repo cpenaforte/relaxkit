@@ -2154,6 +2154,47 @@ fn a_brew_gh_is_never_touched_by_an_update() {
 }
 
 #[test]
+fn undo_puts_back_the_previous_gh_copy_and_its_lock_entry() {
+    // The gh copy and the lock entry are journaled like rtk's pack copy, so undo restores both (K84, G3).
+    let fx = Fixture::new();
+    fx.lock(&[("gh", "9.9.8", "release", &[])]);
+    let bin = pack_gh(&fx);
+    let before_bin = fs::read(&bin).unwrap();
+    let lock_path = KitDirs::rooted(fx.root()).config.join("lock.toml");
+    let before_lock = fs::read(&lock_path).unwrap();
+    serve_gh(
+        &fx,
+        "9.9.9",
+        b"archive",
+        None,
+        "#!/bin/sh\necho gh version 9.9.9\n",
+    );
+    fx.shell.on(
+        &format!("{} --version", bin.display()),
+        Output::ok("gh version 9.9.9 (2026-01-01)\n"),
+    );
+    fx.run(false, Some("gh")).unwrap();
+    assert_ne!(
+        fs::read(&bin).unwrap(),
+        before_bin,
+        "the update did not move gh"
+    );
+
+    undo(&fx.ctx(), Some(&fx.run)).unwrap();
+
+    assert_eq!(
+        fs::read(&bin).unwrap(),
+        before_bin,
+        "the previous gh copy was not restored"
+    );
+    assert_eq!(
+        fs::read(&lock_path).unwrap(),
+        before_lock,
+        "the previous lock entry was not restored"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
