@@ -1074,6 +1074,84 @@ fn a_claude_update_with_no_reported_version_still_restarts_claude() {
 }
 
 #[test]
+fn rtk_is_not_touched_while_a_host_is_below_its_minimum() {
+    // Owner ruling K87: Claude (2.1.300) is below rtk's minimum (2.1.330). The pack binary is shared, so the update
+    // does not move it and writes no lock entry. The row is NotTouched and names the host, its version and the minimum.
+    // Two runs must read the same, and OpenCode, already at the newest 1.2.1, changes nothing either.
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    fx.hosts = vec![
+        Box::new(ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/local/bin/claude"),
+                version: "2.1.300".to_string(),
+            },
+            root.join(".claude"),
+            root.join(".claude.json"),
+        )),
+        Box::new(OpencodeHost::new(
+            HostInfo {
+                kind: HostKind::Opencode,
+                binary: PathBuf::from("/usr/local/bin/opencode"),
+                version: "2.2.6".to_string(),
+            },
+            root.join(".config/opencode"),
+        )),
+    ];
+    let mut tools = BTreeMap::new();
+    tools.insert(
+        "rtk".to_string(),
+        LockedTool {
+            version: "1.2.1".to_string(),
+            route: "script".to_string(),
+            hosts: vec!["claude".to_string(), "opencode".to_string()],
+            host_versions: BTreeMap::from([("claude".to_string(), "1.1.0".to_string())]),
+        },
+    );
+    Lockfile {
+        relaxkit: "0.1.0".to_string(),
+        tools,
+    }
+    .save(&fx.ctx(), &fx.run)
+    .unwrap();
+    let lock_path = KitDirs::rooted(&root).config.join("lock.toml");
+    let before = fs::read_to_string(&lock_path).unwrap();
+    serve_rtk(&fx);
+    let pack_rtk = root.join(".local/share/relaxkit/bin/rtk");
+    fx.shell.on(
+        &format!("{} gain", pack_rtk.display()),
+        Output::ok("gain\n"),
+    );
+    fx.shell.on("rtk init -g --opencode", Output::ok(""));
+    fx.shell.on("rtk telemetry disable", Output::ok(""));
+
+    for run in 0..2 {
+        let report = fx.run(false, Some("rtk")).unwrap();
+        let rtk = row(&report, "rtk");
+        match &rtk.result {
+            RowResult::NotTouched(reason) => assert!(
+                reason.contains("Claude Code")
+                    && reason.contains("2.1.300")
+                    && reason.contains("2.1.330"),
+                "run {run}: the reason does not name the host, its version and the minimum: {reason}"
+            ),
+            other => panic!("run {run}: expected NotTouched, got {other:?}"),
+        }
+        assert!(report.restart.is_empty(), "run {run}: {report:?}");
+        assert!(
+            !pack_rtk.exists(),
+            "run {run}: the shared pack binary was written"
+        );
+        assert_eq!(
+            fs::read_to_string(&lock_path).unwrap(),
+            before,
+            "run {run}: the lock was rewritten"
+        );
+    }
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

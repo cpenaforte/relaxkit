@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::fsx::write_atomic;
-use crate::host::{Host, HostKind, detect_hosts};
+use crate::host::{Host, HostCheck, HostKind, check_minimum, detect_hosts};
 use crate::net::Net;
 use crate::recipe::{Recipe, VersionSource, load_all};
 use crate::runtime::nvm::{
@@ -499,6 +499,28 @@ fn rtk_flow(
             bin.display()
         )
     });
+    // Owner ruling K87: while any installed host is below rtk's minimum, the shared pack binary is not moved and no lock
+    // entry is written. Moving it would change what the other host runs while the lock keeps the old version. Relaxkit
+    // does not update the host; the owner updates it through the host's own updater.
+    let below: Vec<String> = recipe
+        .hosts
+        .iter()
+        .filter_map(|kind| {
+            let host = engine.hosts.iter().find(|host| host.info().kind == *kind)?;
+            let need = recipe.minimum_host.get(kind)?;
+            match check_minimum(host.info(), need) {
+                HostCheck::TooOld { have, need } => Some(format!(
+                    "{} {have} is below rtk's minimum {need}; update {}, then run `relaxkit update rtk`",
+                    kind.product_name(),
+                    kind.product_name()
+                )),
+                HostCheck::Ok => None,
+            }
+        })
+        .collect();
+    if let Some(reason) = below.into_iter().next() {
+        return (row(RowResult::NotTouched(reason), note), Vec::new());
+    }
     let before = match FileState::capture(&bin) {
         Ok(before) => before,
         Err(err) => {
@@ -518,22 +540,30 @@ fn rtk_flow(
             ),
             Vec::new(),
         ),
-        Ok(out) => match record_moves(
-            ctx,
-            plan.id,
-            &moves_to(&out.updated, &target),
-            Some("script"),
-        ) {
-            Ok(()) => (row(RowResult::Updated, note), out.updated.clone()),
-            Err(err) => {
-                report.failed.push(plan.id.to_string());
-                // The pack copy was written before the lock failed, so the hosts are still listed to restart (K69).
-                (
-                    row(RowResult::RollbackFailed(format!("{err:#}")), note),
-                    out.updated,
-                )
+        Ok(out) => {
+            // Only a host whose lock version differs moved (K72). A host already at the target is not a move, so when
+            // none remain the row is current, the lock is not written, and no host restarts.
+            let moved: Vec<HostKind> = out
+                .updated
+                .iter()
+                .copied()
+                .filter(|kind| entry.version_for(kind.as_str()) != target)
+                .collect();
+            if moved.is_empty() {
+                return (row(RowResult::Current, note), Vec::new());
             }
-        },
+            match record_moves(ctx, plan.id, &moves_to(&moved, &target), Some("script")) {
+                Ok(()) => (row(RowResult::Updated, note), moved),
+                Err(err) => {
+                    report.failed.push(plan.id.to_string());
+                    // The pack copy was written before the lock failed, so the hosts are still listed to restart (K69).
+                    (
+                        row(RowResult::RollbackFailed(format!("{err:#}")), note),
+                        out.updated,
+                    )
+                }
+            }
+        }
         Err(err) => {
             report.failed.push(plan.id.to_string());
             // The hosts' configuration may have been rewritten before the failure, so they are listed to restart (K69).
