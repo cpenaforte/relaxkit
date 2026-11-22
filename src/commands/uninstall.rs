@@ -274,13 +274,21 @@ fn remove_bin_copies_except(
     running: Option<&Path>,
     lines: &mut Vec<String>,
 ) -> Result<()> {
+    // F23-17: without the running path the binary cannot be told apart from a copy, so nothing is removed.
+    let Some(running) = running else {
+        lines.push(
+            "kept the copies in dirs.bin: the running binary could not be identified, so nothing there is removed"
+                .to_string(),
+        );
+        return Ok(());
+    };
     let Ok(entries) = fs::read_dir(&ctx.dirs.bin) else {
         return Ok(());
     };
     for entry in entries {
         let path = entry?.path();
         // K119: an entry that resolves to the running binary is never removed.
-        if running.is_some_and(|exe| fs::canonicalize(&path).is_ok_and(|target| target == exe)) {
+        if fs::canonicalize(&path).is_ok_and(|target| target == running) {
             continue;
         }
         let meta = fs::symlink_metadata(&path)
@@ -607,6 +615,26 @@ mod tests {
         assert!(
             !ctx.dirs.bin.join("rtk").exists(),
             "the other copy is removed"
+        );
+    }
+
+    #[test]
+    fn without_the_running_path_no_bin_copy_is_removed() {
+        // F23-17: when the running binary cannot be identified, nothing in dirs.bin is removed (fail closed).
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+        fs::create_dir_all(&ctx.dirs.bin).unwrap();
+        fs::write(ctx.dirs.bin.join("rtk"), "rtk copy").unwrap();
+        fs::write(ctx.dirs.bin.join("relaxkit"), "relaxkit copy").unwrap();
+
+        let mut lines = Vec::new();
+        remove_bin_copies_except(&ctx, &RunId::new(), None, &mut lines).unwrap();
+
+        assert!(ctx.dirs.bin.join("rtk").exists(), "nothing is removed");
+        assert!(ctx.dirs.bin.join("relaxkit").exists(), "nothing is removed");
+        assert!(
+            lines.iter().any(|line| line.contains("kept the copies in")),
+            "{lines:?}"
         );
     }
 }
