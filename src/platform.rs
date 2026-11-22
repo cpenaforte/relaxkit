@@ -138,7 +138,7 @@ pub fn prerequisite_plan(os: Os, os_release: Option<&str>) -> PrereqPlan {
         return PrereqPlan::default();
     }
     let mut lines = vec!["install bubblewrap and socat with apt-get".to_string()];
-    let mut script = "apt-get install -y bubblewrap socat".to_string();
+    let mut script = "apt-get update && apt-get install -y bubblewrap socat".to_string();
     if os_release.is_some_and(needs_userns_profile) {
         lines.push(format!(
             "write the AppArmor profile {BWRAP_PROFILE_PATH} so bubblewrap may create user namespaces, then load it"
@@ -245,6 +245,19 @@ mod tests {
         assert!(script.contains("bubblewrap"), "{script}");
         assert!(script.contains("socat"), "{script}");
         assert!(!script.contains("apparmor_parser"), "{script}");
+    }
+
+    #[test]
+    fn prerequisite_plan_refreshes_the_apt_index_before_installing_in_the_same_sudo_call() {
+        // A fresh image has a stale index, so the install fails without an update first (spec 4 and 7: one prompt).
+        let plan = prerequisite_plan(Os::Linux, None);
+
+        assert_eq!(plan.sudo.iter().filter(|word| *word == "sudo").count(), 1);
+        assert_eq!(plan.sudo[..3], ["sudo", "sh", "-c"]);
+        let script = &plan.sudo[3];
+        let update = script.find("apt-get update").expect("an apt-get update");
+        let install = script.find("apt-get install").expect("an apt-get install");
+        assert!(update < install, "{script}");
     }
 
     #[test]
