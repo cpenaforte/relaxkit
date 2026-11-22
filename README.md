@@ -96,6 +96,14 @@ The telemetry switches relaxkit sets:
 - superpowers: `env.SUPERPOWERS_DISABLE_TELEMETRY = "1"` in Claude Code's settings, written by `setup` and `privacy`.
 - Claude Code: `env.DISABLE_TELEMETRY = "1"`, written only by `relaxkit privacy --claude-code`. relaxkit shows a warning first. That switch also stops feature-flag fetching, which removes synced claude.ai skills and plugins and may break Remote Control. relaxkit does not set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and never sets `DO_NOT_TRACK`.
 
+## Sandbox
+
+`setup` turns on Claude Code's sandbox for shell commands. Sandboxed commands run without asking, and a command fails when the sandbox cannot start rather than running without it. Network access is limited to a short list: GitHub, npm, PyPI and crates.io.
+
+The commands that change the machine run outside the sandbox: `setup`, `update`, `config`, `preset`, `privacy`, `login`, `undo`, `uninstall` and `doctor`, under both `relaxkit` and `rlx`. `status` stays inside. `gh` also runs outside the sandbox, as a single plain invocation. A `gh` call inside a pipe, a chain or after a `cd` stays sandboxed and cannot authenticate.
+
+On macOS, a route that runs `gh` inside the sandbox needs `sandbox.enableWeakerNetworkIsolation`, and that setting is a possible data path through the macOS trust service. That route is not used in this version, so relaxkit does not set the key. The OpenCode sandbox is not in this version yet.
+
 ## Platforms
 
 relaxkit runs on Linux and macOS. The install script supports macOS on Apple silicon and on Intel, and Linux on x86_64 and arm64 (musl builds). Windows is a possible future addition, depending on demand. It is not built.
