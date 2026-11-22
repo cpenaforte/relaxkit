@@ -558,13 +558,22 @@ argv = ["fixture", "--version"]
             claude_mcp,
             "serena claude entry must pass --context claude-code"
         );
-        let opencode_has_context =
-            serena.install.get(&HostKind::Opencode).unwrap().iter().any(
-                |s| matches!(s, Step::Mcp { argv, .. } if argv.iter().any(|a| a == "--context")),
-            );
-        assert!(
-            !opencode_has_context,
-            "serena opencode entry must use serena's default context"
+        let opencode_context = serena
+            .install
+            .get(&HostKind::Opencode)
+            .unwrap()
+            .iter()
+            .find_map(|s| match s {
+                Step::Mcp { argv, .. } => argv
+                    .windows(2)
+                    .find(|pair| pair[0] == "--context")
+                    .map(|pair| pair[1].clone()),
+                _ => None,
+            });
+        assert_eq!(
+            opencode_context.as_deref(),
+            Some("ide"),
+            "serena opencode entry must pass --context ide (ruling K9)"
         );
         assert_eq!(by_id("chrome-devtools").requires, ["playwright"]);
     }

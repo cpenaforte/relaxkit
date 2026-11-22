@@ -1,7 +1,7 @@
 # Serena runs in a relaxkit-owned directory under the data directory, never in a user project (controller ruling SA-1).
 # The pin lives in [version]. Updates reinstall (spike A I6), so an update mirrors install and reruns
 # `serena init`, which must be safe to run again. Not run here (serena is not installed); Task 12 checks it.
-# OpenCode has no confirmed context name, so its entry uses serena's default. Task 12 checks `serena start-mcp-server --help`.
+# OpenCode is a terminal client, so its entry uses `--context ide` (spec section 5.1, ruling K9). Task 12 checks `serena start-mcp-server --help`.
 id = "serena"
 title = "Serena"
 kind = "mcp"
@@ -29,7 +29,7 @@ handler = "serena_init"
 
 [[install.claude]]
 mcp = "serena"
-argv = ["serena", "start-mcp-server", "--project-from-cwd", "--enable-web-dashboard", "False", "--context", "claude-code"]
+argv = ["serena", "start-mcp-server", "--context", "claude-code", "--project-from-cwd", "--enable-web-dashboard", "False"]
 
 [[install.opencode]]
 exec = ["uv", "tool", "install", "-p", "3.13", "serena-agent=={version}"]
@@ -39,7 +39,7 @@ handler = "serena_init"
 
 [[install.opencode]]
 mcp = "serena"
-argv = ["serena", "start-mcp-server", "--project-from-cwd", "--enable-web-dashboard", "False"]
+argv = ["serena", "start-mcp-server", "--context", "ide", "--project-from-cwd", "--enable-web-dashboard", "False"]
 
 [[update.claude]]
 exec = ["uv", "tool", "install", "-p", "3.13", "serena-agent=={version}"]
@@ -49,7 +49,7 @@ handler = "serena_init"
 
 [[update.claude]]
 mcp = "serena"
-argv = ["serena", "start-mcp-server", "--project-from-cwd", "--enable-web-dashboard", "False", "--context", "claude-code"]
+argv = ["serena", "start-mcp-server", "--context", "claude-code", "--project-from-cwd", "--enable-web-dashboard", "False"]
 
 [[update.opencode]]
 exec = ["uv", "tool", "install", "-p", "3.13", "serena-agent=={version}"]
@@ -59,7 +59,7 @@ handler = "serena_init"
 
 [[update.opencode]]
 mcp = "serena"
-argv = ["serena", "start-mcp-server", "--project-from-cwd", "--enable-web-dashboard", "False"]
+argv = ["serena", "start-mcp-server", "--context", "ide", "--project-from-cwd", "--enable-web-dashboard", "False"]
 
 [probe.claude]
 argv = ["serena", "--help"]
