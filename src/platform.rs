@@ -132,9 +132,18 @@ pub struct PrereqPlan {
 pub const BWRAP_PROFILE_PATH: &str = "/etc/apparmor.d/relaxkit-bwrap";
 const BWRAP_PROFILE: &str = "abi <abi/4.0>,\ninclude <tunables/global>\nprofile relaxkit-bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n";
 
+/// Where the AppArmor profile is looked for. `RELAXKIT_APPARMOR_PROFILE` replaces the path, so the end-to-end test can
+/// stand a file in for the profile; an empty value is no override.
+fn profile_path_from(override_value: Option<std::ffi::OsString>) -> PathBuf {
+    match override_value.filter(|value| !value.is_empty()) {
+        Some(value) => PathBuf::from(value),
+        None => PathBuf::from(BWRAP_PROFILE_PATH),
+    }
+}
+
 /// Whether the AppArmor profile file is on disk. Read-only: relaxkit never writes it outside the sudo plan.
 pub fn apparmor_profile_present() -> bool {
-    std::path::Path::new(BWRAP_PROFILE_PATH).exists()
+    profile_path_from(std::env::var_os("RELAXKIT_APPARMOR_PROFILE")).exists()
 }
 
 /// Whether a plan writes the AppArmor profile, which only Ubuntu 24.04 and later need (spec 7).
@@ -238,6 +247,20 @@ mod tests {
     }
 
     const UBUNTU_2404: &str = "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n";
+
+    #[test]
+    fn the_profile_path_is_the_default_unless_the_override_is_set() {
+        assert_eq!(profile_path_from(None), PathBuf::from(BWRAP_PROFILE_PATH));
+        assert_eq!(
+            profile_path_from(Some("".into())),
+            PathBuf::from(BWRAP_PROFILE_PATH),
+            "an empty override is no override"
+        );
+        assert_eq!(
+            profile_path_from(Some("/stand-in/relaxkit-bwrap".into())),
+            PathBuf::from("/stand-in/relaxkit-bwrap")
+        );
+    }
 
     #[test]
     fn prerequisite_plan_on_macos_is_empty() {

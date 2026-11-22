@@ -12,9 +12,11 @@ use std::process::Stdio;
 
 use tempfile::TempDir;
 
-/// Host commands relaxkit may call. Each is a stub that logs its argv.
-pub const STUBS: [&str; 11] = [
+/// Host commands relaxkit may call. Each is a stub that logs its argv. `bwrap` and `socat` are the Linux sandbox packages:
+/// on the PATH they count as installed, so no test depends on what the machine has.
+pub const STUBS: [&str; 13] = [
     "claude", "opencode", "gh", "brew", "uv", "rtk", "npm", "npx", "serena", "caveman", "sudo",
+    "bwrap", "socat",
 ];
 
 /// The Chromium executable inside a `chromium-<revision>` directory, as Playwright lays it out on each OS.
