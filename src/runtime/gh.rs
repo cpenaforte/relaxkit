@@ -114,18 +114,19 @@ fn ensure_gh_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<GhInstall
             owned_by_pack,
         });
     }
-    // A link at the pack path is never the pack copy and is never written through, not even by an install (K84, F8-1).
-    if is_link(&bin) {
-        bail!(
-            "the pack path {} is a link; relaxkit does not write through it",
-            bin.display()
-        );
-    }
     if is_executable(&bin) {
         return Ok(GhInstall {
             path: bin,
             owned_by_pack: true,
         });
+    }
+    // A dangling link, or a link to a file that is not executable, is where an install would write through it: it is
+    // refused before any download or write (K84, F8-1). A link to an executable gh is used as present above (K90).
+    if is_link(&bin) {
+        bail!(
+            "the pack path {} is a link; relaxkit does not write through it",
+            bin.display()
+        );
     }
     if ctx.dry_run {
         ctx.out
@@ -403,6 +404,74 @@ mod tests {
         assert!(
             runner.lines().iter().all(|line| !line.starts_with("tar")),
             "an unverified archive was extracted: {:?}",
+            runner.lines()
+        );
+    }
+
+    #[test]
+    fn a_link_to_a_working_gh_is_used_as_present_with_no_write_and_no_entry() {
+        // The link points at an executable gh and dirs.bin is not on the PATH: it is used as the present copy, with no
+        // download, no write, and no lock entry (K90, F9-1).
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("elsewhere").join("gh");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "#!/bin/sh\necho gh\n").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        let bin = KitDirs::rooted(root.path()).bin;
+        fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(&target, bin.join("gh")).unwrap();
+        let before_mode = fs::metadata(&target).unwrap().permissions().mode();
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let run = RunId::new();
+
+        let gh = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap();
+        record_pack_copy(&ctx, &run, &gh).unwrap();
+
+        assert_eq!(
+            gh,
+            GhInstall {
+                path: bin.join("gh"),
+                owned_by_pack: true,
+            }
+        );
+        assert!(
+            runner.lines().iter().all(|line| !line.starts_with("tar")),
+            "{:?}",
+            runner.lines()
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "#!/bin/sh\necho gh\n");
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode(),
+            before_mode,
+            "the target's mode changed"
+        );
+        assert!(
+            lock_in(&ctx).is_none(),
+            "a link to a working gh was recorded"
+        );
+    }
+
+    #[test]
+    fn a_dangling_link_at_the_pack_path_is_refused_before_any_download() {
+        // The install would write through the link into a path that does not exist, so it is refused (K90, F9-1).
+        let root = tempfile::tempdir().unwrap();
+        let bin = KitDirs::rooted(root.path()).bin;
+        fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(root.path().join("missing").join("gh"), bin.join("gh")).unwrap();
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+
+        let err = ensure_gh_for(&ctx, &RunId::new(), Os::Linux, Arch::X86_64).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("is a link; relaxkit does not write through it"),
+            "{err:#}"
+        );
+        assert!(
+            runner.lines().iter().all(|line| !line.starts_with("tar")),
+            "{:?}",
             runner.lines()
         );
     }
