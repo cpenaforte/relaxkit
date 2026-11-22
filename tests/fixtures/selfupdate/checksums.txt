@@ -1,0 +1,4 @@
+390f80675797bdb6592a60ab340edd7e0920d899e24abb69b1b09de6b18927f7  relaxkit-9.9.9-aarch64-apple-darwin.tar.gz
+390f80675797bdb6592a60ab340edd7e0920d899e24abb69b1b09de6b18927f7  relaxkit-9.9.9-x86_64-apple-darwin.tar.gz
+390f80675797bdb6592a60ab340edd7e0920d899e24abb69b1b09de6b18927f7  relaxkit-9.9.9-x86_64-unknown-linux-musl.tar.gz
+390f80675797bdb6592a60ab340edd7e0920d899e24abb69b1b09de6b18927f7  relaxkit-9.9.9-aarch64-unknown-linux-musl.tar.gz

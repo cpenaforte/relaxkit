@@ -16,13 +16,14 @@ pub mod recipe;
 pub mod roles;
 pub mod runtime;
 pub mod sandbox;
+pub mod selfupdate;
 pub mod state;
 pub mod tools;
 
 use anyhow::{Result, anyhow};
 
 use cli::{Cli, Command};
-use ctx::Ctx;
+use ctx::{Ctx, Reporter};
 use runtime::nvm::NvmSearch;
 
 /// Runs a parsed command and returns the process exit code. Each handler is a stub until its task lands.
@@ -71,14 +72,46 @@ pub fn run(cli: Cli) -> Result<i32> {
             check,
             tool,
         } => {
+            let mut ctx = Ctx::system(cli.dry_run, None, false)?;
+            // The self step runs first for a plain update and for `--self` (K92). Its text is held apart, so that
+            // `--json` keeps stdout a JSON document.
+            let self_step = self_only || (tool.is_none() && !tools_only);
+            let mut self_lines = Vec::new();
+            let mut self_failed = false;
+            // True when a swapped binary already ran the tool phase (K96), so this process must not run it again.
+            let mut tools_done_by_new_binary = false;
+            if self_step {
+                let tools_out = std::mem::replace(&mut ctx.out, Reporter::capture());
+                let outcome = selfupdate::run(&ctx, check);
+                let captured = ctx.out.lines();
+                ctx.out = tools_out;
+                match outcome {
+                    Ok(result) => {
+                        self_lines.push(selfupdate::row(&result));
+                        tools_done_by_new_binary =
+                            matches!(result, selfupdate::SelfUpdate::Updated { .. });
+                    }
+                    Err(err) => {
+                        self_failed = true;
+                        self_lines.push(format!("relaxkit itself: failed: {err:#}"));
+                    }
+                }
+                self_lines.extend(captured);
+            }
+            for line in &self_lines {
+                if cli.json {
+                    eprintln!("{line}");
+                } else {
+                    ctx.out.info(line);
+                }
+            }
             if self_only {
-                return Err(anyhow!("relaxkit's own update is built in a later step"));
+                return Ok(if self_failed { 1 } else { 0 });
             }
-            let ctx = Ctx::system(cli.dry_run, None, false)?;
-            // A plain update says that the self step comes first and is not built yet (ruling K63).
-            if tool.is_none() && !tools_only {
-                ctx.out.info("relaxkit itself: updated in a later step");
+            if tools_done_by_new_binary {
+                return Ok(0);
             }
+            // A failed self step does not stop the tool phase, which runs with the current binary (K92).
             let args = commands::update::UpdateArgs { check, tool };
             let report = commands::update::run(&ctx, &args, &NvmSearch::from_env())?;
             if cli.json {
@@ -88,7 +121,11 @@ pub fn run(cli: Cli) -> Result<i32> {
                     ctx.out.info(&line);
                 }
             }
-            Ok(if report.failed.is_empty() { 0 } else { 1 })
+            Ok(if self_failed || !report.failed.is_empty() {
+                1
+            } else {
+                0
+            })
         }
         Command::Config(_)
         | Command::Preset { .. }
