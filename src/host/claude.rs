@@ -24,9 +24,15 @@ impl ClaudeHost {
         ClaudeHost { info, dir, state }
     }
 
-    /// Every user file a native Claude command may rewrite.
+    /// Every user file a native Claude command may rewrite: settings, state, and the plugin registry
+    /// (spike A2 lists the two registry files as written by `claude plugin`).
     fn edited_files(&self) -> Vec<PathBuf> {
-        vec![self.dir.join("settings.json"), self.state.clone()]
+        vec![
+            self.dir.join("settings.json"),
+            self.state.clone(),
+            self.dir.join("plugins").join("known_marketplaces.json"),
+            self.dir.join("plugins").join("installed_plugins.json"),
+        ]
     }
 }
 
@@ -297,6 +303,28 @@ mod tests {
                 .iter()
                 .any(|l| l.contains("would run claude plugin install"))
         );
+    }
+
+    #[test]
+    fn claude_plugin_registry_files_are_backed_up() {
+        use crate::state::journal;
+        let root = tempfile::tempdir().unwrap();
+        let registry = root.path().join(".claude/plugins");
+        fs::create_dir_all(&registry).unwrap();
+        fs::write(registry.join("known_marketplaces.json"), "{}").unwrap();
+        fs::write(registry.join("installed_plugins.json"), "{}").unwrap();
+        let fake = FakeRunner::new().reply("claude plugin", Output::ok(""));
+        let c = ctx(root.path(), &fake);
+        host(root.path())
+            .plugin_install(&c, "caveman@caveman")
+            .unwrap();
+        let journaled: Vec<PathBuf> = journal::read(&c.dirs)
+            .unwrap()
+            .into_iter()
+            .map(|record| record.file)
+            .collect();
+        assert!(journaled.contains(&registry.join("known_marketplaces.json")));
+        assert!(journaled.contains(&registry.join("installed_plugins.json")));
     }
 
     #[test]

@@ -7,7 +7,7 @@ pub mod opencode;
 use std::env;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use semver::Version;
@@ -15,7 +15,7 @@ use semver::Version;
 use crate::ctx::Ctx;
 use crate::edit::jsonc_get;
 use crate::exec::{Cmd, Output};
-use crate::state::safe_write;
+use crate::state::{EditRecord, journal, safe_write};
 
 pub use kind::HostKind;
 
@@ -171,6 +171,7 @@ pub(crate) fn edit_guarded(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<Ou
     let mut modes = Vec::new();
     for file in files {
         let Ok(meta) = fs::metadata(file) else {
+            journal_creation(ctx, file)?;
             continue;
         };
         let text =
@@ -184,6 +185,31 @@ pub(crate) fn edit_guarded(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<Ou
             .with_context(|| format!("cannot restore the mode of {}", file.display()))?;
     }
     result
+}
+
+/// Journals a file that is absent before a command, as created, with no backup. If the command creates it,
+/// undo removes it again. A symlink is left alone, because undo refuses to touch one.
+fn journal_creation(ctx: &Ctx, file: &Path) -> Result<()> {
+    if file.is_symlink() {
+        return Ok(());
+    }
+    let target = std::path::absolute(file)
+        .with_context(|| format!("cannot make {} absolute", file.display()))?;
+    let journaled = journal::read(&ctx.dirs)?
+        .iter()
+        .any(|record| record.run == ctx.run && record.file == target);
+    if journaled {
+        return Ok(());
+    }
+    journal::append(
+        &ctx.dirs,
+        &EditRecord {
+            run: ctx.run.clone(),
+            file: target,
+            backup: None,
+            created: true,
+        },
+    )
 }
 
 /// `edit_guarded` for a command that must succeed. A non-zero exit is an error with its stderr.
@@ -389,6 +415,26 @@ mod tests {
             assert_eq!(mcp_argv(&map[&HostKind::Claude]).join(" "), want_claude);
             assert_eq!(mcp_argv(&map[&HostKind::Opencode]).join(" "), want_opencode);
         }
+    }
+
+    #[test]
+    fn a_file_a_command_creates_is_journaled_and_undo_removes_it() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = root.path().join(".claude/settings.json");
+        let mut ctx = ctx_with(root.path(), &FakeRunner::new());
+        ctx.runner = Box::new(Writing {
+            inner: FakeRunner::new().reply("claude plugin", Output::ok("")),
+            effects: vec![("claude plugin install", settings.clone(), "{}")],
+        });
+        let host = claude::ClaudeHost::new(
+            info(HostKind::Claude, "2.1.330"),
+            root.path().join(".claude"),
+            root.path().join(".claude.json"),
+        );
+        host.plugin_install(&ctx, "caveman@caveman").unwrap();
+        assert!(settings.exists());
+        undo(&ctx, None).unwrap();
+        assert!(!settings.exists(), "undo left a file the command created");
     }
 
     #[test]
