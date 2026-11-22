@@ -327,17 +327,19 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             let Some((program, args)) = probe.argv.split_first() else {
                 continue;
             };
-            if program.starts_with('{') {
-                checks.push(Check::ok(
-                    &check_id,
-                    "not run: its program is set at install time",
-                ));
-                continue;
-            }
             let shown = std::iter::once(program.as_str())
                 .chain(args.iter().map(String::as_str))
                 .collect::<Vec<_>>()
                 .join(" ");
+            if program.starts_with('{') {
+                // Not run is never an ok: the probe is unverified until someone runs it (ruling Important item 6).
+                checks.push(Check::warn(
+                    &check_id,
+                    "not run: its program is set at install time",
+                    format!("doctor does not run this probe; run `{shown}` yourself to check it"),
+                ));
+                continue;
+            }
             let Some(path) = probe_program(ctx, program) else {
                 checks.push(Check::fail(
                     &check_id,

@@ -320,14 +320,6 @@ fn verify_step(ctx: &Ctx, hosts: &[Box<dyn Host>], report: &mut SetupReport) -> 
         count(CheckStatus::Warn),
         count(CheckStatus::Fail),
     );
-    report.say(
-        ctx,
-        "verify",
-        format!(
-            "doctor ran {} checks: {ok} ok, {warn} warn, {fail} fail",
-            checks.len()
-        ),
-    );
     for check in checks
         .iter()
         .filter(|check| check.status != CheckStatus::Ok)
@@ -348,6 +340,15 @@ fn verify_step(ctx: &Ctx, hosts: &[Box<dyn Host>], report: &mut SetupReport) -> 
             ),
         );
     }
+    // The summary is the last line of the step.
+    report.say(
+        ctx,
+        "verify",
+        format!(
+            "doctor ran {} checks: {ok} ok, {warn} warn, {fail} fail",
+            checks.len()
+        ),
+    );
     Ok(fail > 0)
 }
 

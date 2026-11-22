@@ -445,6 +445,24 @@ fn doctor_treats_an_unreachable_registry_as_health_unknown() {
 }
 
 #[test]
+fn doctor_warns_when_a_probe_is_not_run() {
+    // Playwright's probe starts with `{npx}`, which doctor does not run. Not running it is a warn, never an ok
+    // (ruling Important item 6).
+    let root = tempfile::tempdir().unwrap();
+    lock(root.path(), &[("playwright", "0.0.86", "npm", &["claude"])]);
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &[claude(root.path())],
+    )
+    .unwrap();
+
+    let probe = find(&checks, "tool.playwright.claude");
+    assert_eq!(probe.status, CheckStatus::Warn, "{probe:?}");
+    assert!(probe.message.contains("not run"), "{probe:?}");
+}
+
+#[test]
 fn doctor_exits_nonzero_when_a_check_fails() {
     let scratch = Scratch::claude_only();
     fs::create_dir_all(scratch.home().join(".claude")).unwrap();
