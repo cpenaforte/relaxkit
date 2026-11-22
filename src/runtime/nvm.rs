@@ -13,13 +13,37 @@ use crate::runtime::{download_verified, utf8};
 use crate::state::RunId;
 
 /// The profile files nvm's installer may append to. Each is backed up and journaled before the install.
-const PROFILE_FILES: [&str; 4] = [".zshrc", ".bashrc", ".bash_profile", ".profile"];
+const PROFILE_FILES: [&str; 5] = [
+    ".zshrc",
+    ".zprofile",
+    ".bashrc",
+    ".bash_profile",
+    ".profile",
+];
 
 /// Whether the installer may edit the shell profile. Only a first install may.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ProfileMode {
-    Edit,
+    /// The first install may edit these files, after each is backed up and journaled.
+    Edit(Vec<PathBuf>),
     Untouched,
+}
+
+/// Every shell profile nvm's installer may edit: `$ZDOTDIR/.zshrc` when set, then the home files.
+fn profile_candidates(ctx: &Ctx, search: &NvmSearch) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = search
+        .zdotdir
+        .iter()
+        .map(|dir| dir.join(".zshrc"))
+        .collect();
+    files.extend(PROFILE_FILES.iter().map(|name| ctx.dirs.home.join(name)));
+    let mut unique: Vec<PathBuf> = Vec::new();
+    for file in files {
+        if !unique.contains(&file) {
+            unique.push(file);
+        }
+    }
+    unique
 }
 
 /// The nvm release whose installer relaxkit runs. Pinned by owner decision O8.
@@ -56,6 +80,8 @@ pub struct NvmSearch {
     pub nvm_dir: Option<PathBuf>,
     pub xdg_config_home: Option<PathBuf>,
     pub brew_prefixes: Vec<PathBuf>,
+    /// `ZDOTDIR`, whose `.zshrc` nvm may edit. Unset means no extra candidate.
+    pub zdotdir: Option<PathBuf>,
     /// The SHA-256 the nvm installer must match. Empty matches nothing, so a search built by hand fails closed.
     pub installer_sha256: String,
 }
@@ -70,6 +96,9 @@ impl NvmSearch {
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from),
             brew_prefixes: BREW_PREFIXES.iter().map(PathBuf::from).collect(),
+            zdotdir: std::env::var_os("ZDOTDIR")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from),
             installer_sha256: NVM_INSTALL_SHA256.to_string(),
         }
     }
@@ -125,7 +154,7 @@ pub fn ensure_nvm_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NvmIn
         ctx,
         run,
         &target,
-        ProfileMode::Edit,
+        ProfileMode::Edit(profile_candidates(ctx, search)),
         &search.installer_sha256,
     )?;
     let out = ctx.runner.run(&nvm_cmd(&target, "command -v nvm")?)?;
@@ -180,13 +209,7 @@ fn run_installer(
         .arg(utf8(&installer)?)
         .env("NVM_DIR", utf8(&nvm.dir)?);
     match mode {
-        ProfileMode::Edit => {
-            let profiles: Vec<PathBuf> = PROFILE_FILES
-                .iter()
-                .map(|name| ctx.dirs.home.join(name))
-                .collect();
-            run_edit(ctx, &profiles, &cmd)
-        }
+        ProfileMode::Edit(profiles) => run_edit(ctx, &profiles, &cmd),
         ProfileMode::Untouched => {
             let cmd = cmd.env("PROFILE", "/dev/null");
             let out = ctx.runner.run(&cmd)?;
@@ -405,6 +428,7 @@ mod tests {
             xdg_config_home: Some(xdg.clone()),
             brew_prefixes: vec![brew.clone()],
             installer_sha256: String::new(),
+            zdotdir: None,
         };
         nvm_at(&custom);
         nvm_at(&home);
@@ -635,6 +659,55 @@ mod tests {
             "the installer ran: {:?}",
             runner.lines()
         );
+    }
+
+    #[test]
+    fn every_profile_nvm_may_edit_is_backed_up() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let zdot = home.join("zdot");
+        write(&zdot.join(".zshrc"), "zdot zshrc\n");
+        write(&home.join(".zprofile"), "zprofile\n");
+        node_at(home, "v24.22.3");
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .reply("bash /", Output::ok(""))
+                .reply(
+                    &format!(
+                        "bash -c '. \"{}/.nvm/nvm.sh\" && command -v nvm'",
+                        home.display()
+                    ),
+                    Output::ok("nvm\n"),
+                )
+                .reply(
+                    &install_prefix(home),
+                    Output::ok("Downloading and installing node v24.22.3...\n"),
+                ),
+        );
+        let ctx = ctx_with(home, &runner, net_with_installer(INSTALLER));
+        let search = NvmSearch {
+            zdotdir: Some(zdot.clone()),
+            ..pinned()
+        };
+
+        ensure_node_in(&ctx, &RunId::new(), &search).unwrap();
+
+        let records = journal::read(&ctx.dirs).unwrap();
+        let backup_text = |file: PathBuf| {
+            let record = records
+                .iter()
+                .find(|record| record.file == file)
+                .unwrap_or_else(|| panic!("{} is not journaled", file.display()));
+            fs::read_to_string(
+                record
+                    .backup
+                    .as_ref()
+                    .expect("an existing file has a backup"),
+            )
+            .unwrap()
+        };
+        assert_eq!(backup_text(zdot.join(".zshrc")), "zdot zshrc\n");
+        assert_eq!(backup_text(home.join(".zprofile")), "zprofile\n");
     }
 
     #[test]
