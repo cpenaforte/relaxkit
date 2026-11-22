@@ -185,6 +185,8 @@ fn configure(
                 claude::apply_privacy_env(ctx, run, host.as_ref())?;
             }
             HostKind::Opencode => {
+                // An unreadable `plugins` entry stops here, before any OpenCode file is written (ruling R6-1).
+                host.plugin_list(ctx)?;
                 let available = opencode_models(ctx, host.as_ref());
                 opencode::apply_roles(ctx, run, host.as_ref(), &config, &available)?;
             }

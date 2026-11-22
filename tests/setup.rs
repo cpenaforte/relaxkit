@@ -540,10 +540,10 @@ fn a_listed_plugin_whose_cli_is_missing_gets_its_cli_installed_and_no_plugin_ins
 }
 
 #[test]
-fn an_unreadable_opencode_plugins_entry_is_reported_and_never_repaired() {
-    // R5-1: an OpenCode `plugins` entry that is not a list is never repaired: no `opencode plugin add` runs, the file
-    // keeps its bytes, and the run exits 1. The OpenCode sandbox step reads the same key first and stops the run there,
-    // so verify (and its repair) is not reached; the doctor test and the repair_for unit test cover that path.
+fn an_unreadable_opencode_plugins_entry_stops_setup_before_any_write() {
+    // R6-1: an OpenCode `plugins` entry that is not a list stops configure before any OpenCode file is written. The
+    // config file and AGENTS.md keep their bytes, no `opencode plugin` call runs, nothing is repaired, and the run
+    // exits 1 with the read error.
     let scratch = Scratch::new();
     // Every recipe is locked on every host it names, so setup's install step has nothing to do.
     let mut lock = String::from("relaxkit = \"0.1.0\"\n");
@@ -590,6 +590,9 @@ fn an_unreadable_opencode_plugins_entry_is_reported_and_never_repaired() {
     fs::create_dir_all(config.parent().unwrap()).unwrap();
     let broken = "{\"plugins\": \"x\", \"mcp\": {\"servers\": {\"serena\": {}, \"chrome-devtools\": {}, \"playwright\": {}}}}\n";
     fs::write(&config, broken).unwrap();
+    let agents = scratch.home().join(".config/opencode/AGENTS.md");
+    let notes = "# my notes\n";
+    fs::write(&agents, notes).unwrap();
     scratch.clear_calls();
 
     let output = scratch.relaxkit().arg("setup").assert().code(1);
@@ -598,9 +601,8 @@ fn an_unreadable_opencode_plugins_entry_is_reported_and_never_repaired() {
     let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();
     assert!(stderr.contains("is not a list"), "{stderr}");
     assert!(!text.contains("repaired"), "{text}");
-    // Configure writes its own blocks into this file before the sandbox step stops; the plugins value is what must hold.
-    let after = fs::read_to_string(&config).unwrap();
-    assert!(after.contains("\"plugins\": \"x\""), "{after}");
+    assert_eq!(fs::read_to_string(&config).unwrap(), broken);
+    assert_eq!(fs::read_to_string(&agents).unwrap(), notes);
     let calls = scratch.calls();
     assert!(
         calls
