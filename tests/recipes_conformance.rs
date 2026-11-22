@@ -897,7 +897,10 @@ fn a_failed_add_of_the_official_marketplace_names_the_marketplace() {
     );
     let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
     let err = format!("{:#}", result.unwrap_err());
-    assert!(err.contains("claude-plugins-official"), "{err}");
+    assert!(
+        err.contains("cannot add the `claude-plugins-official` marketplace"),
+        "{err}"
+    );
     assert!(
         calls
             .iter()
