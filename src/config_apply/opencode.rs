@@ -13,7 +13,7 @@ use crate::config::{KitConfig, effective};
 use crate::ctx::Ctx;
 use crate::edit::{block_remove, block_upsert, jsonc_get, jsonc_remove, jsonc_restore, jsonc_set};
 use crate::host::{Host, HostKind};
-use crate::roles::{Role, Tier, family_version, resolve_opencode, tier_of};
+use crate::roles::{Role, RoleSetting, Tier, family_version, resolve_opencode, tier_of};
 use crate::state::{OriginalText, RunId, original_text, safe_write};
 
 /// The managed block in AGENTS.md that routes each kind of prompt to its agent.
@@ -80,14 +80,14 @@ pub fn apply_roles(
     for (id, role, description) in SUBAGENTS {
         text = jsonc_set(&text, &["agents", id, "mode"], &json!("subagent"))?;
         text = jsonc_set(&text, &["agents", id, "description"], &json!(description))?;
-        text = set_model(
-            &text,
-            id,
-            resolve_opencode(&effective(config, role), available),
-        )?;
+        text = set_model(&text, id, &effective(config, role), available)?;
     }
-    let planner = resolve_opencode(&effective(config, Role::Planner), available);
-    text = set_model(&text, PLANNER_AGENT, planner)?;
+    text = set_model(
+        &text,
+        PLANNER_AGENT,
+        &effective(config, Role::Planner),
+        available,
+    )?;
     write_if_changed(ctx, run, &path, &old, &text)?;
 
     let agents_path = host.instructions_file(ctx);
@@ -99,10 +99,13 @@ pub fn apply_roles(
 /// The routing sentences. Each names one prompt kind and the agent that takes it.
 pub const ROUTING_TEXT: &str = "When you dispatch a subagent, pick its agent by the prompt: implementer prompts go to the `implementer` agent; review prompts go to the `reviewer` agent; fix-loop rounds 4 to 5 go to the `implementer-escalated` agent; the final whole-branch review goes to the `reviewer-final` agent. Planning runs in the main session with the `plan` agent. These model choices are set by relaxkit's configuration.";
 
-/// Sets `agents.<id>.model`, or removes it when there is no model, so the agent inherits the host default.
-fn set_model(text: &str, id: &str, model: Option<String>) -> Result<String> {
-    match model {
+/// Sets `agents.<id>.model` to the model the setting resolves to. With no listed models the setting cannot resolve, so
+/// the key is left as it is (K122). Otherwise a setting with no model removes the key, and the agent inherits the host
+/// default.
+fn set_model(text: &str, id: &str, setting: &RoleSetting, available: &[String]) -> Result<String> {
+    match resolve_opencode(setting, available) {
         Some(model) => jsonc_set(text, &["agents", id, "model"], &json!(model)),
+        None if available.is_empty() => Ok(text.to_string()),
         None => jsonc_remove(text, &["agents", id, "model"]),
     }
 }
@@ -179,9 +182,9 @@ fn key_restores(
     id: &str,
     key: &str,
 ) -> Result<bool> {
-    // K122 follows in F23-19: an absent model is not restored either. Until then only model is restored from absent.
+    // K122: relaxkit never removes a model key itself, so an absent key was removed by the owner and stays absent.
     let Some(current) = jsonc_get(text, &["agents", id, key])? else {
-        return Ok(key == "model");
+        return Ok(false);
     };
     if let Some(expected) = written_value(config, available, id, key) {
         return Ok(current == expected);
@@ -787,9 +790,8 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_model_key_is_restored_to_the_original_when_the_list_was_unreadable_at_setup() {
-        // F23-16 / K121 (c): setup removed the user's model while the list was empty; uninstall, with a readable list,
-        // puts it back.
+    fn an_absent_model_key_stays_absent_through_unset() {
+        // F23-19 / K122 (c): relaxkit never removes a model key itself, so a key the owner removed stays absent.
         let root = tempfile::tempdir().unwrap();
         let before = jsonc_set(
             FIXTURE,
@@ -801,13 +803,64 @@ mod tests {
         let host = opencode(root.path());
         let ctx = ctx(root.path());
         apply_roles(&ctx, &RunId::new(), &host, &balanced(), &[]).unwrap();
-        assert_eq!(plan_model(&read(&config_path(root.path()))), None);
+        let by_hand = jsonc_remove(
+            &read(&config_path(root.path())),
+            &["agents", "plan", "model"],
+        )
+        .unwrap();
+        fs::write(config_path(root.path()), &by_hand).unwrap();
 
         unset_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+
+        assert_eq!(plan_model(&read(&config_path(root.path()))), None);
+    }
+
+    #[test]
+    fn an_unreadable_list_leaves_the_user_model_as_it_is_at_setup() {
+        // F23-19 / K122 (a): with no list, a tier cannot be resolved, so the existing model key is not touched.
+        let root = tempfile::tempdir().unwrap();
+        let before = jsonc_set(
+            FIXTURE,
+            &["agents", "plan", "model"],
+            &json!("anthropic/claude-sonnet-5-5"),
+        )
+        .unwrap();
+        seed(root.path(), &before);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+
+        apply_roles(&ctx, &RunId::new(), &host, &balanced(), &[]).unwrap();
 
         assert_eq!(
             plan_model(&read(&config_path(root.path()))),
             Some(json!("anthropic/claude-sonnet-5-5"))
+        );
+    }
+
+    #[test]
+    fn an_empty_version_is_not_the_family_so_the_model_stays_through_unset() {
+        // F23-20: `claude-sonnet-latest` has no version, so it is not a sonnet id relaxkit would have written.
+        let root = tempfile::tempdir().unwrap();
+        seed(root.path(), FIXTURE);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+        apply_roles(&ctx, &RunId::new(), &host, &balanced(), &[]).unwrap();
+        let by_hand = jsonc_set(
+            &read(&config_path(root.path())),
+            &["agents", "reviewer", "model"],
+            &json!("anthropic/claude-sonnet-latest"),
+        )
+        .unwrap();
+        fs::write(config_path(root.path()), &by_hand).unwrap();
+
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &[]).unwrap();
+
+        assert_eq!(
+            get(
+                &read(&config_path(root.path())),
+                &["agents", "reviewer", "model"]
+            ),
+            Some(json!("anthropic/claude-sonnet-latest"))
         );
     }
 

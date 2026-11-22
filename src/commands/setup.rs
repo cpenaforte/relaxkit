@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use anyhow::{Result, bail};
 
 use crate::commands::doctor::{self, Check, CheckStatus};
-use crate::config::KitConfig;
+use crate::config::{KitConfig, effective};
 use crate::config_apply::{claude, opencode, voice};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
@@ -16,6 +16,7 @@ use crate::platform::{
     PrereqPlan, apparmor_profile_present, is_executable, plan_needs_apparmor_profile,
 };
 use crate::recipe::{Recipe, load_all};
+use crate::roles::{Role, RoleSetting};
 use crate::runtime::{gh, nvm, uv};
 use crate::sandbox::{self, GhPath};
 use crate::state::lockfile::Lockfile;
@@ -199,6 +200,9 @@ fn configure(
                 let available = opencode_models(ctx, host.as_ref());
                 let own = config.for_host(HostKind::Opencode);
                 opencode::apply_roles(ctx, run, host.as_ref(), &own, &available)?;
+                if let Some(note) = unapplied_tiers_note(&own, &available) {
+                    ctx.out.warn(&note);
+                }
             }
         }
     }
@@ -212,6 +216,21 @@ fn configure(
         ),
     );
     Ok(())
+}
+
+/// The line setup prints when OpenCode's model list is unreadable and a tier role therefore was not applied (K122).
+/// Pins need no list, so only tier roles count.
+pub fn unapplied_tiers_note(own: &KitConfig, available: &[String]) -> Option<String> {
+    if !available.is_empty() {
+        return None;
+    }
+    let tiers = Role::ALL
+        .iter()
+        .filter(|role| matches!(effective(own, **role), RoleSetting::Tier(_)))
+        .count();
+    (tiers > 0).then(|| {
+        "OpenCode's model list could not be read, so the tier roles were not applied; their models stay as they are until the next setup run".to_string()
+    })
 }
 
 /// The OpenCode models the roles can map onto. A host that cannot list them yields none, so each agent inherits
@@ -652,5 +671,16 @@ mod tests {
         let line = sudo_step(&ctx, &plan).unwrap();
         assert!(line.contains("apparmor_parser"), "{line}");
         assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    #[test]
+    fn an_unreadable_model_list_with_a_tier_role_prints_the_not_applied_line() {
+        // F23-19 / K122 (a): the tier was not applied, and the line says so; a readable list prints nothing.
+        let config = KitConfig::default();
+        let note = unapplied_tiers_note(&config, &[]).expect("a tier role is left unapplied");
+        assert!(note.contains("not applied"), "{note}");
+        assert!(
+            unapplied_tiers_note(&config, &["anthropic/claude-sonnet-5-5".to_string()]).is_none()
+        );
     }
 }
