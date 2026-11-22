@@ -144,8 +144,12 @@ impl<'a> Engine<'a> {
             else {
                 return Ok(None);
             };
-            // OpenCode wiring has no plugin spec to pin, so the version is the one the config reports.
-            let version = found.version.unwrap_or_else(|| UNVERSIONED.to_string());
+            // A pinned npm or binary tool keeps its pin when the config reports no version. Only a plugin spec with no
+            // pin of its own is left unversioned.
+            let version = found
+                .version
+                .or_else(|| recipe.pin.clone())
+                .unwrap_or_else(|| UNVERSIONED.to_string());
             let route = match recipe.kind {
                 Kind::Npm => Route::Npm,
                 Kind::Binary => Route::Script,
@@ -782,8 +786,12 @@ exec = ["caveman", "telemetry", "off"]
     }
 
     /// The OpenCode fixture: EXEC_FIXTURE retargeted at OpenCode.
+    fn opencode_fixture_text() -> String {
+        EXEC_FIXTURE.replace("claude", "opencode")
+    }
+
     fn opencode_fixture() -> Recipe {
-        fixture(&EXEC_FIXTURE.replace("claude", "opencode"))
+        fixture(&opencode_fixture_text())
     }
 
     #[test]
@@ -899,6 +907,45 @@ exec = ["caveman", "telemetry", "off"]
         let lock = Lockfile::load(&ctx).unwrap().unwrap();
         assert_eq!(lock.tools["rtk"].version, "1.1.0");
         assert_eq!(lock.tools["rtk"].route, "brew");
+    }
+
+    #[test]
+    fn a_pinned_npm_or_binary_tool_on_opencode_locks_its_pin_when_the_config_reports_no_version() {
+        for (kind, route) in [("npm", Route::Npm), ("binary", Route::Script)] {
+            let root = tempfile::tempdir().unwrap();
+            let config = root.path().join(".config/opencode/opencode.jsonc");
+            std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+            // The config names the tool with no version, so the wiring branch is what adopts it.
+            std::fs::write(&config, "{\"plugins\": [\"fixture\"]}\n").unwrap();
+            let recipe = fixture(
+                &opencode_fixture_text().replace("kind = \"npm\"", &format!("kind = \"{kind}\"")),
+            );
+            let runner = Recorder::new(
+                FakeRunner::new()
+                    .reply("rtk telemetry disable", Output::ok(""))
+                    .reply("caveman telemetry off", Output::ok("")),
+            );
+            let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+            let hosts = vec![opencode(root.path())];
+            let node_install = node(root.path());
+            let recipes = vec![];
+            let eng = engine(&ctx, &hosts, &recipes, &node_install);
+
+            let outcomes = eng.install(&recipe).unwrap();
+
+            assert!(
+                outcomes.contains(&(
+                    HostKind::Opencode,
+                    Outcome::Adopted {
+                        version: "1.2.3".to_string(),
+                        route: route.clone()
+                    }
+                )),
+                "{kind}: {outcomes:?}"
+            );
+            let lock = Lockfile::load(&ctx).unwrap().unwrap();
+            assert_eq!(lock.tools["fixture"].version, "1.2.3", "{kind}");
+        }
     }
 
     #[test]
