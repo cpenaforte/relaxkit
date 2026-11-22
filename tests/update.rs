@@ -863,6 +863,33 @@ fn repair_re_adds_the_mcp_entry_at_the_locked_version_not_the_pin() {
 }
 
 #[test]
+fn rtk_below_its_minimum_host_is_not_touched_and_its_lock_stays() {
+    // Claude 2.1.300 is below rtk's minimum (2.1.330), so no host is updated: the row is "not touched", and the
+    // lock keeps its route and version (the update must not record a move that did not happen).
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    fx.hosts = vec![Box::new(ClaudeHost::new(
+        HostInfo {
+            kind: HostKind::Claude,
+            binary: PathBuf::from("/usr/local/bin/claude"),
+            version: "2.1.300".to_string(),
+        },
+        root.join(".claude"),
+        root.join(".claude.json"),
+    ))];
+    fx.lock(&[("rtk", "1.1.0", "script", &["claude"])]);
+    let before = fx.read_lock().tools["rtk"].clone();
+    serve_rtk(&fx);
+
+    let report = fx.run(false, Some("rtk")).unwrap();
+
+    let rtk = row(&report, "rtk");
+    assert!(matches!(rtk.result, RowResult::NotTouched(_)), "{rtk:?}");
+    assert_eq!(fx.read_lock().tools["rtk"], before, "the lock moved");
+    assert!(report.failed.is_empty(), "{report:?}");
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

@@ -510,6 +510,14 @@ fn rtk_flow(
         }
     };
     match engine.update(&scoped(recipe, entry), &target) {
+        // No host was new enough, so nothing moved: the lock keeps its route and version.
+        Ok(out) if out.updated.is_empty() => (
+            row(
+                RowResult::NotTouched("no installed host is new enough".to_string()),
+                None,
+            ),
+            Vec::new(),
+        ),
         Ok(out) => match record_moves(
             ctx,
             plan.id,
