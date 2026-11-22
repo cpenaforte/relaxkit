@@ -1,7 +1,7 @@
 //! Release pipeline tests (Task 27 part A): the Homebrew formula renderer, its template and the release workflow.
 //!
 //! Nothing here reaches the network or runs a release. The renderer runs on fake checksums, and the workflow is
-//! parsed as YAML, never run. The repository name is the constant `OWNER/relaxkit` (ruling P-2).
+//! parsed as YAML, never run. The repository name is the constant `cpenaforte/relaxkit` (ruling P-2).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 const VERSION: &str = "0.1.0";
-const REPO: &str = "OWNER/relaxkit";
+const REPO: &str = "cpenaforte/relaxkit";
 const TARGETS: [&str; 4] = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",

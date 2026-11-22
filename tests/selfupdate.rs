@@ -507,9 +507,16 @@ fn current_version_means_no_download() {
 
 #[test]
 fn the_placeholder_key_is_not_configured_and_nothing_is_fetched() {
+    // The placeholder text the repository shipped before the owner's key (R12). The embedded key is the owner's now.
+    let placeholder =
+        "untrusted comment: relaxkit-placeholder: the release signing key is not configured\n";
     assert!(
-        EMBEDDED_KEY.contains(selfupdate::PLACEHOLDER_MARKER),
-        "the embedded key is no longer the placeholder"
+        placeholder.contains(selfupdate::PLACEHOLDER_MARKER),
+        "the placeholder text lost its marker"
+    );
+    assert!(
+        !EMBEDDED_KEY.contains(selfupdate::PLACEHOLDER_MARKER),
+        "the embedded key is still the placeholder"
     );
     let root = temp();
     let exe = installed(&root.path().join("usr/bin"), "old binary\n");
@@ -518,11 +525,7 @@ fn the_placeholder_key_is_not_configured_and_nothing_is_fetched() {
     let ctx = ctx_for(root.path(), &runner, FakeNet::new());
 
     assert_eq!(
-        selfupdate::apply(&ctx, &exe, EMBEDDED_KEY, false).unwrap(),
-        SelfUpdate::NotConfigured
-    );
-    assert_eq!(
-        selfupdate::run(&ctx, false).unwrap(),
+        selfupdate::apply(&ctx, &exe, placeholder, false).unwrap(),
         SelfUpdate::NotConfigured
     );
     assert_eq!(fs::read_to_string(&exe).unwrap(), "old binary\n");

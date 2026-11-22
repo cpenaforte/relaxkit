@@ -6,7 +6,7 @@
 #   RELAXKIT_BIN_DIR       where relaxkit and the rlx alias go (default: $HOME/.local/bin)
 #   RELAXKIT_RELEASE_BASE  download base; the script fetches <base>/v<version>/<file> (default: GitHub)
 #   RELAXKIT_LATEST_URL    API URL that names the latest release, read only when no version is set
-#                          (default: the GitHub API for OWNER/relaxkit)
+#                          (default: the GitHub API for cpenaforte/relaxkit)
 #
 # Flags:
 #   --no-setup             install the binary and stop; do not run `relaxkit setup`
@@ -17,7 +17,7 @@
 
 set -eu
 
-REPO="OWNER/relaxkit"
+REPO="cpenaforte/relaxkit"
 DEFAULT_BASE="https://github.com/$REPO/releases/download"
 DEFAULT_LATEST="https://api.github.com/repos/$REPO/releases/latest"
 

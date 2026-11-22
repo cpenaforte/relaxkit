@@ -6,10 +6,10 @@ Status: pre-release. The install line below works only after the owner publishes
 
 ## Install
 
-The repository path and the branch `main` in the line below are placeholders. They stay placeholders until the owner publishes the first release and confirms the default branch.
+The line below downloads the installer from the `main` branch. The installer fetches the latest release and checks its SHA-256 checksum. It does not check the minisign signature; the installer prints the command to do that.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OWNER/relaxkit/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/cpenaforte/relaxkit/main/scripts/install.sh | sh
 ```
 
 The script installs `relaxkit` into `$HOME/.local/bin` (set `RELAXKIT_BIN_DIR` to change it), adds an `rlx` alias when that name is free, and runs `relaxkit setup` unless you skip it. To skip setup, add `-s -- --no-setup` after `sh` in the line above. Set `RELAXKIT_VERSION` to install a given release. Setup may ask for your GitHub login.

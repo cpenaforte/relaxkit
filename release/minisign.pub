@@ -1,3 +1,2 @@
-untrusted comment: relaxkit-placeholder: the release signing key is not configured
-# This is a placeholder (R12). The owner creates the real minisign public key before the first release.
-# While this file is the embedded key, self-update reports NotConfigured and downloads nothing.
+untrusted comment: minisign public key EA92DC062630FF0F
+RWQP/zAmBtyS6gqfHYmGAFl/IejQIMCVUFlZidOWJj8dPnxNwNkKVQiH

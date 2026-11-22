@@ -16,10 +16,10 @@ use crate::net::github_latest_tag;
 use crate::runtime::{checksum_for, download_dir, fresh_dir, sha256_hex, utf8};
 use crate::state::record_backup;
 
-/// The GitHub repository whose latest release is the newest relaxkit (K97). A placeholder until the owner confirms it.
-pub const RELEASE_REPO: &str = "OWNER/relaxkit";
+/// The GitHub repository whose latest release is the newest relaxkit (K97). Confirmed by the owner (2026-11-22).
+pub const RELEASE_REPO: &str = "cpenaforte/relaxkit";
 
-/// The minisign public key embedded in the binary (K91). Until the owner creates the real key, this is a placeholder.
+/// The minisign public key embedded in the binary (K91). This is the owner's release public key (2026-11-22).
 pub const EMBEDDED_KEY: &str = include_str!("../release/minisign.pub");
 
 /// The text that marks the embedded key as a placeholder (K91).

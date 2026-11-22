@@ -2890,11 +2890,8 @@ fn check_through_the_binary_exits_zero_offline_and_runs_no_mutating_command() {
         "a check ran a mutating command: {:?}",
         scratch.calls()
     );
-    // The placeholder key makes the self step NotConfigured, which is a build state with exit 0 (K91).
-    assert!(
-        text.contains("the release signing key is not configured"),
-        "{text}"
-    );
+    // Offline, the self step reports the newest release as unknown: it names the failed request and touches nothing (K97).
+    assert!(text.contains("newest unknown"), "{text}");
     assert!(text.contains("not touched"), "{text}");
 }
 
@@ -2902,14 +2899,11 @@ fn check_through_the_binary_exits_zero_offline_and_runs_no_mutating_command() {
 fn flags_select_scope_at_the_command_line() {
     let scratch = Scratch::new();
 
-    // A plain update names the self step, which the placeholder key leaves NotConfigured. `--tools` leaves it out (K63).
+    // A plain update names the self step, which reports the newest release (unknown offline here). `--tools` leaves it out (K63).
     let plain = stdout_of(&scratch, &["update", "--check"]);
     let tools_only = stdout_of(&scratch, &["update", "--check", "--tools"]);
-    assert!(
-        plain.contains("release signing key is not configured"),
-        "{plain}"
-    );
-    assert!(!tools_only.contains("release signing key"), "{tools_only}");
+    assert!(plain.contains("newest unknown"), "{plain}");
+    assert!(!tools_only.contains("newest unknown"), "{tools_only}");
 
     // A tool name runs that row only.
     let one = stdout_of(&scratch, &["update", "--check", "rtk"]);
