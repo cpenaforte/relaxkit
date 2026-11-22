@@ -915,6 +915,25 @@ fn a_dry_run_uninstall_keeps_the_claude_md_setup_created() {
     assert_eq!(read(&claude_md(scratch.home())), before);
 }
 
+#[test]
+fn uninstall_never_removes_a_symlinked_claude_md() {
+    // Task 8 follow-up: CLAUDE.md is a link to a file that does not exist yet. Whatever setup does with that link,
+    // uninstall keeps the link itself.
+    let scratch = Scratch::claude_only();
+    let target = scratch.home().join(".claude/owner-notes.md");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    symlink(&target, claude_md(scratch.home())).unwrap();
+
+    // setup refuses a dangling link today; the check below holds whatever setup does with it.
+    let _ = scratch.relaxkit().arg("setup").assert();
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+
+    let meta = fs::symlink_metadata(claude_md(scratch.home()))
+        .expect("the owner's link survives uninstall");
+    assert!(meta.file_type().is_symlink(), "uninstall kept the link");
+}
+
 /// The home tree without the run lock: taking the lock creates `run.lock`, which is not a configuration write.
 fn tree_without_run_lock(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut out = tree(root);

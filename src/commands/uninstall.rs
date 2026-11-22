@@ -117,8 +117,9 @@ fn remove_claude(
     let old = read_or_empty(&instructions)?;
     let new = block_remove(&old, claude::ROLES_BLOCK);
     // relaxkit created the file and nothing else is in it: back it up, so undo restores it, then remove it. A file
-    // that is already gone has nothing to back up.
+    // that is already gone has nothing to back up. A symlink is never removed: that would drop the owner's link.
     let created_and_empty = instructions.exists()
+        && !instructions.is_symlink()
         && new.trim().is_empty()
         && matches!(
             original_text(ctx, run, &instructions)?,
