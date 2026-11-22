@@ -450,7 +450,8 @@ enum Repair {
 /// The repair for a failing check, or `None` when no repair exists. A failing probe (`tool.<id>.<host>`) or MCP
 /// command (`mcp.<id>.<host>`) reinstalls the locked tool; a missing MCP entry (`mcp-entry.<id>.<host>`) is re-added.
 fn repair_for(check: &Check) -> Option<Repair> {
-    if check.status != CheckStatus::Fail {
+    if check.status != CheckStatus::Fail || check.id.starts_with("mcp-config.") {
+        // An unreadable host config is reported and never repaired (ruling R3-3).
         return None;
     }
     if let Some(rest) = check.id.strip_prefix("mcp-entry.") {

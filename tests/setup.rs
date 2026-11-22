@@ -492,6 +492,27 @@ fn setup_readds_a_missing_mcp_entry_through_the_host_step() {
 }
 
 #[test]
+fn an_unparsable_claude_config_is_left_alone_and_fails_the_run() {
+    // R3-3: a ~/.claude.json that does not parse is reported as unreadable, with no repair. Setup never runs
+    // `claude mcp` against it, and its bytes stay as they are.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    let config = scratch.home().join(".claude.json");
+    let broken = "{ not json, hand edited\n";
+    fs::write(&config, broken).unwrap();
+    scratch.clear_calls();
+
+    scratch.relaxkit().arg("setup").assert().code(1);
+
+    assert_eq!(fs::read_to_string(&config).unwrap(), broken);
+    let calls = scratch.calls();
+    assert!(
+        calls.iter().all(|call| !call.starts_with("claude mcp")),
+        "no claude mcp call may touch an unreadable config: {calls:?}"
+    );
+}
+
+#[test]
 fn a_repair_never_moves_a_listed_unpinned_plugin() {
     // R2-3: a repair for an unpinned plugin that is already listed reruns its configuration only. It never calls
     // `claude plugin install`, which would move the version it can see.

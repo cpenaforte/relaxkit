@@ -468,8 +468,9 @@ fn mcp_entry_check(ctx: &Ctx, host: &dyn Host, entry: &str, id: &str, kind: Host
             format!("{entry} is missing from the {kind} config"),
             "run relaxkit setup; it re-adds the entry",
         ),
+        // An unreadable config has its own id, so setup never treats it as a missing entry and rewrites it (ruling R3-3).
         Err(err) => Check::fail(
-            &check_id,
+            &format!("mcp-config.{id}.{kind}"),
             format!("the {kind} config cannot be read: {err:#}"),
             "relaxkit does not rewrite a file that does not parse; repair it by hand",
         ),
