@@ -15,8 +15,23 @@ static RECIPES: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/recipes");
 
 /// Parses every embedded recipe, sorted by id. Fails if any file is malformed or the set is inconsistent.
 pub fn load_all() -> Result<Vec<Recipe>> {
+    let mut recipes = load_dir(&RECIPES)?;
+    recipes.sort_by(|a, b| a.id.cmp(&b.id));
+    validate_set(&recipes)?;
+    Ok(recipes)
+}
+
+/// Parses the `.toml` files of one directory. The embed is not recursive, so a subdirectory would be
+/// skipped silently. The loader refuses one instead.
+fn load_dir(dir: &Dir<'_>) -> Result<Vec<Recipe>> {
+    if let Some(sub) = dir.dirs().next() {
+        bail!(
+            "recipe directory has an unexpected subdirectory `{}`",
+            sub.path().display()
+        );
+    }
     let mut recipes = Vec::new();
-    for file in RECIPES.files() {
+    for file in dir.files() {
         let path = file.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
             continue;
@@ -35,8 +50,6 @@ pub fn load_all() -> Result<Vec<Recipe>> {
         }
         recipes.push(recipe);
     }
-    recipes.sort_by(|a, b| a.id.cmp(&b.id));
-    validate_set(&recipes)?;
     Ok(recipes)
 }
 
@@ -82,6 +95,9 @@ kind = "binary"
 hosts = ["claude"]
 needs_login = false
 telemetry_default_off = true
+
+[minimum_host]
+claude = "2.1.330"
 
 [probe.claude]
 argv = ["fixture", "--version"]
@@ -287,28 +303,33 @@ argv = ["fixture", "--version"]
         }
     }
 
-    /// True when the text holds a dotted three-part number that is not written through `{version}`.
+    /// True when the text holds a version that is not written through `{version}`: a dotted run of three
+    /// parts, or a run of two parts right after `@` or `==` (an npm or PyPI pin).
     fn has_version_literal(text: &str) -> bool {
         let chars: Vec<char> = text.replace("{version}", "").chars().collect();
-        let mut runs = 0;
         let mut i = 0;
         while i < chars.len() {
-            if chars[i].is_ascii_digit() {
+            if !chars[i].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            let mut parts = 0;
+            loop {
                 while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
                 }
+                parts += 1;
                 if i + 1 < chars.len() && chars[i] == '.' && chars[i + 1].is_ascii_digit() {
-                    runs += 1;
                     i += 1;
-                    continue;
+                } else {
+                    break;
                 }
-                if runs == 2 {
-                    return true;
-                }
-                runs = 0;
-            } else {
-                i += 1;
-                runs = 0;
+            }
+            let after_at = start >= 1 && chars[start - 1] == '@';
+            let after_eq = start >= 2 && chars[start - 2] == '=' && chars[start - 1] == '=';
+            if parts >= 3 || (parts >= 2 && (after_at || after_eq)) {
+                return true;
             }
         }
         false
@@ -319,6 +340,9 @@ argv = ["fixture", "--version"]
         assert!(has_version_literal("pkg@1.13.0"));
         assert!(!has_version_literal("pkg@{version}"));
         assert!(!has_version_literal("--enable-web-dashboard"));
+        assert!(has_version_literal("pkg@1.13"));
+        assert!(has_version_literal("serena-agent==2.1"));
+        assert!(!has_version_literal("-p 3.13"));
 
         for recipe in embedded() {
             let mut texts: Vec<String> = Vec::new();
@@ -376,9 +400,89 @@ argv = ["fixture", "--version"]
 
     #[test]
     fn workdir_only_accepts_the_relaxkit_data_directory() {
-        let bad = format!("{FIXTURE}\nworkdir = \"/Users/someone/project\"\n");
-        assert!(parse_recipe(&bad).is_err());
+        let bad = FIXTURE.replace(
+            "title = \"Fixture\"",
+            "title = \"Fixture\"\nworkdir = \"/Users/someone/project\"",
+        );
+        let err = parse_recipe(&bad).unwrap_err().to_string();
+        assert!(err.contains("workdir"), "error was: {err}");
+        assert!(err.contains("data directory"), "error was: {err}");
         assert_eq!(by_id("serena").workdir.as_deref(), Some("data/serena"));
+    }
+
+    #[test]
+    fn minimum_host_is_required_for_every_supported_host() {
+        let no_floor = FIXTURE.replace("[minimum_host]\nclaude = \"2.1.330\"\n", "");
+        let err = parse_recipe(&no_floor).unwrap_err().to_string();
+        assert!(err.contains("minimum_host"), "error was: {err}");
+    }
+
+    #[test]
+    fn every_recipe_carries_the_tested_floors() {
+        for recipe in embedded() {
+            for host in &recipe.hosts {
+                let want = match host {
+                    HostKind::Claude => "2.1.330",
+                    HostKind::Opencode => "2.2.6",
+                };
+                assert_eq!(
+                    recipe.minimum_host.get(host).map(String::as_str),
+                    Some(want),
+                    "{} floor for {host}",
+                    recipe.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn serena_update_mirrors_install() {
+        let recipe = by_id("serena");
+        for host in [HostKind::Claude, HostKind::Opencode] {
+            assert_eq!(
+                recipe.update.get(&host),
+                recipe.install.get(&host),
+                "serena update for {host}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_placeholder_name_expands_through_vars() {
+        let recipe = pinned_fixture();
+        for name in PLACEHOLDERS.iter().filter(|name| **name != "version") {
+            let out = recipe.expand(&[format!("{{{name}}}")], &vars());
+            assert!(
+                out.is_ok(),
+                "placeholder `{name}` has no Vars value: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn placeholder_errors_name_the_recipe() {
+        let recipe = pinned_fixture();
+        let unclosed = recipe
+            .expand(&["{version".to_string()], &vars())
+            .unwrap_err()
+            .to_string();
+        assert!(unclosed.contains("`fixture`"), "error was: {unclosed}");
+        let unknown = recipe
+            .expand(&["{nope}".to_string()], &vars())
+            .unwrap_err()
+            .to_string();
+        assert!(unknown.contains("`fixture`"), "error was: {unknown}");
+        let text = FIXTURE.replace("\"--version\"", "\"{version\"");
+        let err = parse_recipe(&text).unwrap_err().to_string();
+        assert!(err.contains("`fixture`"), "error was: {err}");
+    }
+
+    static NESTED: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/src/recipe/testdata/nested");
+
+    #[test]
+    fn nested_recipe_directories_are_refused() {
+        let err = load_dir(&NESTED).unwrap_err().to_string();
+        assert!(err.contains("extra"), "error was: {err}");
     }
 
     #[test]

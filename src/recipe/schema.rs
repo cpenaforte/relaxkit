@@ -123,26 +123,30 @@ impl Recipe {
     pub fn expand(&self, argv: &[String], vars: &Vars) -> Result<Vec<String>> {
         argv.iter()
             .map(|arg| {
-                let mut out = String::with_capacity(arg.len());
-                for piece in pieces(arg)? {
-                    match piece {
-                        Piece::Text(text) => out.push_str(text),
-                        Piece::Var("version") => {
-                            out.push_str(self.pin.as_deref().ok_or_else(|| {
-                                anyhow!(
-                                    "recipe `{}` has no pin, so {{version}} cannot expand",
-                                    self.id
-                                )
-                            })?)
-                        }
-                        Piece::Var(name) => out.push_str(vars.get(name).ok_or_else(|| {
-                            anyhow!("unknown placeholder `{{{name}}}` in `{arg}`")
-                        })?),
-                    }
-                }
-                Ok(out)
+                self.expand_one(arg, vars)
+                    .map_err(|e| anyhow!("recipe `{}`: {e}", self.id))
             })
             .collect()
+    }
+
+    fn expand_one(&self, arg: &str, vars: &Vars) -> Result<String> {
+        let mut out = String::with_capacity(arg.len());
+        for piece in pieces(arg)? {
+            match piece {
+                Piece::Text(text) => out.push_str(text),
+                Piece::Var("version") => out.push_str(self.pin.as_deref().ok_or_else(|| {
+                    anyhow!(
+                        "recipe `{}` has no pin, so {{version}} cannot expand",
+                        self.id
+                    )
+                })?),
+                Piece::Var(name) => out.push_str(
+                    vars.get(name)
+                        .ok_or_else(|| anyhow!("unknown placeholder `{{{name}}}` in `{arg}`"))?,
+                ),
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -295,6 +299,11 @@ impl RawRecipe {
         for host in &hosts {
             if !probe.contains_key(host) {
                 bail!("recipe `{id}` supports {host} but has no probe for it");
+            }
+        }
+        for host in &hosts {
+            if !minimum_host.contains_key(host) {
+                bail!("recipe `{id}` supports {host} but has no minimum_host floor for it");
             }
         }
         let recipe = Recipe {
@@ -475,7 +484,8 @@ fn check_placeholders(recipe: &Recipe) -> Result<()> {
     }
     texts.extend(recipe.probe.values().flat_map(|probe| &probe.argv));
     for text in texts {
-        for piece in pieces(text)? {
+        let parsed = pieces(text).map_err(|e| anyhow!("recipe `{}`: {e}", recipe.id))?;
+        for piece in parsed {
             if let Piece::Var(name) = piece {
                 if !PLACEHOLDERS.contains(&name) {
                     bail!(
