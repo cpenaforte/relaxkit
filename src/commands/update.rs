@@ -624,15 +624,21 @@ fn tool_flow(
             Vec::new(),
         );
     };
-    let scope = scoped(recipe, entry);
-    let present = present_hosts(recipe, entry, hosts);
+    let target = plan.newest.clone().unwrap_or_default();
+    // K72 per host: only the hosts behind the target run. A host already at the newest version gets no call at all, so
+    // the rollback below counts only the hosts that moved (F4-1).
+    let present: Vec<HostKind> = present_hosts(recipe, entry, hosts)
+        .into_iter()
+        .filter(|kind| !at_newest(*kind, entry.version_for(kind.as_str()), &target))
+        .collect();
+    let mut scope = scoped(recipe, entry);
+    scope.hosts.retain(|kind| present.contains(kind));
     // The version each present host returns to, and whether a host can be returned at all.
     let old_versions: BTreeSet<String> = present
         .iter()
         .map(|kind| entry.version_for(kind.as_str()).to_string())
         .collect();
     let every_pinnable = present.iter().all(|kind| pinnable(recipe, *kind));
-    let target = plan.newest.clone().unwrap_or_default();
 
     // The sandbox plugin moves only after the self-test passes (K68). A failure keeps the locked version and names it.
     if plan.id == "opencode-sandbox" {

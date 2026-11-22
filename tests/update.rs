@@ -1496,6 +1496,178 @@ fn rtk_restarts_every_host_whose_config_ran_not_only_the_moved_ones() {
 }
 
 #[test]
+fn a_host_already_at_the_newest_version_is_not_touched_when_another_host_is_behind() {
+    // Claude is at the newest 7.0.2 (its listing carries a build suffix) and OpenCode is behind at 7.0.1. Only OpenCode
+    // runs: no Claude marketplace or plugin call. OpenCode's probe fails once and then passes, so the rollback is a
+    // real rollback to 7.0.1 (K72 per host, F4-1).
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    let config = root.join(".config/opencode/opencode.jsonc");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let old = "superpowers@git+https://github.com/obra/superpowers.git#v7.0.1";
+    fs::write(&config, format!("{{\"plugins\": [\"{old}\"]}}\n")).unwrap();
+    fx.hosts = vec![
+        Box::new(ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/local/bin/claude"),
+                version: "2.1.330".to_string(),
+            },
+            root.join(".claude"),
+            root.join(".claude.json"),
+        )),
+        Box::new(OpencodeHost::new(
+            HostInfo {
+                kind: HostKind::Opencode,
+                binary: PathBuf::from("/usr/local/bin/opencode"),
+                version: "2.2.6".to_string(),
+            },
+            root.join(".config/opencode"),
+        )),
+    ];
+    fx.shell.on(
+        "claude plugin list",
+        Output::ok("superpowers@anthropic-plugin-directory  Version: 7.0.2-22f0b463e7a5\n"),
+    );
+    fx.shell
+        .on("claude plugin marketplace update", Output::ok(""));
+    fx.shell
+        .on("claude plugin update superpowers@", Output::ok(""));
+    let mut tools = BTreeMap::new();
+    tools.insert(
+        "superpowers".to_string(),
+        LockedTool {
+            version: "7.0.1".to_string(),
+            route: "opencode-plugin".to_string(),
+            hosts: vec!["claude".to_string(), "opencode".to_string()],
+            host_versions: BTreeMap::from([(
+                "claude".to_string(),
+                "7.0.2-22f0b463e7a5".to_string(),
+            )]),
+        },
+    );
+    Lockfile {
+        relaxkit: "0.1.0".to_string(),
+        tools,
+    }
+    .save(&fx.ctx(), &fx.run)
+    .unwrap();
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.2"}"#,
+    );
+    fx.shell.on("opencode plugin remove", Output::ok(""));
+    fx.shell.on("opencode plugin add", Output::ok(""));
+    // The first probe fails, the probe after the rollback passes.
+    let probes = Arc::new(Mutex::new(0));
+    let counted = probes.clone();
+    fx.shell.answer(
+        "opencode --version",
+        Arc::new(move |_| {
+            let mut n = counted.lock().unwrap();
+            *n += 1;
+            if *n == 1 {
+                Output::fail(1, "broken")
+            } else {
+                Output::ok("2.2.6\n")
+            }
+        }),
+    );
+    let cfg = config.clone();
+    fx.shell.effect(
+        "opencode plugin add",
+        Arc::new(move |cmd| {
+            let spec = cmd.argv().last().cloned().unwrap_or_default();
+            fs::write(&cfg, format!("{{\"plugins\": [\"{spec}\"]}}\n")).unwrap();
+        }),
+    );
+
+    let report = fx.run(false, Some("superpowers")).unwrap();
+
+    let lines = fx.shell.lines();
+    assert!(
+        lines
+            .iter()
+            .all(|l| !l.starts_with("claude plugin marketplace update")
+                && !l.starts_with("claude plugin update")),
+        "the at-target Claude host was touched: {lines:?}"
+    );
+    let row = row(&report, "superpowers");
+    assert!(
+        matches!(row.result, RowResult::RolledBack),
+        "a probe failure on OpenCode must roll OpenCode back, not fail the rollback: {row:?}"
+    );
+    assert_eq!(report.failed, vec!["superpowers".to_string()]);
+}
+
+#[test]
+fn an_mcp_host_already_at_the_newest_version_keeps_its_entry() {
+    // Playwright is at the newest 0.0.87 on Claude and behind on OpenCode (0.0.86). Only OpenCode's MCP entry is
+    // removed and added again; Claude's entry is neither removed nor re-added (K72 per host, F4-1).
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    fx.hosts.push(Box::new(OpencodeHost::new(
+        HostInfo {
+            kind: HostKind::Opencode,
+            binary: PathBuf::from("/usr/local/bin/opencode"),
+            version: "2.2.6".to_string(),
+        },
+        root.join(".config/opencode"),
+    )));
+    let mut tools = BTreeMap::new();
+    tools.insert(
+        "playwright".to_string(),
+        LockedTool {
+            version: "0.0.87".to_string(),
+            route: "npm".to_string(),
+            hosts: vec!["claude".to_string(), "opencode".to_string()],
+            host_versions: BTreeMap::from([("opencode".to_string(), "0.0.86".to_string())]),
+        },
+    );
+    Lockfile {
+        relaxkit: "0.1.0".to_string(),
+        tools,
+    }
+    .save(&fx.ctx(), &fx.run)
+    .unwrap();
+    fx.serve(
+        "https://registry.npmjs.org/@playwright%2fmcp/latest",
+        r#"{"version":"0.0.87"}"#,
+    );
+    let npx = fx.npx();
+    fx.shell.on(
+        &format!("{npx} -y @playwright/mcp@0.0.87 install-browser chromium"),
+        Output::ok(""),
+    );
+    fx.shell.on(
+        &fx.mcp_probe("@playwright/mcp", "0.0.87"),
+        Output::ok("ok\n"),
+    );
+    fx.shell.on("opencode mcp add", Output::ok(""));
+
+    let report = fx.run(false, Some("playwright")).unwrap();
+
+    let lines = fx.shell.lines();
+    assert!(
+        lines.iter().all(|l| !l.starts_with("claude mcp")),
+        "the at-target Claude entry was removed or re-added: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.starts_with("opencode mcp add")),
+        "the behind OpenCode entry was not re-added: {lines:?}"
+    );
+    assert!(
+        matches!(row(&report, "playwright").result, RowResult::Updated),
+        "{:?}",
+        row(&report, "playwright")
+    );
+    assert_eq!(
+        fx.read_lock().tools["playwright"].version_for("opencode"),
+        "0.0.87"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
