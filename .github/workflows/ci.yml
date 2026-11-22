@@ -23,5 +23,6 @@ jobs:
         run: cargo fmt --check
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      # --no-fail-fast runs every test binary, so one failure does not hide the rest of the suite.
       - name: Test
-        run: cargo test
+        run: cargo test --no-fail-fast
