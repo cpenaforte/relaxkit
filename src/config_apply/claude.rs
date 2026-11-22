@@ -106,40 +106,44 @@ pub fn apply_roles(ctx: &Ctx, run: &RunId, host: &dyn Host, config: &KitConfig) 
     write_if_changed(ctx, run, &path, &old, &text)
 }
 
-/// Writes rtk's Claude Code hook (spike A C6): a `PreToolUse` command `rtk hook claude` for the `Bash` tool.
+/// Writes rtk's Claude Code hook (spike A C6): a `PreToolUse` command for the `Bash` tool that runs the pack's rtk
+/// copy by its absolute, quoted path (spec 4, item 5: hooks point at a fixed path in relaxkit's directory).
 /// `rtk init -g` does not write it non-interactively. Other hooks are kept, and a second run changes nothing.
 pub fn apply_rtk_hook(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     let path = host.config_file(ctx);
     let old = read_text(&path)?;
+    let command = rtk_hook_command(ctx);
     let mut entries = match json_get(&old, &["hooks", "PreToolUse"])? {
         None => Vec::new(),
         Some(Value::Array(entries)) => entries,
         Some(_) => bail!("hooks.PreToolUse in {} is not a list", path.display()),
     };
-    if entries.iter().any(is_rtk_hook) {
+    if entries.iter().any(|entry| is_rtk_hook(entry, &command)) {
         return Ok(());
     }
     entries.push(json!({
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": RTK_HOOK_COMMAND}]
+        "hooks": [{"type": "command", "command": command}]
     }));
     let text = json_set(&old, &["hooks", "PreToolUse"], &Value::Array(entries))?;
     write_if_changed(ctx, run, &path, &old, &text)
 }
 
-/// The command rtk registers for Claude Code's `PreToolUse` hook.
-const RTK_HOOK_COMMAND: &str = "rtk hook claude";
+/// The hook command: the pack's rtk copy by absolute path, in double quotes, then `hook claude`.
+fn rtk_hook_command(ctx: &Ctx) -> String {
+    format!("\"{}\" hook claude", ctx.dirs.bin.join("rtk").display())
+}
 
-/// Whether a `PreToolUse` entry is rtk's Bash hook.
-fn is_rtk_hook(entry: &Value) -> bool {
+/// Whether a `PreToolUse` entry is rtk's Bash hook with exactly this command.
+fn is_rtk_hook(entry: &Value, command: &str) -> bool {
     entry.get("matcher").and_then(Value::as_str) == Some("Bash")
         && entry
             .get("hooks")
             .and_then(Value::as_array)
             .is_some_and(|hooks| {
-                hooks.iter().any(|hook| {
-                    hook.get("command").and_then(Value::as_str) == Some(RTK_HOOK_COMMAND)
-                })
+                hooks
+                    .iter()
+                    .any(|hook| hook.get("command").and_then(Value::as_str) == Some(command))
             })
 }
 
@@ -214,6 +218,14 @@ mod tests {
 
     fn ctx(root: &Path) -> Ctx {
         Ctx::for_test(root, FakeRunner::new(), FakeNet::new())
+    }
+
+    /// The hook command rtk's entry must carry: the pack's rtk copy by absolute path, quoted.
+    fn hook_command(root: &Path) -> String {
+        format!(
+            "\"{}\" hook claude",
+            root.join(".local/share/relaxkit/bin/rtk").display()
+        )
     }
 
     fn settings_path(root: &Path) -> PathBuf {
@@ -393,8 +405,28 @@ mod tests {
         let value = read_json(&settings_path(root.path()));
         assert_eq!(
             value["hooks"]["PreToolUse"],
-            json!([{"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]}])
+            json!([{"matcher": "Bash", "hooks": [{"type": "command", "command": hook_command(root.path())}]}])
         );
+    }
+
+    #[test]
+    fn rtk_hook_runs_the_pack_copy_by_absolute_path() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = ctx(root.path());
+
+        apply_rtk_hook(&ctx, &ctx.run, &host(root.path())).unwrap();
+
+        let value = read_json(&settings_path(root.path()));
+        let command = value["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        let bin = root.path().join(".local/share/relaxkit/bin/rtk");
+        assert!(
+            command.starts_with(&format!("\"{}\"", bin.display())),
+            "{command}"
+        );
+        assert!(!command.starts_with("rtk"), "{command}");
+        assert!(command.ends_with(" hook claude"), "{command}");
     }
 
     #[test]
@@ -410,7 +442,7 @@ mod tests {
             fs::read_to_string(settings_path(root.path())).unwrap(),
             once
         );
-        assert_eq!(once.matches("rtk hook claude").count(), 1, "{once}");
+        assert_eq!(once.matches(" hook claude").count(), 1, "{once}");
     }
 
     #[test]
@@ -436,7 +468,7 @@ mod tests {
             value["hooks"]["PreToolUse"],
             json!([
                 {"matcher": "Write", "hooks": [{"type": "command", "command": "lint"}]},
-                {"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]}
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": hook_command(root.path())}]}
             ])
         );
     }

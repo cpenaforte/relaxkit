@@ -237,6 +237,24 @@ fn npm(rig: &Rig) -> String {
     rig.ctx.dirs.data.join("node/bin/npm").display().to_string()
 }
 
+/// The command the PreToolUse hook carries: the pack's rtk copy by absolute path, quoted, then the subcommand.
+fn pack_rtk_hook_command(rig: &Rig) -> String {
+    format!(
+        "\"{}\" hook claude",
+        KitDirs::rooted(rig.root.path()).bin.join("rtk").display()
+    )
+}
+
+/// The command of the first Bash `PreToolUse` hook in the rig's Claude settings.
+fn hook_command(rig: &Rig) -> String {
+    let text = std::fs::read_to_string(rig.root.path().join(".claude/settings.json")).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    value["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
 /// The version probe of the pack's own rtk copy, by full path, as the engine runs it after a fresh install.
 fn pack_rtk_probe(rig: &Rig) -> Vec<String> {
     vec![
@@ -329,7 +347,11 @@ fn rtk_on_claude_runs_init_then_writes_the_hook_then_telemetry_off() {
         ],
     );
     let settings = std::fs::read_to_string(rig.root.path().join(".claude/settings.json")).unwrap();
-    assert!(settings.contains("rtk hook claude"), "{settings}");
+    assert_eq!(
+        hook_command(&rig),
+        pack_rtk_hook_command(&rig),
+        "{settings}"
+    );
 }
 
 #[test]
@@ -348,7 +370,11 @@ fn adopted_rtk_on_claude_still_gets_the_hook() {
         ],
     );
     let settings = std::fs::read_to_string(rig.root.path().join(".claude/settings.json")).unwrap();
-    assert!(settings.contains("rtk hook claude"), "{settings}");
+    assert_eq!(
+        hook_command(&rig),
+        pack_rtk_hook_command(&rig),
+        "{settings}"
+    );
 }
 
 #[test]
