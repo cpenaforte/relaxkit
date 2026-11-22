@@ -389,10 +389,8 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
                         )
                     }
                     // A plugin probe also needs the plugin listed by the host's config (R4-2).
-                    _ => match unlisted_plugin(ctx, host.as_ref(), recipe, kind) {
-                        Some(problem) => Check::fail(&check_id, problem, "run relaxkit setup"),
-                        None => Check::ok(&check_id, format!("`{shown}` passed")),
-                    },
+                    _ => unlisted_plugin(ctx, host.as_ref(), recipe, kind, &check_id)
+                        .unwrap_or_else(|| Check::ok(&check_id, format!("`{shown}` passed"))),
                 },
                 Ok(out) => Check::fail(
                     &check_id,
@@ -424,15 +422,35 @@ fn expected_text(recipe: &Recipe, kind: HostKind, probe: &Probe) -> Option<Strin
     None
 }
 
-/// The problem when a recipe's plugin for this host is not listed by the host, or its list cannot be read. A recipe
-/// with no plugin for the host has no problem here (ruling R4-2).
-fn unlisted_plugin(ctx: &Ctx, host: &dyn Host, recipe: &Recipe, kind: HostKind) -> Option<String> {
+/// The check for a recipe's plugin on this host when the probe passed, or `None` when the plugin is listed. A recipe with
+/// no plugin for the host has no check here (ruling R4-2). An OpenCode `plugins` entry that cannot be read gets its own
+/// id, which setup never repairs (ruling R5-1).
+fn unlisted_plugin(
+    ctx: &Ctx,
+    host: &dyn Host,
+    recipe: &Recipe,
+    kind: HostKind,
+    check_id: &str,
+) -> Option<Check> {
     let spec = plugin_spec(recipe, kind)?;
     let name = plugin_name(spec);
     match host.plugin_list(ctx) {
         Ok(plugins) if plugins.iter().any(|plugin| plugin.name == name) => None,
-        Ok(_) => Some(format!("{name} is not listed in the {kind} config")),
-        Err(err) => Some(format!("the {kind} plugin list cannot be read: {err:#}")),
+        Ok(_) => Some(Check::fail(
+            check_id,
+            format!("{name} is not listed in the {kind} config"),
+            "run relaxkit setup",
+        )),
+        Err(err) if kind == HostKind::Opencode => Some(Check::fail(
+            &format!("plugin-config.{}.{kind}", recipe.id),
+            format!("the {kind} plugins entry cannot be read: {err:#}"),
+            "repair the plugins entry by hand; relaxkit does not rewrite a file it cannot read",
+        )),
+        Err(err) => Some(Check::fail(
+            check_id,
+            format!("the {kind} plugin list cannot be read: {err:#}"),
+            "run relaxkit setup",
+        )),
     }
 }
 

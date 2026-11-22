@@ -540,6 +540,77 @@ fn a_listed_plugin_whose_cli_is_missing_gets_its_cli_installed_and_no_plugin_ins
 }
 
 #[test]
+fn an_unreadable_opencode_plugins_entry_is_reported_and_never_repaired() {
+    // R5-1: an OpenCode `plugins` entry that is not a list is never repaired: no `opencode plugin add` runs, the file
+    // keeps its bytes, and the run exits 1. The OpenCode sandbox step reads the same key first and stops the run there,
+    // so verify (and its repair) is not reached; the doctor test and the repair_for unit test cover that path.
+    let scratch = Scratch::new();
+    // Every recipe is locked on every host it names, so setup's install step has nothing to do.
+    let mut lock = String::from("relaxkit = \"0.1.0\"\n");
+    for (id, version, route, hosts) in [
+        ("caveman", "4.1.0", "npm", "\"claude\", \"opencode\""),
+        ("ccusage", "1.0.0", "npm", "\"claude\", \"opencode\""),
+        (
+            "chrome-devtools",
+            "1.0.0",
+            "npm",
+            "\"claude\", \"opencode\"",
+        ),
+        (
+            "claude-md-management",
+            "1.0.0",
+            "claude-plugin",
+            "\"claude\"",
+        ),
+        ("frontend-design", "1.0.0", "claude-plugin", "\"claude\""),
+        ("opencode-sandbox", "1.0.0", "npm", "\"opencode\""),
+        ("playwright", "1.0.0", "npm", "\"claude\", \"opencode\""),
+        ("rtk", "1.2.1", "script", "\"claude\", \"opencode\""),
+        ("serena", "2.1.0", "uv", "\"claude\", \"opencode\""),
+        (
+            "superpowers",
+            "5.0.1",
+            "opencode-plugin",
+            "\"claude\", \"opencode\"",
+        ),
+    ] {
+        lock.push_str(&format!(
+            "\n[tools.{id}]\nversion = \"{version}\"\nroute = \"{route}\"\nhosts = [{hosts}]\n"
+        ));
+    }
+    let lock_path = scratch.home().join(".config/relaxkit/lock.toml");
+    fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+    fs::write(&lock_path, lock).unwrap();
+    fs::write(
+        scratch.home().join(".claude.json"),
+        "{\"mcpServers\": {\"serena\": {}, \"chrome-devtools\": {}, \"playwright\": {}}}\n",
+    )
+    .unwrap();
+    let config = scratch.home().join(".config/opencode/opencode.json");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let broken = "{\"plugins\": \"x\", \"mcp\": {\"servers\": {\"serena\": {}, \"chrome-devtools\": {}, \"playwright\": {}}}}\n";
+    fs::write(&config, broken).unwrap();
+    scratch.clear_calls();
+
+    let output = scratch.relaxkit().arg("setup").assert().code(1);
+
+    let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();
+    assert!(stderr.contains("is not a list"), "{stderr}");
+    assert!(!text.contains("repaired"), "{text}");
+    // Configure writes its own blocks into this file before the sandbox step stops; the plugins value is what must hold.
+    let after = fs::read_to_string(&config).unwrap();
+    assert!(after.contains("\"plugins\": \"x\""), "{after}");
+    let calls = scratch.calls();
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.starts_with("opencode plugin")),
+        "no opencode plugin call may touch an unreadable plugins entry: {calls:?}"
+    );
+}
+
+#[test]
 fn a_repair_never_moves_a_listed_unpinned_plugin() {
     // R2-3: a repair for an unpinned plugin that is already listed reruns its configuration only. It never calls
     // `claude plugin install`, which would move the version it can see.

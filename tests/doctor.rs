@@ -450,6 +450,36 @@ fn an_opencode_plugin_probe_fails_unless_the_plugin_is_listed() {
 }
 
 #[test]
+fn an_unreadable_opencode_plugins_entry_is_a_plugin_config_fail_and_is_not_rewritten() {
+    // R5-1: an OpenCode `plugins` entry that is not a list cannot be read. The plugin probe reports that under its own
+    // id, plugin-config.<id>.<kind>, and the file keeps its bytes.
+    let root = tempfile::tempdir().unwrap();
+    lock(
+        root.path(),
+        &[("superpowers", "5.0.1", "opencode-plugin", &["opencode"])],
+    );
+    let runner = refusing_sandbox(root.path())
+        .with_program("opencode", Path::new("/usr/local/bin/opencode"))
+        .reply(
+            "/usr/local/bin/opencode --version",
+            Output::ok("opencode 2.2.6\n"),
+        );
+    let config = config_file_in(&opencode_dir(root.path(), None));
+    let broken = "{\"plugins\": \"x\"}\n";
+    write(&config, broken);
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner, FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+
+    let check = find(&checks, "plugin-config.superpowers.opencode");
+    assert_eq!(check.status, CheckStatus::Fail, "{check:?}");
+    assert_eq!(fs::read_to_string(&config).unwrap(), broken);
+}
+
+#[test]
 fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
     // The probe's program lives only in relaxkit's bin directory, which the stub PATH does not hold. The engine finds it
     // there, so doctor must run it by its full path rather than by its bare name (ruling Important 6).
