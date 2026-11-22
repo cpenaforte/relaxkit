@@ -114,6 +114,13 @@ fn ensure_gh_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<GhInstall
             owned_by_pack,
         });
     }
+    // A link at the pack path is never the pack copy and is never written through, not even by an install (K84, F8-1).
+    if is_link(&bin) {
+        bail!(
+            "the pack path {} is a link; relaxkit does not write through it",
+            bin.display()
+        );
+    }
     if is_executable(&bin) {
         return Ok(GhInstall {
             path: bin,
@@ -401,33 +408,49 @@ mod tests {
     }
 
     #[test]
-    fn a_link_at_the_pack_path_is_never_recorded() {
-        // The copy is a link to a file elsewhere: it is not the pack copy, so no entry is written (K84, F7-1).
+    fn a_link_at_the_pack_path_stops_the_install_and_is_never_written_through() {
+        // The target is a regular file that is not executable, so the install path would be reached. The link is
+        // refused before any download or write: the target keeps its bytes and mode, and no lock entry is written
+        // (K84, F8-1).
+        use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("elsewhere").join("gh");
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(&target, "#!/bin/sh\necho gh\n").unwrap();
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        fs::write(&target, "elsewhere bytes\n").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
         let bin = KitDirs::rooted(root.path()).bin;
         fs::create_dir_all(&bin).unwrap();
         std::os::unix::fs::symlink(&target, bin.join("gh")).unwrap();
-        let runner = Recorder::new(version_reply(
-            &bin.join("gh"),
-            "gh version 9.9.9 (2026-01-01)\n",
-        ));
+        let before_mode = fs::metadata(&target).unwrap().permissions().mode();
+        let runner = Recorder::new(FakeRunner::new());
         let ctx = ctx_with(root.path(), &runner, FakeNet::new());
         let run = RunId::new();
 
-        let gh = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap();
-        record_pack_copy(&ctx, &run, &gh).unwrap();
+        let err = ensure_gh_for(&ctx, &run, Os::Linux, Arch::X86_64).unwrap_err();
 
         assert!(
-            lock_in(&ctx).is_none(),
-            "a link was recorded as the pack copy"
+            format!("{err:#}").contains("is a link; relaxkit does not write through it"),
+            "{err:#}"
         );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "elsewhere bytes\n");
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode(),
+            before_mode,
+            "the target's mode changed"
+        );
+        assert!(
+            runner.lines().iter().all(|line| !line.starts_with("tar")),
+            "{:?}",
+            runner.lines()
+        );
+        assert!(lock_in(&ctx).is_none(), "a link was recorded");
+        // A link that reaches the record step is still never recorded (F7-1).
+        let link = GhInstall {
+            path: bin.join("gh"),
+            owned_by_pack: true,
+        };
+        record_pack_copy(&ctx, &run, &link).unwrap();
+        assert!(lock_in(&ctx).is_none(), "a link was recorded");
     }
 
     #[test]
