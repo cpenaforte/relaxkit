@@ -40,6 +40,45 @@ pub enum Outcome {
     Skipped { reason: String },
 }
 
+/// A host and its plan, or `None` when the host is not installed.
+type Planned<'a> = (HostKind, Option<(&'a dyn Host, Plan)>);
+
+/// What the engine will do on one host, decided before any host runs a step.
+enum Plan {
+    Skipped(String),
+    Adopt { version: String, route: Route },
+    Install,
+}
+
+impl Plan {
+    /// The steps that will run on `kind`: the configuration steps of an adopted install, every step of an install.
+    fn steps(&self, recipe: &Recipe, kind: HostKind) -> Vec<Step> {
+        match self {
+            Plan::Skipped(_) => Vec::new(),
+            Plan::Adopt { .. } => config_steps(recipe, kind),
+            Plan::Install => recipe.install.get(&kind).cloned().unwrap_or_default(),
+        }
+    }
+}
+
+/// The exec steps of a recipe on `kind` that install or add nothing: the configuration an adopted install still
+/// needs (for example `rtk init -g` or `caveman telemetry off`).
+fn config_steps(recipe: &Recipe, kind: HostKind) -> Vec<Step> {
+    recipe
+        .install
+        .get(&kind)
+        .into_iter()
+        .flatten()
+        .filter(|step| match step {
+            Step::Exec { argv, .. } => !argv
+                .iter()
+                .any(|token| token == "install" || token == "add"),
+            _ => false,
+        })
+        .cloned()
+        .collect()
+}
+
 pub struct Engine<'a> {
     pub ctx: &'a Ctx,
     pub run: &'a RunId,
@@ -91,6 +130,26 @@ impl<'a> Engine<'a> {
         if recipe.kind == Kind::Mcp {
             return Ok(None);
         }
+        // OpenCode wiring is read from the host's plugin list (its config), never from a binary on the PATH.
+        if kind == HostKind::Opencode {
+            let Some(found) = host
+                .plugin_list(self.ctx)?
+                .into_iter()
+                .find(|plugin| plugin.name == recipe.id)
+            else {
+                return Ok(None);
+            };
+            let version = found
+                .version
+                .or_else(|| recipe.pin.clone())
+                .unwrap_or_else(|| UNVERSIONED.to_string());
+            let route = match recipe.kind {
+                Kind::Npm => Route::Npm,
+                Kind::Binary => Route::Script,
+                _ => Route::Unknown,
+            };
+            return Ok(Some((version, route)));
+        }
         let Some(probe) = recipe.probe.get(&kind) else {
             return Ok(None);
         };
@@ -122,9 +181,10 @@ impl<'a> Engine<'a> {
         Ok(Some((version, route)))
     }
 
-    /// Installs the recipe on every host it names. A host that is not installed, or is too old, is skipped.
-    /// Returns an error for the first failed step; the lock is only written for hosts that succeeded and only
-    /// when every host of the tool succeeded.
+    /// Installs the recipe on every host it names. A host that is not installed, or is too old, is skipped. An
+    /// existing install is adopted: its configuration steps run and no install step does. Every installed host's
+    /// steps are checked before the first host runs anything. The lock is written only when every installed host
+    /// succeeded.
     pub fn install(&self, recipe: &Recipe) -> Result<Vec<(HostKind, Outcome)>> {
         // A recipe that sets a workdir cannot be applied through the Host API (SA-1). Until the owner decides how
         // it is applied, the install is refused before any step, so the process never starts without it.
@@ -134,17 +194,24 @@ impl<'a> Engine<'a> {
                 recipe.id
             );
         }
-        // Every installed host is checked before the first host runs a step, so an unsupported handler on one host
-        // stops the install on all of them.
+        let mut planned: Vec<Planned<'_>> = Vec::new();
         for &kind in &recipe.hosts {
-            if self.hosts.iter().any(|host| host.info().kind == kind) {
-                self.preflight(recipe, kind)?;
+            let entry = match self.hosts.iter().find(|host| host.info().kind == kind) {
+                None => None,
+                Some(host) => Some((host.as_ref(), self.plan(recipe, host.as_ref())?)),
+            };
+            planned.push((kind, entry));
+        }
+        for (kind, entry) in &planned {
+            if let Some((_, plan)) = entry {
+                let steps = plan.steps(recipe, *kind);
+                self.preflight_steps(recipe, *kind, &steps)?;
             }
         }
         let mut outcomes = Vec::new();
         let mut rows: Vec<(HostKind, String, Route)> = Vec::new();
-        for &kind in &recipe.hosts {
-            let Some(host) = self.hosts.iter().find(|host| host.info().kind == kind) else {
+        for (kind, entry) in planned {
+            let Some((host, plan)) = entry else {
                 outcomes.push((
                     kind,
                     Outcome::Skipped {
@@ -153,48 +220,51 @@ impl<'a> Engine<'a> {
                 ));
                 continue;
             };
-            let (outcome, route) = self.install_on(recipe, host.as_ref())?;
-            if let (Some(route), Some(version)) = (route, version_of(&outcome)) {
-                rows.push((kind, version, route));
+            match plan {
+                Plan::Skipped(reason) => outcomes.push((kind, Outcome::Skipped { reason })),
+                Plan::Adopt { version, route } => {
+                    self.run_config_steps(recipe, host)?;
+                    rows.push((kind, version.clone(), route.clone()));
+                    outcomes.push((kind, Outcome::Adopted { version, route }));
+                }
+                Plan::Install => {
+                    let vars = self.run_steps(recipe, host)?;
+                    let version = recipe
+                        .pin
+                        .clone()
+                        .unwrap_or_else(|| UNVERSIONED.to_string());
+                    let route = install_route(recipe, kind, &vars.marketplace);
+                    rows.push((kind, version.clone(), route.clone()));
+                    outcomes.push((kind, Outcome::Installed { version }));
+                }
             }
-            outcomes.push((kind, outcome));
         }
         self.record(recipe, &rows)?;
         Ok(outcomes)
     }
 
-    fn install_on(&self, recipe: &Recipe, host: &dyn Host) -> Result<(Outcome, Option<Route>)> {
-        let kind = host.info().kind;
-        if let Some(need) = recipe.minimum_host.get(&kind)
-            && let HostCheck::TooOld { have, need } = check_minimum(host.info(), need)
+    /// Decides what happens on one host without changing anything: skip, adopt, or install.
+    fn plan(&self, recipe: &Recipe, host: &dyn Host) -> Result<Plan> {
+        let info = host.info();
+        if let Some(need) = recipe.minimum_host.get(&info.kind)
+            && let HostCheck::TooOld { have, need } = check_minimum(info, need)
         {
-            let reason =
-                format!("{kind} {have} is older than {need}, the oldest this tool supports");
-            return Ok((Outcome::Skipped { reason }, None));
+            let reason = format!(
+                "{} {have} is older than {need}, the oldest this tool supports",
+                info.kind
+            );
+            return Ok(Plan::Skipped(reason));
         }
-        if let Some((version, route)) = self.detect(recipe, host)? {
-            return Ok((
-                Outcome::Adopted {
-                    version,
-                    route: route.clone(),
-                },
-                Some(route),
-            ));
+        match self.detect(recipe, host)? {
+            Some((version, route)) => Ok(Plan::Adopt { version, route }),
+            None => Ok(Plan::Install),
         }
-        self.preflight(recipe, kind)?;
-        let version = recipe
-            .pin
-            .clone()
-            .unwrap_or_else(|| UNVERSIONED.to_string());
-        let vars = self.run_steps(recipe, host)?;
-        let route = install_route(recipe, kind, &vars.marketplace);
-        Ok((Outcome::Installed { version }, Some(route)))
     }
 
-    /// Every handler a recipe names on this host must exist before anything runs, so an unimplemented handler
-    /// stops the install before a command is run.
-    fn preflight(&self, recipe: &Recipe, kind: HostKind) -> Result<()> {
-        for step in recipe.install.get(&kind).into_iter().flatten() {
+    /// Every handler a step list names must exist before anything runs, so an unimplemented handler stops the
+    /// install before a command is run.
+    fn preflight_steps(&self, recipe: &Recipe, kind: HostKind, steps: &[Step]) -> Result<()> {
+        for step in steps {
             if let Step::Handler { name } = step
                 && handler(name).is_none()
             {
@@ -205,6 +275,20 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Runs the configuration steps of an adopted install: the exec steps that do not install or add anything.
+    fn run_config_steps(&self, recipe: &Recipe, host: &dyn Host) -> Result<Vars> {
+        let kind = host.info().kind;
+        let vars = self.vars(recipe)?;
+        for step in config_steps(recipe, kind) {
+            if let Step::Exec { argv, .. } = step {
+                let argv = recipe.expand(&argv, &vars)?;
+                let cmd = self.command(&argv)?;
+                self.run_checked(host, &cmd)?;
+            }
+        }
+        Ok(vars)
     }
 
     fn run_steps(&self, recipe: &Recipe, host: &dyn Host) -> Result<Vars> {
@@ -361,13 +445,6 @@ impl<'a> Engine<'a> {
     }
 }
 
-fn version_of(outcome: &Outcome) -> Option<String> {
-    match outcome {
-        Outcome::Installed { version } | Outcome::Adopted { version, .. } => Some(version.clone()),
-        Outcome::Skipped { .. } => None,
-    }
-}
-
 /// Expands one string with the recipe's placeholders. A `{marketplace}` that is not resolved is an error, so no
 /// spec is ever built with an empty marketplace.
 fn expand_one(recipe: &Recipe, text: &str, vars: &Vars) -> Result<String> {
@@ -417,7 +494,7 @@ mod tests {
     use crate::host::claude::ClaudeHost;
     use crate::host::opencode::OpencodeHost;
     use crate::net::FakeNet;
-    use crate::recipe::parse_recipe;
+    use crate::recipe::{load_all, parse_recipe};
     use crate::runtime::nvm::npx_bin;
     use crate::runtime::testing::{Recorder, ctx_with};
     use crate::state::lockfile::{LockedTool, Lockfile};
@@ -547,11 +624,17 @@ exec = ["caveman", "telemetry", "off"]
     #[test]
     fn existing_install_is_adopted_not_reinstalled() {
         let root = tempfile::tempdir().unwrap();
-        let recipe = fixture(EXEC_FIXTURE);
+        let rtk = load_all()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == "rtk")
+            .unwrap();
         let runner = Recorder::new(
             FakeRunner::new()
-                .with_program("fixture-pkg", Path::new("/opt/homebrew/bin/fixture-pkg"))
-                .reply("fixture-pkg --version", Output::ok("fixture-pkg 1.2.3\n")),
+                .with_program("rtk", Path::new("/opt/homebrew/bin/rtk"))
+                .reply("rtk --version", Output::ok("rtk 1.2.1\n"))
+                .reply("rtk init -g", Output::ok(""))
+                .reply("rtk telemetry disable", Output::ok("")),
         );
         let ctx = ctx_with(root.path(), &runner, FakeNet::new());
         let hosts = vec![claude(root.path(), "2.1.330")];
@@ -559,21 +642,102 @@ exec = ["caveman", "telemetry", "off"]
         let recipes = vec![];
         let eng = engine(&ctx, &hosts, &recipes, &node);
 
-        let outcomes = eng.install(&recipe).unwrap();
+        let outcomes = eng.install(&rtk).unwrap();
 
         assert_eq!(
             outcomes[0],
             (
                 HostKind::Claude,
                 Outcome::Adopted {
-                    version: "1.2.3".to_string(),
+                    version: "1.2.1".to_string(),
                     route: Route::Brew
                 }
             )
         );
-        assert_eq!(runner.lines(), vec!["fixture-pkg --version".to_string()]);
+        // Adoption probes the version, then runs only the configuration steps. No install argv runs.
+        assert_eq!(
+            runner.lines(),
+            vec![
+                "rtk --version".to_string(),
+                "rtk init -g".to_string(),
+                "rtk telemetry disable".to_string(),
+            ]
+        );
         let lock = Lockfile::load(&ctx).unwrap().unwrap();
-        assert_eq!(lock.tools["fixture"].route, "brew");
+        assert_eq!(lock.tools["rtk"].route, "brew");
+    }
+
+    /// The OpenCode fixture: EXEC_FIXTURE retargeted at OpenCode.
+    fn opencode_fixture() -> Recipe {
+        fixture(&EXEC_FIXTURE.replace("claude", "opencode"))
+    }
+
+    #[test]
+    fn opencode_adoption_reads_the_config_not_the_path() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join(".config/opencode/opencode.jsonc");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "{\"plugins\": [\"fixture@1.2.3\"]}\n").unwrap();
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .reply("rtk telemetry disable", Output::ok(""))
+                .reply("caveman telemetry off", Output::ok("")),
+        );
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let hosts = vec![opencode(root.path())];
+        let node = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node);
+
+        let outcomes = eng.install(&opencode_fixture()).unwrap();
+
+        assert_eq!(
+            outcomes[0],
+            (
+                HostKind::Opencode,
+                Outcome::Adopted {
+                    version: "1.2.3".to_string(),
+                    route: Route::Npm
+                }
+            )
+        );
+        assert_eq!(
+            runner.lines(),
+            vec![
+                "rtk telemetry disable".to_string(),
+                "caveman telemetry off".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_binary_on_the_path_does_not_adopt_an_opencode_install() {
+        let root = tempfile::tempdir().unwrap();
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .with_program("fixture-pkg", Path::new("/usr/local/bin/fixture-pkg"))
+                .reply("fixture-pkg --version", Output::ok("fixture-pkg 1.2.3\n"))
+                .reply("fixture-pkg install", Output::ok(""))
+                .reply("rtk telemetry disable", Output::ok(""))
+                .reply("caveman telemetry off", Output::ok("")),
+        );
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let hosts = vec![opencode(root.path())];
+        let node = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node);
+
+        let outcomes = eng.install(&opencode_fixture()).unwrap();
+
+        assert!(
+            matches!(outcomes[0].1, Outcome::Installed { .. }),
+            "{outcomes:?}"
+        );
+        assert!(
+            runner.lines().contains(&"fixture-pkg install".to_string()),
+            "{:?}",
+            runner.lines()
+        );
     }
 
     #[test]
