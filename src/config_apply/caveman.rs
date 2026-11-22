@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use crate::ctx::Ctx;
 use crate::edit::{block_upsert, jsonc_append, jsonc_get};
+use crate::host::opencode::plugin_name;
 use crate::host::{Host, HostKind};
 use crate::state::{RunId, safe_write};
 
@@ -231,7 +232,7 @@ fn add_plugin_entry(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     };
     if plugins
         .iter()
-        .any(|item| item.as_str() == Some(PLUGIN_SPEC))
+        .any(|item| plugin_name(item) == Some(PLUGIN_SPEC))
     {
         return Ok(());
     }
@@ -483,6 +484,24 @@ mod tests {
         assert!(
             jsonc_get(&text, &["mcp", "legacy"]).unwrap().is_some(),
             "the V1 mcp entry survives"
+        );
+    }
+
+    #[test]
+    fn a_tuple_entry_that_names_the_plugin_is_not_added_again() {
+        // R7-2: `["./plugins/caveman", {}]` names the plugin, so install writes no second entry and the file keeps its
+        // bytes.
+        let root = tempfile::tempdir().unwrap();
+        let config = "{\n  \"plugins\": [[\"./plugins/caveman\", {}]]\n}\n";
+        write(config_path(root.path()), config);
+        let src = owned_repo(root.path());
+        let ctx = ctx(root.path());
+
+        install_opencode_files(&ctx, &ctx.run, &opencode(root.path()), &src).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(config_path(root.path())).unwrap(),
+            config
         );
     }
 

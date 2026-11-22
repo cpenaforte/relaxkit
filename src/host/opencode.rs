@@ -46,12 +46,7 @@ impl OpencodeHost {
             Some(Value::Array(items)) => items
                 .iter()
                 .map(|item| {
-                    // OpenCode also accepts `[name, options]`; the first element is the spec (ruling R6-2).
-                    let spec = match item {
-                        Value::Array(pair) if pair.len() == 2 => &pair[0],
-                        other => other,
-                    };
-                    spec.as_str().map(String::from).ok_or_else(|| {
+                    plugin_name(item).map(String::from).ok_or_else(|| {
                         anyhow!(
                             "plugins in {} has an entry that is not a string",
                             path.display()
@@ -61,6 +56,17 @@ impl OpencodeHost {
                 .collect(),
             Some(_) => bail!("plugins in {} is not a list", path.display()),
         }
+    }
+}
+
+/// The plugin spec a `plugins` entry names. A string is its own spec. A two-element array whose first element is a
+/// string is `[spec, options]`, which OpenCode 2.2.6 accepts (ruling R6-2). Any other shape names no spec, so it is
+/// `None`. Every reader and writer of `plugins` entries uses this one rule (ruling R7-2).
+pub fn plugin_name(entry: &Value) -> Option<&str> {
+    match entry {
+        Value::String(spec) => Some(spec),
+        Value::Array(pair) if pair.len() == 2 => pair[0].as_str(),
+        _ => None,
     }
 }
 
