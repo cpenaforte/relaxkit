@@ -120,9 +120,14 @@ impl<'a> Engine<'a> {
                 }
                 HostKind::Opencode => Route::OpencodePlugin,
             };
+            // The pin is recorded only when the spec pins it. Otherwise the host's reported version is the record.
+            let pinned = spec
+                .contains("{version}")
+                .then(|| recipe.pin.clone())
+                .flatten();
             let version = found
                 .version
-                .or_else(|| recipe.pin.clone())
+                .or(pinned)
                 .unwrap_or_else(|| UNVERSIONED.to_string());
             return Ok(Some((version, route)));
         }
@@ -139,10 +144,8 @@ impl<'a> Engine<'a> {
             else {
                 return Ok(None);
             };
-            let version = found
-                .version
-                .or_else(|| recipe.pin.clone())
-                .unwrap_or_else(|| UNVERSIONED.to_string());
+            // OpenCode wiring has no plugin spec to pin, so the version is the one the config reports.
+            let version = found.version.unwrap_or_else(|| UNVERSIONED.to_string());
             let route = match recipe.kind {
                 Kind::Npm => Route::Npm,
                 Kind::Binary => Route::Script,
@@ -585,6 +588,38 @@ expect = "superpowers"
 plugin = "superpowers@anthropic-plugin-directory"
 "#;
 
+    /// A plugin with no `{version}` in its spec, installed on both hosts.
+    const PLUGIN_ON_BOTH_HOSTS: &str = r#"
+id = "fixture"
+title = "Fixture"
+kind = "plugin"
+hosts = ["claude", "opencode"]
+needs_login = false
+telemetry_default_off = true
+
+[version]
+github = "obra/superpowers"
+pin = "7.0.2"
+
+[minimum_host]
+claude = "2.1.330"
+opencode = "2.2.6"
+
+[probe.claude]
+argv = ["claude", "plugin", "list"]
+expect = "superpowers"
+
+[probe.opencode]
+argv = ["opencode", "--version"]
+expect = "superpowers"
+
+[[install.claude]]
+plugin = "superpowers@anthropic-plugin-directory"
+
+[[install.opencode]]
+plugin = "superpowers"
+"#;
+
     const EXEC_FIXTURE: &str = r#"
 id = "fixture"
 title = "Fixture"
@@ -777,6 +812,58 @@ exec = ["caveman", "telemetry", "off"]
             runner.lines().contains(&"fixture-pkg install".to_string()),
             "{:?}",
             runner.lines()
+        );
+    }
+
+    #[test]
+    fn an_adopted_plugin_with_no_reported_version_is_unversioned_not_the_pin() {
+        let recipe = fixture(PLUGIN_ON_BOTH_HOSTS);
+        let node_root = tempfile::tempdir().unwrap();
+
+        // Claude: the host lists the plugin without a Version field.
+        let runner = Recorder::new(FakeRunner::new().reply(
+            "claude plugin list",
+            Output::ok(
+                "❯ superpowers@anthropic-plugin-directory   Scope: user   Status: ✔ enabled\n",
+            ),
+        ));
+        let ctx = ctx_with(node_root.path(), &runner, FakeNet::new());
+        let hosts = vec![claude(node_root.path(), "2.1.330")];
+        let node_install = node(node_root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node_install);
+        let outcomes = eng.install(&recipe).unwrap();
+        assert_eq!(
+            outcomes[0],
+            (
+                HostKind::Claude,
+                Outcome::Adopted {
+                    version: UNVERSIONED.to_string(),
+                    route: Route::ClaudePlugin("anthropic-plugin-directory".to_string())
+                }
+            )
+        );
+
+        // OpenCode: the config lists the plugin without an @version.
+        let oc_root = tempfile::tempdir().unwrap();
+        let config = oc_root.path().join(".config/opencode/opencode.jsonc");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "{\"plugins\": [\"superpowers\"]}\n").unwrap();
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(oc_root.path(), &runner, FakeNet::new());
+        let hosts = vec![opencode(oc_root.path())];
+        let node_install = node(oc_root.path());
+        let eng = engine(&ctx, &hosts, &recipes, &node_install);
+        let outcomes = eng.install(&recipe).unwrap();
+        assert!(
+            outcomes.contains(&(
+                HostKind::Opencode,
+                Outcome::Adopted {
+                    version: UNVERSIONED.to_string(),
+                    route: Route::OpencodePlugin
+                }
+            )),
+            "{outcomes:?}"
         );
     }
 
