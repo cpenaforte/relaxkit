@@ -2306,11 +2306,12 @@ fn a_link_at_the_gh_pack_path_is_not_written_through() {
         bin.symlink_metadata().unwrap().file_type().is_symlink(),
         "the link was replaced"
     );
-    assert!(
-        !matches!(row(&report, "gh").result, RowResult::Updated),
-        "{:?}",
-        row(&report, "gh")
-    );
+    let reason = match &row(&report, "gh").result {
+        RowResult::NotTouched(reason) => reason.clone(),
+        other => panic!("expected NotTouched, got {other:?}"),
+    };
+    assert!(reason.contains("link"), "{reason}");
+    assert!(report.failed.is_empty(), "{report:?}");
 }
 
 #[test]
