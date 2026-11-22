@@ -9,12 +9,13 @@ telemetry_default_off = true
 
 [version]
 npm = "opencode-sandbox"
+pin = "0.7.0"
 
 [minimum_host]
 opencode = "2.2.6"
 
 [[install.opencode]]
-plugin = "opencode-sandbox@0.7.0"
+plugin = "opencode-sandbox@{version}"
 
 [[install.opencode]]
 handler = "opencode_sandbox_config"

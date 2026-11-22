@@ -8,8 +8,7 @@ use include_dir::{Dir, include_dir};
 pub mod schema;
 
 pub use schema::{
-    KNOWN_HANDLERS, Kind, PLACEHOLDERS, Probe, Recipe, Step, Vars, VersionSource, expand,
-    parse_recipe,
+    KNOWN_HANDLERS, Kind, PLACEHOLDERS, Probe, Recipe, Step, Vars, VersionSource, parse_recipe,
 };
 
 static RECIPES: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/recipes");
@@ -101,7 +100,6 @@ argv = ["fixture", "--version"]
 
     fn vars() -> Vars {
         Vars {
-            version: "1.2.3".into(),
             node: "/n/node".into(),
             npx: "/n/npx".into(),
             marketplace: "/m".into(),
@@ -187,8 +185,16 @@ argv = ["fixture", "--version"]
         }
     }
 
+    fn pinned_fixture() -> Recipe {
+        parse_recipe(&format!(
+            "{FIXTURE}\n[version]\nnpm = \"fixture-pkg\"\npin = \"9.9.9\"\n"
+        ))
+        .unwrap()
+    }
+
     #[test]
     fn expand_substitutes_variables_and_rejects_unknown_ones() {
+        let recipe = pinned_fixture();
         let argv: Vec<String> = [
             "{npx}",
             "-y",
@@ -199,25 +205,166 @@ argv = ["fixture", "--version"]
         .iter()
         .map(|s| s.to_string())
         .collect();
-        let out = expand(&argv, &vars()).unwrap();
+        let out = recipe.expand(&argv, &vars()).unwrap();
         assert_eq!(
             out,
             [
                 "/n/npx",
                 "-y",
-                "@playwright/mcp@1.2.3",
+                "@playwright/mcp@9.9.9",
                 "--executablePath",
                 "/c/chrome"
             ]
         );
 
-        let unknown = expand(&["{nope}".to_string()], &vars())
+        let unknown = recipe
+            .expand(&["{nope}".to_string()], &vars())
             .unwrap_err()
             .to_string();
         assert!(unknown.contains("nope"), "error was: {unknown}");
-        assert!(expand(&["{version".to_string()], &vars()).is_err());
-        assert!(expand(&["version}".to_string()], &vars()).is_err());
-        assert!(expand(&["{}".to_string()], &vars()).is_err());
+        assert!(recipe.expand(&["{version".to_string()], &vars()).is_err());
+        assert!(recipe.expand(&["version}".to_string()], &vars()).is_err());
+        assert!(recipe.expand(&["{}".to_string()], &vars()).is_err());
+    }
+
+    #[test]
+    fn version_placeholder_expands_to_the_pin_and_plugin_specs_follow_it() {
+        let recipe = by_id("superpowers");
+        assert_eq!(recipe.pin.as_deref(), Some("7.0.2"));
+        let spec = recipe
+            .install
+            .get(&HostKind::Opencode)
+            .unwrap()
+            .iter()
+            .find_map(|step| match step {
+                Step::Plugin { spec } => Some(spec.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let out = recipe.expand(&[spec], &vars()).unwrap();
+        assert_eq!(
+            out,
+            ["superpowers@git+https://github.com/obra/superpowers.git#v7.0.2"]
+        );
+    }
+
+    #[test]
+    fn pin_is_required_with_a_source_and_rejected_without_one() {
+        let no_pin = format!("{FIXTURE}\n[version]\nnpm = \"x\"\n");
+        let err = parse_recipe(&no_pin).unwrap_err().to_string();
+        assert!(err.contains("pin"), "error was: {err}");
+
+        let pin_only = format!("{FIXTURE}\n[version]\npin = \"1.0.0\"\n");
+        let err = parse_recipe(&pin_only).unwrap_err().to_string();
+        assert!(err.contains("pin"), "error was: {err}");
+
+        let not_semver = format!("{FIXTURE}\n[version]\nnpm = \"x\"\npin = \"latest\"\n");
+        assert!(parse_recipe(&not_semver).is_err());
+    }
+
+    #[test]
+    fn every_recipe_pin_matches_the_table() {
+        let table: [(&str, Option<&str>); 10] = [
+            ("superpowers", Some("7.0.2")),
+            ("rtk", Some("1.2.1")),
+            ("caveman", Some("4.1.0")),
+            ("playwright", Some("0.0.86")),
+            ("chrome-devtools", Some("1.13.0")),
+            ("serena", Some("2.1.0")),
+            ("ccusage", Some("20.0.51")),
+            ("claude-md-management", None),
+            ("frontend-design", None),
+            ("opencode-sandbox", Some("0.7.0")),
+        ];
+        for (id, pin) in table {
+            let recipe = by_id(id);
+            assert_eq!(recipe.pin.as_deref(), pin, "pin of {id}");
+            assert_eq!(
+                recipe.version != VersionSource::None,
+                pin.is_some(),
+                "source and pin disagree for {id}"
+            );
+        }
+    }
+
+    /// True when the text holds a dotted three-part number that is not written through `{version}`.
+    fn has_version_literal(text: &str) -> bool {
+        let chars: Vec<char> = text.replace("{version}", "").chars().collect();
+        let mut runs = 0;
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i].is_ascii_digit() {
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i + 1 < chars.len() && chars[i] == '.' && chars[i + 1].is_ascii_digit() {
+                    runs += 1;
+                    i += 1;
+                    continue;
+                }
+                if runs == 2 {
+                    return true;
+                }
+                runs = 0;
+            } else {
+                i += 1;
+                runs = 0;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn version_literals_only_appear_through_the_placeholder() {
+        assert!(has_version_literal("pkg@1.13.0"));
+        assert!(!has_version_literal("pkg@{version}"));
+        assert!(!has_version_literal("--enable-web-dashboard"));
+
+        for recipe in embedded() {
+            let mut texts: Vec<String> = Vec::new();
+            for step in recipe
+                .install
+                .values()
+                .chain(recipe.update.values())
+                .flatten()
+            {
+                match step {
+                    Step::Exec { argv, .. } | Step::Mcp { argv, .. } => texts.extend(argv.clone()),
+                    Step::Plugin { spec } => texts.push(spec.clone()),
+                    Step::Handler { .. } => {}
+                }
+            }
+            for probe in recipe.probe.values() {
+                texts.extend(probe.argv.clone());
+            }
+            for text in texts {
+                assert!(
+                    !has_version_literal(&text),
+                    "{}: literal version in `{text}`",
+                    recipe.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn caveman_cli_precedes_the_first_exec_on_opencode() {
+        let steps = by_id("caveman")
+            .install
+            .remove(&HostKind::Opencode)
+            .unwrap();
+        let cli = steps
+            .iter()
+            .position(|s| matches!(s, Step::Handler { name } if name == "caveman_cli"))
+            .expect("opencode install names caveman_cli");
+        let first_exec = steps
+            .iter()
+            .position(|s| matches!(s, Step::Exec { .. }))
+            .expect("opencode install has an exec");
+        assert!(
+            cli < first_exec,
+            "caveman_cli must come before the first exec"
+        );
     }
 
     #[test]

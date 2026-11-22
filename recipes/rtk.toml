@@ -7,6 +7,7 @@ telemetry_default_off = true
 
 [version]
 github = "rtk-ai/rtk"
+pin = "1.2.1"
 
 [minimum_host]
 claude = "2.1.330"

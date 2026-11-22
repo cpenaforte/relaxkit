@@ -11,6 +11,7 @@ telemetry_default_off = true
 
 [version]
 github = "obra/superpowers"
+pin = "7.0.2"
 
 [env]
 SUPERPOWERS_DISABLE_TELEMETRY = "1"
@@ -23,7 +24,7 @@ opencode = "2.2.6"
 plugin = "superpowers@anthropic-plugin-directory"
 
 [[install.opencode]]
-plugin = "superpowers@git+https://github.com/obra/superpowers.git#v7.0.2"
+plugin = "superpowers@git+https://github.com/obra/superpowers.git#v{version}"
 
 [probe.claude]
 argv = ["claude", "plugin", "list"]

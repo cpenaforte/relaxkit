@@ -9,6 +9,7 @@ requires = ["playwright"]
 
 [version]
 npm = "chrome-devtools-mcp"
+pin = "1.13.0"
 
 [env]
 CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS = "1"
@@ -19,14 +20,14 @@ opencode = "2.2.6"
 
 [[install.claude]]
 mcp = "chrome-devtools"
-argv = ["{npx}", "-y", "chrome-devtools-mcp@1.13.0", "--executablePath", "{chromium}", "--no-usage-statistics", "--no-performance-crux"]
+argv = ["{npx}", "-y", "chrome-devtools-mcp@{version}", "--executablePath", "{chromium}", "--no-usage-statistics", "--no-performance-crux"]
 
 [[install.opencode]]
 mcp = "chrome-devtools"
-argv = ["{npx}", "-y", "chrome-devtools-mcp@1.13.0", "--executablePath", "{chromium}", "--no-usage-statistics", "--no-performance-crux"]
+argv = ["{npx}", "-y", "chrome-devtools-mcp@{version}", "--executablePath", "{chromium}", "--no-usage-statistics", "--no-performance-crux"]
 
 [probe.claude]
-argv = ["{npx}", "-y", "chrome-devtools-mcp@1.13.0", "--help"]
+argv = ["{npx}", "-y", "chrome-devtools-mcp@{version}", "--help"]
 
 [probe.opencode]
-argv = ["{npx}", "-y", "chrome-devtools-mcp@1.13.0", "--help"]
+argv = ["{npx}", "-y", "chrome-devtools-mcp@{version}", "--help"]

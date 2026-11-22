@@ -1,5 +1,5 @@
 # Serena runs in a relaxkit-owned directory under the data directory, never in a user project (controller ruling SA-1).
-# The pin is resolved at install time from PyPI. Updates reinstall (spike A I6).
+# The pin lives in [version]. Updates reinstall (spike A I6).
 # OpenCode has no confirmed context name, so its entry uses serena's default. Task 12 checks `serena start-mcp-server --help`.
 id = "serena"
 title = "Serena"
@@ -11,6 +11,7 @@ workdir = "data/serena"
 
 [version]
 pypi = "serena-agent"
+pin = "2.1.0"
 
 [env]
 SERENA_USAGE_REPORTING = "false"

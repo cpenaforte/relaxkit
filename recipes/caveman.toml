@@ -10,6 +10,7 @@ telemetry_default_off = true
 
 [version]
 npm = "@caveman-ai/cli"
+pin = "4.1.0"
 
 [minimum_host]
 claude = "2.1.330"
@@ -29,6 +30,9 @@ exec = ["caveman", "off", "routing", "--yes"]
 
 [[install.claude]]
 exec = ["caveman", "telemetry", "off"]
+
+[[install.opencode]]
+handler = "caveman_cli"
 
 [[install.opencode]]
 handler = "caveman_opencode"

@@ -80,6 +80,9 @@ pub struct Recipe {
     /// The loader cannot prove it. Always true in an accepted recipe.
     pub telemetry_default_off: bool,
     pub version: VersionSource,
+    /// The exact release relaxkit installs. Set exactly when `version` names a source.
+    /// `{version}` in argv and plugin specs expands to this and nothing else.
+    pub pin: Option<String>,
     /// Ids of other recipes that must be installed first.
     pub requires: Vec<String>,
     /// Environment variables relaxkit sets for this tool on each host.
@@ -96,7 +99,6 @@ pub struct Recipe {
 /// Values substituted into `{name}` placeholders in argv.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Vars {
-    pub version: String,
     pub node: String,
     pub npx: String,
     pub marketplace: String,
@@ -106,7 +108,6 @@ pub struct Vars {
 impl Vars {
     fn get(&self, name: &str) -> Option<&str> {
         match name {
-            "version" => Some(&self.version),
             "node" => Some(&self.node),
             "npx" => Some(&self.npx),
             "marketplace" => Some(&self.marketplace),
@@ -116,24 +117,33 @@ impl Vars {
     }
 }
 
-/// Replaces each `{name}` in every argument. An unknown name, or unbalanced braces, is an error.
-pub fn expand(argv: &[String], vars: &Vars) -> Result<Vec<String>> {
-    argv.iter()
-        .map(|arg| {
-            let mut out = String::with_capacity(arg.len());
-            for piece in pieces(arg)? {
-                match piece {
-                    Piece::Text(text) => out.push_str(text),
-                    Piece::Var(name) => {
-                        out.push_str(vars.get(name).ok_or_else(|| {
+impl Recipe {
+    /// Replaces each `{name}` in every argument or plugin spec. `{version}` is this recipe's pin, and
+    /// nothing else fills it. An unknown name, a missing pin, or unbalanced braces is an error.
+    pub fn expand(&self, argv: &[String], vars: &Vars) -> Result<Vec<String>> {
+        argv.iter()
+            .map(|arg| {
+                let mut out = String::with_capacity(arg.len());
+                for piece in pieces(arg)? {
+                    match piece {
+                        Piece::Text(text) => out.push_str(text),
+                        Piece::Var("version") => {
+                            out.push_str(self.pin.as_deref().ok_or_else(|| {
+                                anyhow!(
+                                    "recipe `{}` has no pin, so {{version}} cannot expand",
+                                    self.id
+                                )
+                            })?)
+                        }
+                        Piece::Var(name) => out.push_str(vars.get(name).ok_or_else(|| {
                             anyhow!("unknown placeholder `{{{name}}}` in `{arg}`")
-                        })?)
+                        })?),
                     }
                 }
-            }
-            Ok(out)
-        })
-        .collect()
+                Ok(out)
+            })
+            .collect()
+    }
 }
 
 enum Piece<'a> {
@@ -207,6 +217,7 @@ struct RawVersion {
     github: Option<String>,
     npm: Option<String>,
     pypi: Option<String>,
+    pin: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -244,9 +255,9 @@ impl RawRecipe {
             bail!("recipe `{id}` needs a non-empty id and title");
         }
         let hosts = parse_hosts(&id, &self.hosts)?;
-        let version = match self.version {
-            Some(raw) => raw.into_source(&id)?,
-            None => VersionSource::None,
+        let (version, pin) = match self.version {
+            Some(raw) => raw.into_parts(&id)?,
+            None => (VersionSource::None, None),
         };
         if let Some(workdir) = self
             .workdir
@@ -294,6 +305,7 @@ impl RawRecipe {
             needs_login: self.needs_login,
             telemetry_default_off: self.telemetry_default_off,
             version,
+            pin,
             requires: self.requires,
             env: self.env,
             workdir: self.workdir,
@@ -308,7 +320,8 @@ impl RawRecipe {
 }
 
 impl RawVersion {
-    fn into_source(self, id: &str) -> Result<VersionSource> {
+    /// A source and its pin come together: a source needs a semver pin, and a pin needs a source.
+    fn into_parts(self, id: &str) -> Result<(VersionSource, Option<String>)> {
         let mut found = Vec::new();
         if let Some(repo) = self.github {
             found.push(VersionSource::Github { repo });
@@ -320,7 +333,12 @@ impl RawVersion {
             found.push(VersionSource::Pypi { package });
         }
         let source = match found.len() {
-            0 => return Ok(VersionSource::None),
+            0 => {
+                if self.pin.is_some() {
+                    bail!("recipe `{id}` names a pin but no version source");
+                }
+                return Ok((VersionSource::None, None));
+            }
             1 => found.remove(0),
             _ => bail!("recipe `{id}` names more than one version source"),
         };
@@ -334,7 +352,12 @@ impl RawVersion {
         if empty {
             bail!("recipe `{id}` has an empty version source");
         }
-        Ok(source)
+        let pin = self
+            .pin
+            .ok_or_else(|| anyhow!("recipe `{id}` names a version source but no pin"))?;
+        Version::parse(&pin)
+            .with_context(|| format!("recipe `{id}` pins `{pin}`, which is not semver"))?;
+        Ok((source, Some(pin)))
     }
 }
 
@@ -435,34 +458,33 @@ fn convert_steps(
     Ok(out)
 }
 
-/// Every placeholder must be known, and `{version}` needs a version source to fill it.
+/// Every placeholder must be known, and `{version}` needs a pin to fill it. Covers argv, probes and plugin specs.
 fn check_placeholders(recipe: &Recipe) -> Result<()> {
-    let argvs = recipe
+    let mut texts: Vec<&String> = Vec::new();
+    for step in recipe
         .install
         .values()
         .chain(recipe.update.values())
         .flatten()
-        .filter_map(|step| match step {
-            Step::Exec { argv, .. } | Step::Mcp { argv, .. } => Some(argv),
-            Step::Plugin { .. } | Step::Handler { .. } => None,
-        })
-        .chain(recipe.probe.values().map(|probe| &probe.argv));
-    for argv in argvs {
-        for arg in argv {
-            for piece in pieces(arg)? {
-                if let Piece::Var(name) = piece {
-                    if !PLACEHOLDERS.contains(&name) {
-                        bail!(
-                            "recipe `{}` uses unknown placeholder `{{{name}}}`",
-                            recipe.id
-                        );
-                    }
-                    if name == "version" && recipe.version == VersionSource::None {
-                        bail!(
-                            "recipe `{}` uses {{version}} but names no version source",
-                            recipe.id
-                        );
-                    }
+    {
+        match step {
+            Step::Exec { argv, .. } | Step::Mcp { argv, .. } => texts.extend(argv),
+            Step::Plugin { spec } => texts.push(spec),
+            Step::Handler { .. } => {}
+        }
+    }
+    texts.extend(recipe.probe.values().flat_map(|probe| &probe.argv));
+    for text in texts {
+        for piece in pieces(text)? {
+            if let Piece::Var(name) = piece {
+                if !PLACEHOLDERS.contains(&name) {
+                    bail!(
+                        "recipe `{}` uses unknown placeholder `{{{name}}}`",
+                        recipe.id
+                    );
+                }
+                if name == "version" && recipe.pin.is_none() {
+                    bail!("recipe `{}` uses {{version}} but has no pin", recipe.id);
                 }
             }
         }
