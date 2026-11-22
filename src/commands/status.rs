@@ -78,7 +78,7 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                 let Some(host) = hosts.iter().find(|host| host.info().kind == kind) else {
                     lines.push(format!(
                         "{id} on {kind}: locked {}, host not installed",
-                        tool.version
+                        tool.version_for(host_name)
                     ));
                     continue;
                 };
@@ -87,14 +87,16 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                     Ok(None) => "not found".to_string(),
                     Err(err) => format!("unreadable ({err:#})"),
                 };
-                let state = if installed == tool.version {
+                // Each host is compared with the version its own lock entry records (K73).
+                let locked = tool.version_for(host_name);
+                let state = if installed == locked {
                     "as locked".to_string()
                 } else {
-                    format!("drift: locked {}", tool.version)
+                    format!("drift: locked {locked}")
                 };
                 lines.push(format!(
-                    "{id} on {kind}: installed {installed}, locked {} ({}); {state}",
-                    tool.version, tool.route
+                    "{id} on {kind}: installed {installed}, locked {locked} ({}); {state}",
+                    tool.route
                 ));
                 if let Some(need) = recipe.minimum_host.get(&kind)
                     && let HostCheck::TooOld { have, need } = check_minimum(host.info(), need)

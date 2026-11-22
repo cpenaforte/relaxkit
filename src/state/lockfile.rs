@@ -24,7 +24,8 @@ pub struct LockedTool {
     pub version: String,
     pub route: String,
     pub hosts: Vec<String>,
-    /// The version of each host that differs from `version`, so a partial update keeps the other host's version.
+    /// The version each host is at, one entry per host, so a partial update keeps the other host's version (K73).
+    /// A lock file written before this table existed has none: `version` then applies to every host.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub host_versions: BTreeMap<String, String>,
 }
@@ -39,20 +40,20 @@ impl LockedTool {
     }
 
     /// The entry after `updated` hosts moved to `version` by `route`. Every other host keeps the version it had, so a
-    /// partial update never moves a host it did not touch (ruling K73). `version` stays the primary value, and only
-    /// hosts that differ from it are listed in `host_versions`.
+    /// partial update never moves a host it did not touch (ruling K73). `version` is the version the move wrote, and
+    /// `host_versions` records every host's own version, so no host's version is inferred from another's.
     pub fn moved(&self, updated: &[String], version: &str, route: &str) -> LockedTool {
         let mut hosts: BTreeSet<String> = self.hosts.iter().cloned().collect();
         hosts.extend(updated.iter().cloned());
         let host_versions = hosts
             .iter()
-            .filter_map(|host| {
+            .map(|host| {
                 let at = if updated.contains(host) {
                     version.to_string()
                 } else {
                     self.version_for(host).to_string()
                 };
-                (at != version).then(|| (host.clone(), at))
+                (host.clone(), at)
             })
             .collect();
         LockedTool {
@@ -152,16 +153,30 @@ mod tests {
             moved.hosts,
             vec!["claude".to_string(), "opencode".to_string()]
         );
-        assert_eq!(moved.host_versions.len(), 1);
+        // Every host has its own entry, so neither host's version depends on the other's.
+        assert_eq!(moved.host_versions.len(), 2);
     }
 
     #[test]
-    fn a_full_move_leaves_no_host_overrides_and_keeps_the_hosts() {
+    fn a_full_move_records_the_host_and_keeps_the_route_rule() {
         let before = tool("7.0.2", &["claude"]);
         let moved = before.moved(&["claude".to_string()], "7.0.3", "npm");
-        assert!(moved.host_versions.is_empty());
+        assert_eq!(
+            moved.host_versions.get("claude").map(String::as_str),
+            Some("7.0.3")
+        );
         assert_eq!(moved.version_for("claude"), "7.0.3");
         assert_eq!(moved.route, "npm");
+    }
+
+    #[test]
+    fn a_lock_written_before_the_host_table_still_reads() {
+        let text = "relaxkit = \"0.1.0\"\n\n[tools.superpowers]\nversion = \"7.0.2\"\nroute = \"npm\"\nhosts = [\"claude\", \"opencode\"]\n";
+        let lock: Lockfile = toml::from_str(text).unwrap();
+        let tool = &lock.tools["superpowers"];
+        assert!(tool.host_versions.is_empty());
+        assert_eq!(tool.version_for("claude"), "7.0.2");
+        assert_eq!(tool.version_for("opencode"), "7.0.2");
     }
 
     #[test]

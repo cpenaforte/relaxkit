@@ -961,6 +961,79 @@ fn an_opencode_update_the_config_does_not_show_is_rolled_back_and_named() {
 }
 
 #[test]
+fn status_reports_no_drift_after_a_partial_update() {
+    // Claude moved to 7.0.3 and OpenCode stayed at 7.0.2. The lock records each host's own version, so status compares
+    // each host with it and reports no drift on either (K73).
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    let config = root.join(".config/opencode/opencode.jsonc");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        &config,
+        "{\"plugins\": [\"superpowers@git+https://github.com/obra/superpowers.git#v7.0.2\"]}\n",
+    )
+    .unwrap();
+    let claude_info = HostInfo {
+        kind: HostKind::Claude,
+        binary: PathBuf::from("/usr/local/bin/claude"),
+        version: "2.1.330".to_string(),
+    };
+    let opencode_info = HostInfo {
+        kind: HostKind::Opencode,
+        binary: PathBuf::from("/usr/local/bin/opencode"),
+        version: "2.2.6".to_string(),
+    };
+    fx.hosts = vec![
+        Box::new(ClaudeHost::new(
+            claude_info,
+            root.join(".claude"),
+            root.join(".claude.json"),
+        )),
+        Box::new(OpencodeHost::new(
+            opencode_info,
+            root.join(".config/opencode"),
+        )),
+    ];
+    fx.shell.on(
+        "claude plugin list",
+        Output::ok("superpowers@anthropic-plugin-directory  Version: 7.0.3\n"),
+    );
+    fx.lock(&[(
+        "superpowers",
+        "7.0.2",
+        "claude-plugin:anthropic-plugin-directory",
+        &["claude", "opencode"],
+    )]);
+    let before = fx.read_lock().tools["superpowers"].clone();
+    let moved = before.moved(
+        &["claude".to_string()],
+        "7.0.3",
+        "claude-plugin:anthropic-plugin-directory",
+    );
+    let mut tools = BTreeMap::new();
+    tools.insert("superpowers".to_string(), moved);
+    Lockfile {
+        relaxkit: "0.1.0".to_string(),
+        tools,
+    }
+    .save(&fx.ctx(), &fx.run)
+    .unwrap();
+
+    let report = relaxkit::commands::status::report_for(&fx.ctx(), &fx.hosts).unwrap();
+
+    let lines: Vec<&String> = report
+        .lines
+        .iter()
+        .filter(|line| line.starts_with("superpowers on"))
+        .collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(
+        lines.iter().all(|line| line.contains("as locked")),
+        "{lines:?}"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
