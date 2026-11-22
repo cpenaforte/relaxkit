@@ -260,27 +260,34 @@ fn compact_at_256k_writes_both_hosts() {
     let scratch = Scratch::new();
     with_models(&scratch, MODELS);
 
-    scratch
+    let assert = scratch
         .relaxkit()
         .args(["config", "set", "compact-at", "256k"])
         .assert()
         .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     let settings: Value = serde_json::from_str(&read(&claude_settings(scratch.home())))
         .expect("settings.json is JSON");
     assert_eq!(
         settings["modelSettings"]["claude-opus-5-5"]["autoCompactWindow"],
-        json!(256_000)
+        json!(256_000),
+        "Claude Code's threshold is absolute, so it is written"
     );
-    // The balanced preset's planner is `smarter`, so the default model is opus with a 400000 window.
+    // K114: OpenCode has no verified window source yet, so its compaction buffer is not written.
+    let opencode_text = fs::read_to_string(opencode_config(scratch.home())).unwrap_or_default();
+    let buffer = if opencode_text.is_empty() {
+        None
+    } else {
+        jsonc_get(&opencode_text, &["compaction", "buffer"]).unwrap()
+    };
     assert_eq!(
-        jsonc_get(
-            &read(&opencode_config(scratch.home())),
-            &["compaction", "buffer"]
-        )
-        .unwrap()
-        .and_then(|v| v.as_u64()),
-        Some(144_000)
+        buffer, None,
+        "no OpenCode buffer without a verified window source"
+    );
+    assert!(
+        stderr.contains("no verified window source"),
+        "the warning must say why OpenCode was left alone: {stderr}"
     );
 }
 

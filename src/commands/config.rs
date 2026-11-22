@@ -3,7 +3,6 @@
 //! host (saved under `[hosts.<host>.roles]`). `--project` writes the project-level files instead and leaves
 //! `config.toml` alone. Every write goes through `state::safe_write`, so `relaxkit undo` reverts it.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
@@ -12,11 +11,11 @@ use serde_json::{Value, json};
 use crate::config::{KitConfig, effective, parse_compact};
 use crate::config_apply::{claude, opencode, voice};
 use crate::ctx::Ctx;
-use crate::edit::{jsonc_get, jsonc_remove};
+use crate::edit::jsonc_remove;
 use crate::exec::Cmd;
 use crate::host::{Host, HostInfo, HostKind, InstalledPlugin, detect_hosts};
 use crate::presets::Voice;
-use crate::roles::{ModelSpec, Role, RoleSetting, Tier, resolve_claude, resolve_opencode};
+use crate::roles::{ModelSpec, Role, RoleSetting, resolve_claude, resolve_opencode};
 use crate::state::{RunId, with_run_lock};
 
 /// The two hosts, in the order their settings are written.
@@ -250,13 +249,12 @@ fn set_compact(ctx: &Ctx, run: &RunId, tokens: u64) -> Result<()> {
                 )?;
             }
             HostKind::Opencode => {
-                let ids = listing(ctx, host.as_ref());
-                let window = default_window(ctx, host.as_ref(), ids.as_deref());
-                match opencode::apply_compact(ctx, run, host.as_ref(), tokens, window)? {
+                // K114: no verified window source exists for OpenCode yet, so no buffer is written.
+                match opencode::apply_compact(ctx, run, host.as_ref(), tokens, None)? {
                     opencode::CompactNote::Applied { .. } => {}
-                    opencode::CompactNote::KeptDefault => ctx.out.warn(&format!(
-                        "OpenCode's window for its default model is not known or is not above {tokens} tokens, so its compaction buffer was left as it is"
-                    )),
+                    opencode::CompactNote::KeptDefault => ctx.out.warn(
+                        "OpenCode's compaction buffer is not written: there is no verified window source for its default model yet, so OpenCode keeps its own threshold",
+                    ),
                 }
             }
         }
@@ -455,41 +453,6 @@ fn listing(ctx: &Ctx, host: &dyn Host) -> Option<Vec<String>> {
         .map(str::to_string)
         .collect();
     (!ids.is_empty()).then_some(ids)
-}
-
-/// The context window of each model, from `opencode models --verbose` (`id window` per line). Empty when unreadable.
-fn windows(ctx: &Ctx, host: &dyn Host) -> BTreeMap<String, u64> {
-    let binary = host.info().binary.to_string_lossy().into_owned();
-    let Ok(out) = ctx
-        .runner
-        .run(&Cmd::new(&binary).args(&["models", "--verbose"]))
-    else {
-        return BTreeMap::new();
-    };
-    if out.code != 0 {
-        return BTreeMap::new();
-    }
-    out.stdout
-        .lines()
-        .filter_map(|line| {
-            let mut words = line.split_whitespace();
-            let id = words.next()?;
-            let window = words.next()?.parse::<u64>().ok()?;
-            Some((id.to_string(), window))
-        })
-        .collect()
-}
-
-/// The window of OpenCode's default model: the `model` key of its config, else the newest Anthropic model of the
-/// smarter tier. `None` when the window is unknown.
-fn default_window(ctx: &Ctx, host: &dyn Host, ids: Option<&[String]>) -> Option<u64> {
-    let ids = ids?;
-    let configured = read_or_empty(&host.config_file(ctx))
-        .ok()
-        .and_then(|text| jsonc_get(&text, &["model"]).ok().flatten())
-        .and_then(|value| value.as_str().map(str::to_string));
-    let model = configured.or_else(|| resolve_opencode(&RoleSetting::Tier(Tier::Smarter), ids))?;
-    windows(ctx, host).get(&model).copied()
 }
 
 /// The hosts this command acts on. With `--project` they are wrapped so their files are the project's.
