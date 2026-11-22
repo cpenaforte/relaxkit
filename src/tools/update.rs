@@ -122,9 +122,20 @@ impl Engine<'_> {
                     let name = plugin_name(&expanded[0]).to_string();
                     let want = next.pin.clone().unwrap_or_default();
                     let listed = host.plugin_list(self.ctx)?;
-                    if !listed.iter().any(|plugin| {
-                        plugin.name == name && plugin.version.as_deref() == Some(want.as_str())
-                    }) {
+                    // Exactly one entry for the package, at the target version (F2-4). Two entries means the old spec
+                    // survived the remove, and two loaded copies of one plugin are not the target state.
+                    let entries: Vec<_> =
+                        listed.iter().filter(|plugin| plugin.name == name).collect();
+                    if entries.len() > 1 {
+                        bail!(
+                            "the OpenCode config lists {} entries for {name}, not one, after the update",
+                            entries.len()
+                        );
+                    }
+                    if !entries
+                        .iter()
+                        .any(|plugin| plugin.version.as_deref() == Some(want.as_str()))
+                    {
                         bail!(
                             "the OpenCode config does not list {name} at {want} after the update"
                         );

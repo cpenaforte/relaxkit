@@ -1203,6 +1203,87 @@ fn a_claude_update_in_the_real_listing_shape_succeeds_and_moves_the_lock() {
 }
 
 #[test]
+fn an_opencode_config_with_two_entries_for_the_plugin_is_rolled_back() {
+    // `opencode plugin remove` leaves the old spec in place, so after the add the config lists both the old and the new
+    // spec. Exactly one entry per plugin is the rule (F2-4), so the update is rolled back and named, and the lock keeps
+    // the old version. The rollback removes the new entry and finds the old one again.
+    let mut fx = Fixture::new();
+    let config = fx.root().join(".config/opencode/opencode.jsonc");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let old = "superpowers@git+https://github.com/obra/superpowers.git#v7.0.2";
+    let entries = Arc::new(Mutex::new(vec![old.to_string()]));
+    let render = |list: &[String]| {
+        format!(
+            "{{\"plugins\": [{}]}}\n",
+            list.iter()
+                .map(|entry| format!("\"{entry}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    fs::write(&config, render(&entries.lock().unwrap())).unwrap();
+    fx.hosts = vec![Box::new(OpencodeHost::new(
+        HostInfo {
+            kind: HostKind::Opencode,
+            binary: PathBuf::from("/usr/local/bin/opencode"),
+            version: "2.2.6".to_string(),
+        },
+        fx.root().join(".config/opencode"),
+    ))];
+    fx.lock(&[("superpowers", "7.0.2", "opencode-plugin", &["opencode"])]);
+    let before = fx.read_lock();
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.3"}"#,
+    );
+    fx.shell.on("opencode plugin remove", Output::ok(""));
+    fx.shell.on("opencode plugin add", Output::ok(""));
+    fx.shell.on("opencode --version", Output::ok("2.2.6\n"));
+    // The remove of the old spec does nothing: the stale entry stays. Any other remove works.
+    let kept = entries.clone();
+    let file = config.clone();
+    fx.shell.effect(
+        "opencode plugin remove",
+        Arc::new(move |cmd| {
+            let spec = cmd.argv().last().cloned().unwrap_or_default();
+            if spec != old {
+                let mut list = kept.lock().unwrap();
+                list.retain(|entry| *entry != spec);
+                fs::write(&file, render(&list)).unwrap();
+            }
+        }),
+    );
+    let added = entries.clone();
+    let file = config.clone();
+    fx.shell.effect(
+        "opencode plugin add",
+        Arc::new(move |cmd| {
+            let spec = cmd.argv().last().cloned().unwrap_or_default();
+            let mut list = added.lock().unwrap();
+            if !list.contains(&spec) {
+                list.push(spec);
+            }
+            fs::write(&file, render(&list)).unwrap();
+        }),
+    );
+
+    let report = fx.run(false, Some("superpowers")).unwrap();
+
+    let row = row(&report, "superpowers");
+    assert!(matches!(row.result, RowResult::RolledBack), "{row:?}");
+    assert!(
+        row.note.as_deref().unwrap_or("").contains("2 entries"),
+        "the note does not name the two entries: {row:?}"
+    );
+    assert_eq!(report.failed, vec!["superpowers".to_string()]);
+    assert_eq!(
+        fx.read_lock().tools["superpowers"],
+        before.tools["superpowers"],
+        "the lock moved"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
