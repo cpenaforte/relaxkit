@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
@@ -19,8 +19,8 @@ use crate::state::RunId;
 /// The repository whose latest tag supplies caveman's OpenCode files.
 pub const CAVEMAN_REPO: &str = "JuliusBrussee/caveman";
 
-/// Resolves the latest tag, downloads its repository archive into a fresh per-run directory, checks every entry, and
-/// unpacks it there. Returns the repository root (the archive's top folder is stripped). Nothing is unpacked when a
+/// Resolves the latest tag, downloads its repository archive into a fresh per-run directory, checks every entry, unpacks
+/// it there, and walks the result for links. A link found after unpacking deletes the extraction. Returns the repository root (the archive's top folder is stripped). Nothing is unpacked when a
 /// check fails.
 pub fn fetch_latest_source(ctx: &Ctx, run: &RunId) -> Result<PathBuf> {
     let tag = github_latest_tag(ctx.net.as_ref(), CAVEMAN_REPO)?;
@@ -53,11 +53,18 @@ pub fn fetch_latest_source(ctx: &Ctx, run: &RunId) -> Result<PathBuf> {
             out.stderr.trim()
         );
     }
+    if let Err(err) = refuse_links_in(&extract) {
+        fs::remove_dir_all(&extract)
+            .with_context(|| format!("cannot remove {}", extract.display()))?;
+        return Err(err);
+    }
     Ok(extract)
 }
 
-/// Refuses an archive with an unsafe name, a hard link, a link that leaves the archive, or an unknown entry type.
-/// The listing is read twice, by name and by type, and the two must line up.
+/// Refuses an archive with an unsafe name, or with any entry that is not a regular file or a directory, judged by the
+/// first character of each verbose line: a symbolic link (`l`), a hard link (`h`) or a device is refused before anything
+/// is unpacked. The listing is read twice, by name and by type, and the two must line up. A pax global header (`g`) is
+/// accepted: it holds no file content and creates nothing on disk.
 fn check_archive(ctx: &Ctx, archive: &Path) -> Result<()> {
     let names = listing(ctx, archive, "-tf")?;
     let verbose = listing(ctx, archive, "-tvf")?;
@@ -66,26 +73,52 @@ fn check_archive(ctx: &Ctx, archive: &Path) -> Result<()> {
     }
     for (name, line) in names.iter().zip(verbose.iter()) {
         check_name(name)?;
-        if line.contains(&format!("{name} link to ")) || line.starts_with('h') {
-            bail!("hard link `{name}` refused; nothing was unpacked");
-        }
         match line.chars().next() {
             Some('-' | 'd' | 'g') => {}
-            Some('l') => {
-                let marker = format!("{name} -> ");
-                let target = line
-                    .rfind(&marker)
-                    .map(|at| &line[at + marker.len()..])
-                    .ok_or_else(|| {
-                        anyhow!("cannot read the target of symbolic link `{name}`; refused")
-                    })?;
-                if !link_stays_inside(name, target) {
-                    bail!(
-                        "symbolic link `{name}` leaves the archive; refused, nothing was unpacked"
-                    );
-                }
-            }
-            _ => bail!("archive entry `{name}` has an unsupported type; nothing was unpacked"),
+            Some('l') => bail!("symbolic link `{name}` refused; nothing was unpacked"),
+            Some('h') => bail!("hard link `{name}` refused; nothing was unpacked"),
+            other => bail!(
+                "archive entry `{name}` is not a regular file or directory (type {}); refused, nothing was unpacked",
+                other.map_or_else(|| "unknown".to_string(), |c| format!("`{c}`"))
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// After unpacking, refuses any symbolic link, device or other non-file, non-directory entry in the tree.
+fn refuse_links_in(dir: &Path) -> Result<()> {
+    let meta =
+        fs::symlink_metadata(dir).with_context(|| format!("cannot inspect {}", dir.display()))?;
+    if meta.file_type().is_symlink() {
+        bail!(
+            "symbolic link {} in the extracted archive; refused",
+            dir.display()
+        );
+    }
+    if !meta.is_dir() {
+        return Ok(());
+    }
+    for child in fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))? {
+        let path = child
+            .with_context(|| format!("cannot read {}", dir.display()))?
+            .path();
+        let kind = fs::symlink_metadata(&path)
+            .with_context(|| format!("cannot inspect {}", path.display()))?
+            .file_type();
+        if kind.is_symlink() {
+            bail!(
+                "symbolic link {} in the extracted archive; refused",
+                path.display()
+            );
+        }
+        if kind.is_dir() {
+            refuse_links_in(&path)?;
+        } else if !kind.is_file() {
+            bail!(
+                "{} is not a regular file or directory; refused",
+                path.display()
+            );
         }
     }
     Ok(())
@@ -120,33 +153,6 @@ fn listing(ctx: &Ctx, archive: &Path, flag: &str) -> Result<Vec<String>> {
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
         .collect())
-}
-
-/// Whether a symbolic link at `entry` with `target` resolves inside the archive's top folder. The top folder is the
-/// first part of `entry`, because it is stripped on unpack. An absolute target never stays inside.
-pub fn link_stays_inside(entry: &str, target: &str) -> bool {
-    if target.starts_with('/') {
-        return false;
-    }
-    // The link's own name is dropped, and so is the stripped top folder.
-    let mut depth: Vec<&str> = entry
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .skip(1)
-        .collect();
-    depth.pop();
-    for part in target.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                if depth.pop().is_none() {
-                    return false;
-                }
-            }
-            other => depth.push(other),
-        }
-    }
-    true
 }
 
 #[cfg(test)]
@@ -317,11 +323,11 @@ mod tests {
 
         let err = format!("{:#}", fetch_latest_source(&ctx, &ctx.run).unwrap_err());
 
-        assert!(err.contains("link"), "{err}");
+        assert!(err.contains("symbolic link"), "{err}");
     }
 
     #[test]
-    fn a_symbolic_link_that_stays_inside_the_archive_is_accepted() {
+    fn a_symbolic_link_inside_the_archive_is_refused_and_nothing_is_unpacked() {
         let root = tempfile::tempdir().unwrap();
         let archive = tar_bytes(&[
             file("caveman-4.1.0/src/real.js", b"// real\n"),
@@ -330,9 +336,68 @@ mod tests {
         let runner = runner();
         let ctx = ctx_with(root.path(), &runner, serve(archive));
 
+        let err = format!("{:#}", fetch_latest_source(&ctx, &ctx.run).unwrap_err());
+
+        assert!(err.contains("symbolic link"), "{err}");
+        assert!(
+            !download_dir(&ctx, &ctx.run, "caveman")
+                .join("extract")
+                .exists(),
+            "nothing is unpacked after a refusal"
+        );
+    }
+
+    #[test]
+    fn a_symbolic_link_whose_name_holds_an_arrow_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let archive = tar_bytes(&[
+            file("caveman-4.1.0/src/real.js", b"// real\n"),
+            link("caveman-4.1.0/a -> src/real.js", b'2', "src/real.js"),
+        ]);
+        let runner = runner();
+        let ctx = ctx_with(root.path(), &runner, serve(archive));
+
+        let err = format!("{:#}", fetch_latest_source(&ctx, &ctx.run).unwrap_err());
+
+        assert!(err.contains("symbolic link"), "{err}");
+    }
+
+    #[test]
+    fn a_regular_file_whose_name_holds_an_arrow_is_accepted() {
+        let root = tempfile::tempdir().unwrap();
+        let archive = tar_bytes(&[file("caveman-4.1.0/a -> b.js", b"// arrow\n")]);
+        let runner = runner();
+        let ctx = ctx_with(root.path(), &runner, serve(archive));
+
         let source = fetch_latest_source(&ctx, &ctx.run).unwrap();
 
-        assert!(source.join("alias.js").exists());
+        assert_eq!(
+            fs::read_to_string(source.join("a -> b.js")).unwrap(),
+            "// arrow\n"
+        );
+    }
+
+    #[test]
+    fn refuse_links_in_refuses_a_symbolic_link_in_the_extracted_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let tree = root.path().join("extract");
+        fs::create_dir_all(tree.join("src")).unwrap();
+        fs::write(tree.join("src/real.js"), "// real\n").unwrap();
+        std::os::unix::fs::symlink(tree.join("src/real.js"), tree.join("src/alias.js")).unwrap();
+
+        let err = format!("{:#}", refuse_links_in(&tree).unwrap_err());
+
+        assert!(err.contains("symbolic link"), "{err}");
+    }
+
+    #[test]
+    fn refuse_links_in_accepts_a_plain_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let tree = root.path().join("extract");
+        fs::create_dir_all(tree.join("src")).unwrap();
+        fs::write(tree.join("src/real.js"), "// real\n").unwrap();
+
+        refuse_links_in(&tree).unwrap();
     }
 
     #[test]
@@ -348,14 +413,5 @@ mod tests {
         let err = format!("{:#}", fetch_latest_source(&ctx, &ctx.run).unwrap_err());
 
         assert!(err.contains("hard link"), "{err}");
-    }
-
-    #[test]
-    fn link_resolution_stays_inside_the_root() {
-        assert!(link_stays_inside("caveman-4.1.0/alias.js", "src/real.js"));
-        assert!(link_stays_inside("caveman-4.1.0/src/a/link", "../b.js"));
-        assert!(!link_stays_inside("caveman-4.1.0/link", "../outside"));
-        assert!(!link_stays_inside("caveman-4.1.0/src/link", "../../../x"));
-        assert!(!link_stays_inside("caveman-4.1.0/link", "/etc/passwd"));
     }
 }
