@@ -90,7 +90,17 @@ fn backup_path(ctx: &Ctx, run: &RunId, target: &Path) -> PathBuf {
 }
 
 /// Reverts a run (the last one when `run` is `None`), newest change first. Returns the touched paths.
+/// The journal lock is held from the read to the rewrite, so an append from another process
+/// cannot be lost in between. A dry run changes nothing and takes no lock.
 pub fn undo(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
+    if ctx.dry_run {
+        return revert(ctx, run);
+    }
+    journal::with_journal_lock(&ctx.dirs, || revert(ctx, run))
+}
+
+/// The body of `undo`. The caller holds the journal lock unless this is a dry run.
+fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
     let records = journal::read(&ctx.dirs)?;
     let target = match run {
         Some(run) => run.clone(),
@@ -110,7 +120,7 @@ pub fn undo(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
         touched.push(record.file.clone());
     }
     if !ctx.dry_run {
-        journal::rewrite(&ctx.dirs, &rest)?;
+        journal::rewrite_under_lock(&ctx.dirs, &rest)?;
         let backups = ctx.dirs.backups.join(target.as_str());
         if backups.exists() {
             fs::remove_dir_all(&backups)
@@ -431,6 +441,35 @@ mod tests {
 
         undo(&ctx, None).unwrap();
 
+        assert_eq!(fs::read_to_string(&file).unwrap(), "orig");
+    }
+
+    #[test]
+    fn undo_waits_for_the_journal_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let ctx = test_ctx(&root);
+        let file = root.join("settings.json");
+        fs::write(&file, "orig").unwrap();
+        safe_write(&ctx, &RunId::new(), &file, "new").unwrap();
+        let holder = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(ctx.dirs.data.join("journal.lock"))
+            .unwrap();
+        holder.lock().unwrap();
+
+        let writer_root = root.clone();
+        let writer = std::thread::spawn(move || undo(&test_ctx(&writer_root), None).map(|_| ()));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(
+            !writer.is_finished(),
+            "undo ran while another handle held the journal lock"
+        );
+
+        holder.unlock().unwrap();
+        writer.join().unwrap().unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "orig");
     }
 

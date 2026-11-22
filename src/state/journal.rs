@@ -115,6 +115,11 @@ fn journal_path(dirs: &KitDirs) -> PathBuf {
     dirs.data.join("journal.jsonl")
 }
 
+/// The sidecar lock that serializes every change to the journal and to the files it describes.
+fn lock_path(dirs: &KitDirs) -> PathBuf {
+    dirs.data.join("journal.lock")
+}
+
 /// The journal file's directory is `dirs.data`, created on first use.
 fn ensure_dir(dirs: &KitDirs) -> Result<()> {
     fs::create_dir_all(&dirs.data).with_context(|| format!("cannot create {}", dirs.data.display()))
@@ -130,27 +135,45 @@ fn has_torn_tail(dirs: &KitDirs) -> Result<bool> {
     }
 }
 
-/// Appends one record. A torn last line is dropped first, so it never ends up mid-file.
-pub fn append(dirs: &KitDirs, record: &EditRecord) -> Result<()> {
+/// Runs `body` while holding the exclusive journal lock. Every change to the journal, and every
+/// undo that reads the journal and then rewrites it, runs inside this, so two processes cannot
+/// interleave a read with a rewrite. `body` must not call another function that takes the lock.
+pub fn with_journal_lock<T>(dirs: &KitDirs, body: impl FnOnce() -> Result<T>) -> Result<T> {
     ensure_dir(dirs)?;
-    if has_torn_tail(dirs)? {
-        rewrite(dirs, &read(dirs)?)?;
-    }
-    let path = journal_path(dirs);
-    let mut file = OpenOptions::new()
+    let path = lock_path(dirs);
+    let file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(false)
         .open(&path)
         .with_context(|| format!("cannot open {}", path.display()))?;
-    let line = serde_json::to_string(record).context("cannot encode journal record")?;
-    writeln!(file, "{line}").with_context(|| format!("cannot append to {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("cannot flush {}", path.display()))
+    file.lock()
+        .with_context(|| format!("cannot lock {}", path.display()))?;
+    // The lock is released when `file` is dropped, after `body` has returned.
+    body()
 }
 
-/// Replaces the whole journal with `records`.
-pub fn rewrite(dirs: &KitDirs, records: &[EditRecord]) -> Result<()> {
-    ensure_dir(dirs)?;
+/// Appends one record. A torn last line is dropped first, so it never ends up mid-file.
+pub fn append(dirs: &KitDirs, record: &EditRecord) -> Result<()> {
+    with_journal_lock(dirs, || {
+        if has_torn_tail(dirs)? {
+            rewrite_under_lock(dirs, &read(dirs)?)?;
+        }
+        let path = journal_path(dirs);
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("cannot open {}", path.display()))?;
+        let line = serde_json::to_string(record).context("cannot encode journal record")?;
+        writeln!(file, "{line}").with_context(|| format!("cannot append to {}", path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("cannot flush {}", path.display()))
+    })
+}
+
+/// Replaces the whole journal with `records`. The caller holds the journal lock.
+pub(super) fn rewrite_under_lock(dirs: &KitDirs, records: &[EditRecord]) -> Result<()> {
     let mut text = String::new();
     for record in records {
         text.push_str(&serde_json::to_string(record).context("cannot encode journal record")?);
@@ -228,6 +251,42 @@ mod tests {
         fs::write(journal_path(&dirs), format!("{line}\n")).unwrap();
 
         assert!(read(&dirs).is_err());
+    }
+
+    #[test]
+    fn append_waits_for_the_journal_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let dirs = KitDirs::rooted(&root);
+        fs::create_dir_all(&dirs.data).unwrap();
+        let holder = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(lock_path(&dirs))
+            .unwrap();
+        holder.lock().unwrap();
+
+        let writer_root = root.clone();
+        let writer = std::thread::spawn(move || {
+            let dirs = KitDirs::rooted(&writer_root);
+            append(&dirs, &sample_record("3-3", "/h/c.json"))
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(
+            !writer.is_finished(),
+            "append ran while another handle held the journal lock"
+        );
+
+        holder.unlock().unwrap();
+        writer.join().unwrap().unwrap();
+        let runs: Vec<String> = read(&dirs)
+            .unwrap()
+            .iter()
+            .map(|record| record.run.to_string())
+            .collect();
+        assert_eq!(runs, vec!["3-3"]);
+        assert!(lock_path(&dirs).exists(), "no lock file after an append");
     }
 
     #[test]
