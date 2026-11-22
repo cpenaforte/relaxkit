@@ -22,7 +22,7 @@ use crate::runtime::nvm::{node_bin, npx_bin};
 use crate::sandbox::selftest::selftest;
 use crate::sandbox::{linux_prerequisites, plugin_health};
 use crate::state::lockfile::Lockfile;
-use crate::tools::engine::mcp_path_dirs;
+use crate::tools::engine::{mcp_path_dirs, probe_path};
 
 /// The outcome of one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -474,25 +474,6 @@ fn mcp_entry_check(ctx: &Ctx, host: &dyn Host, entry: &str, id: &str, kind: Host
             "relaxkit does not rewrite a file that does not parse; repair it by hand",
         ),
     }
-}
-
-/// The PATH a probe child runs with: the Node link bin, the pack bin, `~/.local/bin`, then the PATH doctor was started
-/// with (ruling R2-4). It is the engine's search order, so a probe finds the tools the engine installed.
-fn probe_path(ctx: &Ctx) -> String {
-    let mut entries = vec![
-        ctx.dirs.data.join("node").join("bin").display().to_string(),
-        ctx.dirs.bin.display().to_string(),
-        ctx.dirs
-            .home
-            .join(".local")
-            .join("bin")
-            .display()
-            .to_string(),
-    ];
-    if let Some(current) = std::env::var_os("PATH") {
-        entries.push(current.to_string_lossy().into_owned());
-    }
-    entries.join(":")
 }
 
 /// The file a probe's program runs from, looked up the way the engine looks: the Node link, the pack bin, `~/.local/bin`,

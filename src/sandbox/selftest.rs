@@ -92,6 +92,7 @@ pub fn probe_command(ctx: &Ctx, index: usize) -> Result<Cmd> {
     let package = format!("{RUNTIME_PACKAGE}@{RUNTIME_PIN}");
     let settings = utf8(&settings_file(ctx))?.to_string();
     let script = script(ctx, index)?;
+    // The child gets the engine's search path, so the runtime is found through the Node link on a fresh machine (R3-1).
     Ok(Cmd::new(&npx)
         .arg("--yes")
         .arg(&package)
@@ -100,7 +101,8 @@ pub fn probe_command(ctx: &Ctx, index: usize) -> Result<Cmd> {
         .arg("sh")
         .arg("-c")
         .arg(&script)
-        .cwd(&project_dir(ctx)))
+        .cwd(&project_dir(ctx))
+        .env("PATH", &crate::tools::engine::probe_path(ctx)))
 }
 
 /// The shell script of probe `index`. Each one prints `status=` with the exit status of its attempt, so a runtime that

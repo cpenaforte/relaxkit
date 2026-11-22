@@ -636,6 +636,25 @@ pub fn mcp_path_dirs(ctx: &Ctx) -> Vec<PathBuf> {
     ]
 }
 
+/// The PATH a probe child runs with: the Node link bin, the pack bin, `~/.local/bin`, then the PATH doctor was started
+/// with (ruling R2-4). It is the engine's search order, so a probe finds the tools the engine installed.
+pub fn probe_path(ctx: &Ctx) -> String {
+    let mut entries = vec![
+        ctx.dirs.data.join("node").join("bin").display().to_string(),
+        ctx.dirs.bin.display().to_string(),
+        ctx.dirs
+            .home
+            .join(".local")
+            .join("bin")
+            .display()
+            .to_string(),
+    ];
+    if let Some(current) = std::env::var_os("PATH") {
+        entries.push(current.to_string_lossy().into_owned());
+    }
+    entries.join(":")
+}
+
 /// The route of a binary or npm recipe found at `path`: Brew under a Homebrew prefix, otherwise by recipe kind.
 fn binary_route(recipe: &Recipe, path: &std::path::Path) -> Route {
     if BREW_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {

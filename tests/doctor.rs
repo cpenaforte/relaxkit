@@ -548,6 +548,7 @@ fn doctor_fails_when_a_locked_mcp_entry_is_missing_from_opencode() {
 /// A runner that answers a probe only when the child's PATH holds `dir` (ruling R2-4).
 struct NeedsDirOnPath {
     dir: PathBuf,
+    answer: &'static str,
 }
 
 impl Runner for NeedsDirOnPath {
@@ -559,7 +560,7 @@ impl Runner for NeedsDirOnPath {
             .map(|(_, value)| value.clone())
             .unwrap_or_default();
         if path.split(':').any(|entry| Path::new(entry) == self.dir) {
-            Ok(Output::ok("rtk 1.2.1\n"))
+            Ok(Output::ok(self.answer))
         } else {
             Ok(Output::fail(127, "not found"))
         }
@@ -586,7 +587,10 @@ fn doctor_probes_run_on_the_engine_search_path() {
     let node_link = base.dirs.data.join("node").join("bin");
     lock(root.path(), &[("rtk", "1.2.1", "script", &["claude"])]);
     let mut context = ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new());
-    context.runner = Box::new(NeedsDirOnPath { dir: node_link });
+    context.runner = Box::new(NeedsDirOnPath {
+        dir: node_link,
+        answer: "rtk 1.2.1\n",
+    });
 
     let checks = doctor::checks_for(&context, &[claude(root.path())]).unwrap();
 
@@ -612,6 +616,28 @@ fn doctor_dry_run_warns_that_the_selftests_did_not_run() {
         assert_eq!(check.status, CheckStatus::Warn, "{check:?}");
         assert!(check.message.contains("not run in a dry run"), "{check:?}");
     }
+}
+
+#[test]
+fn selftest_runs_its_runtime_on_the_engine_search_path() {
+    // R3-1: the self-test's npx child gets the engine's search path, so the pinned runtime is found through the Node
+    // link on a fresh machine. The runner refuses the runtime unless the child's PATH holds the link.
+    let root = tempfile::tempdir().unwrap();
+    let node_link = ctx(root.path(), FakeRunner::new(), FakeNet::new())
+        .dirs
+        .data
+        .join("node")
+        .join("bin");
+    let mut context = ctx(root.path(), FakeRunner::new(), FakeNet::new());
+    context.runner = Box::new(NeedsDirOnPath {
+        dir: node_link,
+        answer: "status=1\n403\n",
+    });
+
+    let checks = doctor::checks_for(&context, &[claude(root.path())]).unwrap();
+
+    let check = find(&checks, "claude.sandbox.selftest");
+    assert_eq!(check.status, CheckStatus::Ok, "{check:?}");
 }
 
 #[test]
