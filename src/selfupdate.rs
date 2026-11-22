@@ -31,8 +31,8 @@ const INSTALLED: &str = env!("CARGO_PKG_VERSION");
 /// The outcome of the self step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelfUpdate {
-    /// Installed is the newest release (or newer); nothing was downloaded.
-    Current,
+    /// Installed is the newest release (or newer), which is `version`; nothing was downloaded.
+    Current { version: String },
     /// A check or a dry run found a newer release. Nothing changed.
     Available { version: String },
     /// Swapped to `to`, and the new binary's `update --tools` ran and exited zero (K96).
@@ -88,7 +88,7 @@ pub fn apply(ctx: &Ctx, exe: &Path, pubkey_text: &str, check_only: bool) -> Resu
         Err(err) => return Err(err),
     };
     if !is_newer(&newest, INSTALLED)? {
-        return Ok(SelfUpdate::Current);
+        return Ok(SelfUpdate::Current { version: newest });
     }
     if !act {
         return Ok(SelfUpdate::Available { version: newest });
@@ -158,7 +158,9 @@ pub fn is_homebrew_path(path: &Path) -> bool {
 /// The text row for the self step, shown before the tool phase.
 pub fn row(outcome: &SelfUpdate) -> String {
     match outcome {
-        SelfUpdate::Current => format!("relaxkit {INSTALLED}: current"),
+        SelfUpdate::Current { version } => {
+            format!("relaxkit {INSTALLED} -> {version}: current")
+        }
         SelfUpdate::Available { version } => {
             format!("relaxkit {INSTALLED} -> {version}: update available")
         }

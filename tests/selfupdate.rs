@@ -357,7 +357,9 @@ fn current_version_means_no_download() {
 
     assert_eq!(
         selfupdate::apply(&ctx, &exe, &test_key(), false).unwrap(),
-        SelfUpdate::Current
+        SelfUpdate::Current {
+            version: INSTALLED.to_string()
+        }
     );
     assert_eq!(fs::read_to_string(&exe).unwrap(), "old binary\n");
     assert!(runner.calls().is_empty(), "{:?}", runner.calls());
@@ -483,4 +485,22 @@ fn a_link_at_the_temp_name_of_the_previous_binary_is_refused_too() {
     assert!(result.is_err(), "a link at the temp name was accepted");
     assert_eq!(fs::read_to_string(&target).unwrap(), "not relaxkit's\n");
     assert_eq!(fs::read_to_string(&exe).unwrap(), "old binary\n");
+}
+
+#[test]
+fn an_equal_version_names_the_newest_in_its_row_and_downloads_nothing() {
+    // K98 (F22-4): the current row names the newest version it compared against, and only the tag is requested.
+    let root = temp();
+    let exe = installed(&root.path().join("usr/bin"), "old binary\n");
+    let runner = Recorder::default();
+    let net = FakeNet::new().with(&tag_url(), &format!(r#"{{"tag_name":"v{INSTALLED}"}}"#));
+    let requests = net.clone();
+    let ctx = ctx_for(root.path(), &runner, net);
+
+    let outcome = selfupdate::apply(&ctx, &exe, &test_key(), true).unwrap();
+
+    let row = selfupdate::row(&outcome);
+    assert!(row.contains(&format!("-> {INSTALLED}")), "{row}");
+    assert_eq!(requests.requested(), vec![tag_url()]);
+    assert!(runner.calls().is_empty(), "{:?}", runner.calls());
 }
