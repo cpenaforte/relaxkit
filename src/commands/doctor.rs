@@ -217,8 +217,9 @@ fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>)
         checks.push(Check::ok(id, format!("{kind}: not run in a dry run")));
         return Ok(());
     }
-    let failed: Vec<String> = selftest(ctx, host)
-        .into_iter()
+    let results = selftest(ctx, host);
+    let failed: Vec<String> = results
+        .iter()
         .filter(|result| !result.passed)
         .map(|result| format!("{}: {}", result.probe, result.detail))
         .collect();
@@ -228,9 +229,18 @@ fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>)
             format!("{kind}: the sandbox refused every probe"),
         ));
     } else {
+        // A probe that did not run is not a refusal, so the message says the self-test could not run (ruling Important 4).
+        let message = if results.iter().any(|result| !result.ran) {
+            format!(
+                "{kind}: sandbox self-test could not run: {}",
+                failed.join("; ")
+            )
+        } else {
+            format!("{kind}: the sandbox did not refuse: {}", failed.join("; "))
+        };
         checks.push(Check::fail(
             id,
-            format!("{kind}: the sandbox did not refuse: {}", failed.join("; ")),
+            message,
             "run `relaxkit setup` again; until every probe passes, the sandbox is not enforcing",
         ));
     }

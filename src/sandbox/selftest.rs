@@ -32,6 +32,9 @@ pub const PROBES: [&str; 3] = [
 pub struct ProbeResult {
     pub probe: &'static str,
     pub passed: bool,
+    /// Whether the probe's script ran far enough to report an exit status. A probe that did not run (a fetch or start
+    /// failure) is never a refusal, so it fails with "could not run" (ruling Important 4).
+    pub ran: bool,
     pub detail: String,
 }
 
@@ -44,6 +47,7 @@ pub fn selftest(ctx: &Ctx, host: &dyn Host) -> Vec<ProbeResult> {
             .map(|probe| ProbeResult {
                 probe,
                 passed: false,
+                ran: false,
                 detail: "not run in a dry run".to_string(),
             })
             .collect();
@@ -54,6 +58,7 @@ pub fn selftest(ctx: &Ctx, host: &dyn Host) -> Vec<ProbeResult> {
             .map(|probe| ProbeResult {
                 probe,
                 passed: false,
+                ran: false,
                 detail: format!("cannot prepare the self-test: {err:#}"),
             })
             .collect();
@@ -62,14 +67,18 @@ pub fn selftest(ctx: &Ctx, host: &dyn Host) -> Vec<ProbeResult> {
         .iter()
         .enumerate()
         .map(|(index, probe)| {
-            let (passed, detail) =
+            let (passed, ran, detail) =
                 match probe_command(ctx, index).and_then(|cmd| ctx.runner.run(&cmd)) {
-                    Ok(out) => judge(index, &out),
-                    Err(err) => (false, format!("the runtime did not run: {err:#}")),
+                    Ok(out) => {
+                        let (passed, detail) = judge(index, &out);
+                        (passed, reported_status(&out.stdout).is_some(), detail)
+                    }
+                    Err(err) => (false, false, format!("the runtime did not run: {err:#}")),
                 };
             ProbeResult {
                 probe,
                 passed,
+                ran,
                 detail: format!("{kind}: {detail}"),
             }
         })
@@ -110,11 +119,14 @@ fn script(ctx: &Ctx, index: usize) -> Result<String> {
 }
 
 /// Whether probe `index` passed, from its output, and the reason in words.
+/// The exit status the probe script printed as `status=<n>`, or `None` when the script did not run.
+fn reported_status(text: &str) -> Option<i32> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("status=")?.parse::<i32>().ok())
+}
+
 fn judge(index: usize, out: &Output) -> (bool, String) {
-    let status = out
-        .stdout
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("status=")?.parse::<i32>().ok());
+    let status = reported_status(&out.stdout);
     if index < 2 {
         return match status {
             None => (

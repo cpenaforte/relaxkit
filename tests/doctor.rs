@@ -403,6 +403,48 @@ fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
 }
 
 #[test]
+fn doctor_fails_when_the_sandbox_selftest_cannot_fetch_its_runtime() {
+    // A fetch or start failure is not a refusal: the self-test did not run, so the check fails (ruling Important 4).
+    let root = tempfile::tempdir().unwrap();
+    let npx = npx_bin(&ctx(root.path(), FakeRunner::new(), FakeNet::new()));
+    let runner = FakeRunner::new().reply(
+        &format!("{} --yes", npx.display()),
+        Output::fail(1, "npm ERR! code ENOTFOUND"),
+    );
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner, FakeNet::new()),
+        &[claude(root.path())],
+    )
+    .unwrap();
+
+    let check = find(&checks, "claude.sandbox.selftest");
+    assert_eq!(check.status, CheckStatus::Fail, "{check:?}");
+    assert!(check.message.contains("could not run"), "{check:?}");
+}
+
+#[test]
+fn doctor_treats_an_unreachable_registry_as_health_unknown() {
+    // The plugin's age comes from the npm registry. When the registry cannot be reached, the check is ok and says so
+    // (ruling OWNER-1 (a)); it is never a fail for the network alone.
+    let root = tempfile::tempdir().unwrap();
+    lock(
+        root.path(),
+        &[("opencode-sandbox", "1.0.0", "npm", &["opencode"])],
+    );
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+
+    let check = find(&checks, "plugin.opencode-sandbox");
+    assert_eq!(check.status, CheckStatus::Ok, "{check:?}");
+    assert!(check.message.contains("health unknown"), "{check:?}");
+}
+
+#[test]
 fn doctor_exits_nonzero_when_a_check_fails() {
     let scratch = Scratch::claude_only();
     fs::create_dir_all(scratch.home().join(".claude")).unwrap();
