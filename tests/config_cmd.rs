@@ -822,6 +822,35 @@ fn uninstall_keeps_a_user_compaction_buffer() {
     );
 }
 
+#[test]
+fn uninstall_keeps_a_compact_window_the_owner_changed_by_hand() {
+    // K118 / F23-12: autoCompactWindow goes only while it still holds the value compact-at wrote.
+    let scratch = Scratch::new();
+    with_models(&scratch, MODELS);
+    scratch
+        .relaxkit()
+        .args(["config", "set", "compact-at", "256k"])
+        .assert()
+        .success();
+    let path = claude_settings(scratch.home());
+    let changed = jsonc_set(
+        &read(&path),
+        &["modelSettings", "claude-opus-5-5", "autoCompactWindow"],
+        &json!(200_000),
+    )
+    .unwrap();
+    fs::write(&path, changed).unwrap();
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+
+    let settings: Value = serde_json::from_str(&read(&path)).unwrap();
+    assert_eq!(
+        settings["modelSettings"]["claude-opus-5-5"]["autoCompactWindow"],
+        json!(200_000),
+        "a value the owner set stays"
+    );
+}
+
 // ---- uninstall -------------------------------------------------------------------------------------------------
 
 #[test]

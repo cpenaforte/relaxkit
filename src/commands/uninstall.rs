@@ -156,12 +156,14 @@ fn strip_claude_keys(
     let excluded: Vec<&str> = excluded.iter().map(String::as_str).collect();
     let excluded = not_in_original(original, &["sandbox", "excludedCommands"], &excluded)?;
     text = remove_strings(&text, &["sandbox", "excludedCommands"], &excluded)?;
-    if config.compact_at.is_some() {
+    // K118: the window goes only while it holds the value compact-at wrote.
+    if let Some(compact_at) = config.compact_at {
         for model in claude::claude_models(&config.for_host(HostKind::Claude)) {
-            text = jsonc_restore(
+            text = remove_if_written(
                 &text,
                 original,
                 &["modelSettings", &model, "autoCompactWindow"],
+                &json!(compact_at),
             )?;
         }
     }
