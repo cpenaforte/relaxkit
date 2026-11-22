@@ -20,6 +20,7 @@ pub mod sandbox;
 pub mod selfupdate;
 pub mod state;
 pub mod tools;
+pub mod ui;
 
 use anyhow::Result;
 
@@ -28,6 +29,7 @@ use ctx::{Ctx, Reporter};
 use host::HostKind;
 use presets::Preset;
 use runtime::nvm::NvmSearch;
+use ui::Spinner;
 
 /// Runs a parsed command and returns the process exit code. Each handler is a stub until its task lands.
 pub fn run(cli: Cli) -> Result<i32> {
@@ -38,30 +40,28 @@ pub fn run(cli: Cli) -> Result<i32> {
         }
         Command::Status => {
             let ctx = Ctx::system(cli.dry_run, None, false)?;
-            for line in commands::status::run(&ctx)?.lines {
+            let report = commands::status::run(&ctx)?;
+            for line in report.render(ctx.out.palette()) {
                 ctx.out.info(&line);
             }
             Ok(0)
         }
-        Command::Doctor => {
+        Command::Doctor { all } => {
             let project = cli.project.then(std::env::current_dir).transpose()?;
             let ctx = Ctx::system(cli.dry_run, project, false)?;
-            let checks = commands::doctor::run(&ctx)?;
+            // A spinner runs only for the text report: `--json` keeps standard output a JSON document.
+            let spinner =
+                (!cli.json).then(|| Spinner::start("checking the pack", ctx.out.progress()));
+            let checks = commands::doctor::run(&ctx);
+            if let Some(spinner) = spinner {
+                spinner.finish();
+            }
+            let checks = checks?;
             if cli.json {
                 println!("{}", commands::doctor::to_json(&checks));
             } else {
-                for check in &checks {
-                    let fix = check
-                        .fix
-                        .as_deref()
-                        .map(|fix| format!("\n      fix: {fix}"))
-                        .unwrap_or_default();
-                    ctx.out.info(&format!(
-                        "{:<5} {}: {}{fix}",
-                        check.status.as_str(),
-                        check.id,
-                        check.message
-                    ));
+                for line in commands::doctor::lines(&checks, all, ctx.out.palette()) {
+                    ctx.out.info(&line);
                 }
             }
             let failed = checks

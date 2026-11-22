@@ -36,7 +36,7 @@ Add `--dry-run` to any command to see what it would change without writing anyth
 | --- | --- |
 | `relaxkit setup [--allow-sudo]` | Installs prerequisites, the pack, config, sandbox and the GitHub login. |
 | `relaxkit status` | Shows versions, drift and enforced-vs-advisory settings. |
-| `relaxkit doctor` | Checks hooks, schemas, the sandbox self-test and MCP reachability. Exits 1 when a check fails. |
+| `relaxkit doctor [--all]` | Checks hooks, schemas, the sandbox self-test and MCP reachability. Lists the failures and warnings; `--all` lists the passing checks too. Exits 1 when a check fails. |
 | `relaxkit update [--self \| --tools] [--check] [TOOL]` | Updates relaxkit itself, then each tool, and updates the lockfile. `--check` only reports available updates. |
 | `relaxkit config show [KEY]` | Shows settings, all or one key. |
 | `relaxkit config set KEY VALUE [--host claude\|opencode]` | Sets a role to a tier or an exact model. |
@@ -55,6 +55,12 @@ The global flags are:
 - `--dry-run` shows what would change without writing anything.
 - `--project` applies the change to the current project, where the tool or host supports project scope. `preset`, `privacy` and `uninstall` are global, so they refuse `--project`.
 - `--json` prints machine-readable output.
+
+### Reading the output
+
+Text output puts the verdict first and groups the rest. `relaxkit doctor` shows the failures and warnings by area, with the command to run for each; `relaxkit setup` shows one line per step, and the checks that did not pass under it.
+
+Each line starts with a mark: `✓` ok, `!` warning, `✗` failure, `·` skipped. Without a UTF-8 locale the marks are `ok`, `!!`, `xx` and `..`. Color appears only on a terminal, and `NO_COLOR` turns it off. A pipe or a file gets plain text, and `--json` is unchanged. On a terminal a long step shows a spinner until it ends.
 
 ## Pinning a model per role from the CLI
 

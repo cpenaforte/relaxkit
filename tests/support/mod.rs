@@ -253,6 +253,7 @@ impl Scratch {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_relaxkit"));
         command
             .env_clear()
+            .env("LC_ALL", "C.UTF-8")
             .env("HOME", &self.home)
             .env("PATH", self.path())
             .env("NVM_DIR", self.home.join(".nvm"))

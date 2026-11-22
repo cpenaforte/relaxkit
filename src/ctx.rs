@@ -1,6 +1,5 @@
 //! The context every command receives: directories, runner, network, output, and flags.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -8,22 +7,43 @@ use crate::exec::{FakeRunner, Runner, SystemRunner};
 use crate::net::{FakeNet, HttpNet, Net};
 use crate::platform::KitDirs;
 use crate::state::RunId;
+use crate::ui::{self, Palette, Stream, stderr_is_terminal, stdout_is_terminal};
 
 /// Where user-facing lines go. `stdout()` prints; `capture()` keeps them for tests.
 #[derive(Clone, Default)]
 pub struct Reporter {
     capture: Option<Arc<Mutex<Vec<String>>>>,
+    palette: Palette,
+    progress: Palette,
 }
 
 impl Reporter {
+    /// Prints to standard output, with color and glyphs decided by the terminals it and standard error are on.
     pub fn stdout() -> Reporter {
-        Reporter { capture: None }
+        Reporter {
+            capture: None,
+            palette: Palette::for_stream(stdout_is_terminal()),
+            progress: Palette::for_stream(stderr_is_terminal()),
+        }
     }
 
+    /// Keeps the lines for a test. It has no color, no glyph set beyond the default, and no animation.
     pub fn capture() -> Reporter {
         Reporter {
             capture: Some(Arc::new(Mutex::new(Vec::new()))),
+            palette: Palette::PLAIN,
+            progress: Palette::PLAIN,
         }
+    }
+
+    /// How a line printed to standard output is painted.
+    pub fn palette(&self) -> Palette {
+        self.palette
+    }
+
+    /// How a spinner on standard error is painted. A spinner runs only where this palette can animate.
+    pub fn progress(&self) -> Palette {
+        self.progress
     }
 
     pub fn info(&self, msg: &str) {
@@ -50,16 +70,11 @@ impl Reporter {
         match &self.capture {
             Some(lines) => lines.lock().expect("reporter lock").push(msg.to_string()),
             None if prefix == "warning: " => {
-                write_line(&mut std::io::stderr().lock(), &format!("{prefix}{msg}"));
+                ui::print_line(Stream::Stderr, &format!("{prefix}{msg}"));
             }
-            None => write_line(&mut std::io::stdout().lock(), &format!("{prefix}{msg}")),
+            None => ui::print_line(Stream::Stdout, &format!("{prefix}{msg}")),
         }
     }
-}
-
-/// Writes one line. A closed pipe or a full disk must not panic the process, so the error is ignored.
-fn write_line(out: &mut dyn Write, line: &str) {
-    let _ = writeln!(out, "{line}");
 }
 
 /// Everything a command may touch. Tests build one with `Ctx::for_test`.
@@ -134,27 +149,7 @@ pub fn group_from_env(value: Option<&std::ffi::OsStr>) -> anyhow::Result<Option<
 
 #[cfg(test)]
 mod tests {
-    use std::io::{self, ErrorKind};
-
     use super::*;
-
-    /// A writer whose far end has closed, as after `relaxkit ... | head`.
-    struct ClosedPipe;
-
-    impl io::Write for ClosedPipe {
-        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-            Err(io::Error::from(ErrorKind::BrokenPipe))
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Err(io::Error::from(ErrorKind::BrokenPipe))
-        }
-    }
-
-    #[test]
-    fn write_line_ignores_a_closed_pipe() {
-        write_line(&mut ClosedPipe, "hello");
-    }
 
     #[test]
     fn capture_reporter_keeps_plain_messages() {

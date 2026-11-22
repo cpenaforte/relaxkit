@@ -32,7 +32,11 @@ pub enum Command {
     /// Show versions, drift and enforced-vs-advisory settings
     Status,
     /// Check hooks, schemas, the sandbox self-test and MCP reachability
-    Doctor,
+    Doctor {
+        /// List the checks that passed too, not only the failures and warnings
+        #[arg(long)]
+        all: bool,
+    },
     /// Update relaxkit itself, then each tool, and update the lockfile
     Update {
         /// Update only relaxkit itself

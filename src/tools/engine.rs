@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
 use crate::ctx::Ctx;
-use crate::exec::{Cmd, Output};
+use crate::exec::{Cmd, CommandFailed, Output};
 use crate::host::{Host, HostCheck, HostKind, check_minimum, edit_guarded, parse_version};
 use crate::net::{Net, github_latest_tag, npm_latest};
 use crate::platform::is_executable;
@@ -629,11 +629,12 @@ impl<'a> Engine<'a> {
             .collect();
         let out: Output = edit_guarded(self.ctx, &files, cmd)?;
         if out.code != 0 {
-            bail!(
-                "`{cmd}` failed with exit {}: {}",
-                out.code,
-                out.stderr.trim()
-            );
+            return Err(CommandFailed {
+                command: cmd.to_string(),
+                code: out.code,
+                output: out.stderr.trim().to_string(),
+            }
+            .into());
         }
         Ok(())
     }

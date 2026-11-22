@@ -124,6 +124,29 @@ impl Output {
     }
 }
 
+/// A host command that exited with a failure code. The error keeps the command and its output apart, so the error
+/// block can print each one on its own line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandFailed {
+    /// The command, shell-joined, as a person would type it.
+    pub command: String,
+    pub code: i32,
+    /// The command's error output, trimmed.
+    pub output: String,
+}
+
+impl std::fmt::Display for CommandFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "`{}` failed with exit {}", self.command, self.code)?;
+        if !self.output.is_empty() {
+            write!(f, ": {}", self.output)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for CommandFailed {}
+
 pub trait Runner {
     /// Runs a command and returns its output. An exit code other than zero is still `Ok`.
     fn run(&self, cmd: &Cmd) -> Result<Output>;

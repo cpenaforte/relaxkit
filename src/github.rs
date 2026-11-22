@@ -6,7 +6,7 @@
 use anyhow::{Result, bail};
 
 use crate::ctx::Ctx;
-use crate::exec::Cmd;
+use crate::exec::{Cmd, CommandFailed};
 use crate::host::Host;
 use crate::runtime::gh::ensure_gh;
 use crate::runtime::utf8;
@@ -91,11 +91,12 @@ pub fn login_with(ctx: &Ctx, run: &RunId, interactive: bool) -> Result<LoginOutc
     }
     let setup = ctx.runner.run(&setup_cmd)?;
     if setup.code != 0 {
-        bail!(
-            "gh auth setup-git failed with exit {}: {}",
-            setup.code,
-            setup.stderr.trim()
-        );
+        return Err(CommandFailed {
+            command: setup_cmd.to_string(),
+            code: setup.code,
+            output: setup.stderr.trim().to_string(),
+        }
+        .into());
     }
     Ok(LoginOutcome::LoggedIn)
 }

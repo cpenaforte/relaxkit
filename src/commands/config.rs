@@ -17,6 +17,7 @@ use crate::host::{Host, HostInfo, HostKind, InstalledPlugin, detect_hosts};
 use crate::presets::Voice;
 use crate::roles::{ModelSpec, Role, RoleSetting, resolve_claude, resolve_opencode};
 use crate::state::{RunId, with_run_lock};
+use crate::ui::{Cell, Palette, table};
 
 /// The two hosts, in the order their settings are written.
 const HOSTS: [HostKind; 2] = [HostKind::Claude, HostKind::Opencode];
@@ -100,21 +101,21 @@ pub fn unset(ctx: &Ctx, key: &str, host: Option<HostKind>) -> Result<()> {
     }
 }
 
-/// The lines of `relaxkit config show [<key>]`: the preset, the voice and the threshold, then one row per role. A
-/// role row names what each host runs with.
+/// The lines of `relaxkit config show [<key>]`: the preset, the voice and the threshold, then a table with one row per
+/// role. A role row names what each host runs with.
 pub fn show(ctx: &Ctx, key: Option<&str>) -> Result<Vec<String>> {
     let view = View::load(ctx)?;
+    let palette = ctx.out.palette();
     let mut lines = Vec::new();
     match key.map(parse_key).transpose()? {
         None => {
             lines.push(format!("preset: {}", view.config.preset.as_str()));
             lines.push(format!("voice: {}", view.voice_label()));
             lines.push(format!("compact-at: {}", view.compact_label()));
-            for row in view.rows() {
-                lines.push(row.text());
-            }
+            lines.push(String::new());
+            lines.extend(role_table(&view.rows(), palette));
         }
-        Some(Key::Role(role)) => lines.push(view.row(role).text()),
+        Some(Key::Role(role)) => lines.extend(role_table(&[view.row(role)], palette)),
         Some(Key::Voice) => lines.push(format!("voice: {}", view.voice_label())),
         Some(Key::CompactAt) => lines.push(format!("compact-at: {}", view.compact_label())),
     }
@@ -775,6 +776,32 @@ impl View {
     }
 }
 
+/// The role table: one row per role, with each host's column. A pinned setting says so.
+fn role_table(rows: &[RoleRow], palette: Palette) -> Vec<String> {
+    let cells: Vec<Vec<Cell>> = rows
+        .iter()
+        .map(|row| {
+            let setting = if row.pinned {
+                format!("{} (pinned)", row.setting)
+            } else {
+                row.setting.clone()
+            };
+            vec![
+                Cell::new(row.role.key()),
+                Cell::new(setting),
+                Cell::new(&row.claude.note),
+                Cell::new(&row.opencode.note),
+            ]
+        })
+        .collect();
+    table(
+        &["ROLE", "SETTING", "CLAUDE CODE", "OPENCODE"],
+        &cells,
+        0,
+        palette,
+    )
+}
+
 /// One host's column of a role row.
 struct HostCell {
     /// The setting the host runs with, after its own overrides.
@@ -800,17 +827,6 @@ impl RoleRow {
             HostKind::Claude => &self.claude,
             HostKind::Opencode => &self.opencode,
         }
-    }
-
-    fn text(&self) -> String {
-        let pin = if self.pinned { " (pinned)" } else { "" };
-        format!(
-            "{}  {}{pin}\n  claude-code: {}\n  opencode: {}",
-            self.role.key(),
-            self.setting,
-            self.claude.note,
-            self.opencode.note
-        )
     }
 
     fn json(&self) -> Value {
