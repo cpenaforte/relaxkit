@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::config::{KitConfig, effective};
 use crate::ctx::Ctx;
-use crate::edit::{block_remove, block_upsert, json_get, json_set};
+use crate::edit::{block_remove, block_upsert, jsonc_get, jsonc_set};
 use crate::host::Host;
 use crate::roles::{Role, RoleSetting, resolve_claude};
 use crate::state::{RunId, safe_write};
@@ -31,7 +31,7 @@ pub fn apply_compact(
     let old = read_text(&path)?;
     let mut text = old.clone();
     for model in claude_models(config) {
-        text = json_set(
+        text = jsonc_set(
             &text,
             &["modelSettings", &model, "autoCompactWindow"],
             &json!(tokens),
@@ -159,7 +159,7 @@ pub fn apply_rtk_hook(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     let path = host.config_file(ctx);
     let old = read_text(&path)?;
     let command = rtk_hook_command(ctx);
-    let mut entries = match json_get(&old, &["hooks", "PreToolUse"])? {
+    let mut entries = match jsonc_get(&old, &["hooks", "PreToolUse"])? {
         None => Vec::new(),
         Some(Value::Array(entries)) => entries,
         Some(_) => bail!("hooks.PreToolUse in {} is not a list", path.display()),
@@ -171,7 +171,7 @@ pub fn apply_rtk_hook(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": command}]
     }));
-    let text = json_set(&old, &["hooks", "PreToolUse"], &Value::Array(entries))?;
+    let text = jsonc_set(&old, &["hooks", "PreToolUse"], &Value::Array(entries))?;
     write_if_changed(ctx, run, &path, &old, &text)
 }
 
@@ -197,7 +197,7 @@ fn is_rtk_hook(entry: &Value, command: &str) -> bool {
 pub fn apply_privacy_env(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     let path = host.config_file(ctx);
     let old = read_text(&path)?;
-    let text = json_set(&old, &["env", "SUPERPOWERS_DISABLE_TELEMETRY"], &json!("1"))?;
+    let text = jsonc_set(&old, &["env", "SUPERPOWERS_DISABLE_TELEMETRY"], &json!("1"))?;
     write_if_changed(ctx, run, &path, &old, &text)
 }
 
@@ -207,7 +207,7 @@ pub fn apply_privacy_env(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> 
 pub fn disable_claude_code_telemetry(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<String> {
     let path = host.config_file(ctx);
     let old = read_text(&path)?;
-    let text = json_set(&old, &["env", "DISABLE_TELEMETRY"], &json!("1"))?;
+    let text = jsonc_set(&old, &["env", "DISABLE_TELEMETRY"], &json!("1"))?;
     write_if_changed(ctx, run, &path, &old, &text)?;
     Ok(CLAUDE_TELEMETRY_WARNING.to_string())
 }
@@ -461,6 +461,27 @@ mod tests {
         ] {
             assert!(!text.contains(banned), "{banned} must not be written");
         }
+    }
+
+    #[test]
+    fn privacy_env_keeps_the_layout_and_escapes() {
+        // Spec 5: strict JSON edits keep the file's layout and spelling, not only its values.
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join(".claude")).unwrap();
+        fs::write(
+            settings_path(root.path()),
+            "{\n    \"effortLevel\": \"caf\\u00e9\"\n}\n",
+        )
+        .unwrap();
+        let ctx = ctx(root.path());
+
+        apply_privacy_env(&ctx, &ctx.run, &host(root.path())).unwrap();
+
+        let text = fs::read_to_string(settings_path(root.path())).unwrap();
+        assert!(
+            text.contains("\n    \"effortLevel\": \"caf\\u00e9\""),
+            "{text}"
+        );
     }
 
     #[test]

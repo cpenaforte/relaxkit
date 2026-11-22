@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::{ALLOWED_DOMAINS, PLUGIN_PACKAGE, union_strings};
 use crate::ctx::Ctx;
-use crate::edit::json_set;
+use crate::edit::jsonc_set;
 use crate::host::{Host, HostKind};
 use crate::state::{RunId, safe_write};
 
@@ -63,8 +63,8 @@ fn require_pinned(ctx: &Ctx, host: &dyn Host, version: &str) -> Result<()> {
 /// The sandbox config with the global switch cleared, enforce mode, the allowlist and the project-override deny
 /// applied. Other keys are kept.
 pub fn sandbox_text(old: &str) -> Result<String> {
-    let enabled = json_set(old, &["disabled"], &json!(false))?;
-    let mode = json_set(&enabled, &["mode"], &json!("enforce"))?;
+    let enabled = jsonc_set(old, &["disabled"], &json!(false))?;
+    let mode = jsonc_set(&enabled, &["mode"], &json!("enforce"))?;
     let domains = union_strings(&mode, &["network", "allowedDomains"], &ALLOWED_DOMAINS)?;
     union_strings(&domains, &["filesystem", "denyWrite"], &[PROJECT_OVERRIDE])
 }
@@ -208,6 +208,23 @@ mod tests {
 
         assert!(!sandbox_file(root.path()).exists());
         assert!(!root.path().join(".config/opencode").exists());
+    }
+
+    #[test]
+    fn opencode_sandbox_keeps_the_layout_and_escapes() {
+        // Spec 5: strict JSON edits keep the file's layout and spelling, not only its values.
+        let root = tempfile::tempdir().unwrap();
+        config_with_plugins(root.path(), &["opencode-sandbox@0.7.0"]);
+        write(
+            &sandbox_file(root.path()),
+            "{\n    \"note\": \"caf\\u00e9\",\n    \"mode\": \"permissive\"\n}\n",
+        );
+        let ctx = ctx(root.path());
+
+        apply(&ctx, &ctx.run, &host(root.path()), "0.7.0").unwrap();
+
+        let text = fs::read_to_string(sandbox_file(root.path())).unwrap();
+        assert!(text.contains("\n    \"note\": \"caf\\u00e9\",\n"), "{text}");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::json;
 
 use crate::ctx::Ctx;
-use crate::edit::json_set;
+use crate::edit::jsonc_set;
 use crate::presets::Voice;
 use crate::state::{RunId, safe_write};
 
@@ -21,7 +21,7 @@ pub fn apply(ctx: &Ctx, run: &RunId, voice: Voice, project: bool) -> Result<()> 
         Err(err) if err.kind() == ErrorKind::NotFound => String::new(),
         Err(err) => return Err(err).with_context(|| format!("cannot read {}", path.display())),
     };
-    let text = json_set(&old, &["defaultMode"], &json!(voice.as_str()))?;
+    let text = jsonc_set(&old, &["defaultMode"], &json!(voice.as_str()))?;
     if text == old {
         return Ok(());
     }
@@ -60,6 +60,25 @@ mod tests {
 
     fn global(root: &std::path::Path) -> PathBuf {
         root.join(".config/caveman/config.json")
+    }
+
+    #[test]
+    fn voice_keeps_the_layout_and_escapes() {
+        // Spec 5: strict JSON edits keep the file's layout and spelling, not only its values.
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(global(root.path()).parent().unwrap()).unwrap();
+        fs::write(
+            global(root.path()),
+            "{\n    \"reinforce\": true,\n    \"label\": \"caf\\u00e9\",\n    \"defaultMode\": \"caveman\"\n}\n",
+        )
+        .unwrap();
+        let ctx = ctx(root.path());
+
+        apply(&ctx, &ctx.run, Voice::Ultracave, false).unwrap();
+
+        let text = fs::read_to_string(global(root.path())).unwrap();
+        assert!(text.contains("\n    \"reinforce\": true,\n"), "{text}");
+        assert!(text.contains("\"label\": \"caf\\u00e9\""), "{text}");
     }
 
     #[test]

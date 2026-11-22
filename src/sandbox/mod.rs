@@ -12,7 +12,7 @@ use semver::{Version, VersionReq};
 use serde_json::Value;
 
 use crate::ctx::Ctx;
-use crate::edit::{json_get, json_set};
+use crate::edit::{jsonc_get, jsonc_set};
 use crate::exec::Cmd;
 use crate::net::Net;
 use crate::platform::{Os, PrereqPlan, current_os, prerequisite_plan};
@@ -204,7 +204,7 @@ fn now_seconds() -> i64 {
 /// Adds each wanted string to the JSON array at `path`, after the items already there, and skips any that are
 /// present. A missing array is created. Other keys stay as they are.
 pub fn union_strings(text: &str, path: &[&str], wanted: &[&str]) -> Result<String> {
-    let mut items = match json_get(text, path)? {
+    let mut items = match jsonc_get(text, path)? {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::Array(items)) => items,
         Some(_) => bail!("`{}` is not a list", path.join(".")),
@@ -214,7 +214,7 @@ pub fn union_strings(text: &str, path: &[&str], wanted: &[&str]) -> Result<Strin
             items.push(Value::String((*word).to_string()));
         }
     }
-    json_set(text, path, &Value::Array(items))
+    jsonc_set(text, path, &Value::Array(items))
 }
 
 #[cfg(test)]
@@ -258,6 +258,15 @@ mod tests {
             value["filesystem"]["denyWrite"],
             json!([".opencode/sandbox.json"])
         );
+    }
+
+    #[test]
+    fn union_keeps_the_layout_and_escapes() {
+        let text = "{\n    \"label\": \"caf\\u00e9\",\n    \"network\": {\"allowedDomains\": [\"a\"]}\n}\n";
+
+        let out = union_strings(text, &["network", "allowedDomains"], &["b"]).unwrap();
+
+        assert!(out.contains("\n    \"label\": \"caf\\u00e9\",\n"), "{out}");
     }
 
     #[test]

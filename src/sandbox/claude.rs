@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::{ALLOWED_DOMAINS, GhPath, union_strings};
 use crate::ctx::Ctx;
-use crate::edit::{json_remove, json_set};
+use crate::edit::{jsonc_remove, jsonc_set};
 use crate::host::{Host, HostKind};
 use crate::platform::Os;
 use crate::state::{RunId, safe_write};
@@ -47,13 +47,13 @@ pub fn apply(ctx: &Ctx, run: &RunId, host: &dyn Host, gh: GhPath) -> Result<()> 
 
 /// The settings text with the sandbox keys applied for `os` and the `gh` route.
 pub fn settings_text(old: &str, os: Os, gh: GhPath) -> Result<String> {
-    let mut text = json_set(old, &["sandbox", "enabled"], &json!(true))?;
-    text = json_set(
+    let mut text = jsonc_set(old, &["sandbox", "enabled"], &json!(true))?;
+    text = jsonc_set(
         &text,
         &["sandbox", "autoAllowBashIfSandboxed"],
         &json!(true),
     )?;
-    text = json_set(&text, &["sandbox", "failIfUnavailable"], &json!(true))?;
+    text = jsonc_set(&text, &["sandbox", "failIfUnavailable"], &json!(true))?;
     text = union_strings(
         &text,
         &["sandbox", "network", "allowedDomains"],
@@ -65,13 +65,13 @@ pub fn settings_text(old: &str, os: Os, gh: GhPath) -> Result<String> {
     }
     text = union_strings(&text, &["sandbox", "excludedCommands"], &excluded)?;
     if weaker_isolation(os, gh) {
-        json_set(
+        jsonc_set(
             &text,
             &["sandbox", "enableWeakerNetworkIsolation"],
             &json!(true),
         )
     } else {
-        json_remove(&text, &["sandbox", "enableWeakerNetworkIsolation"])
+        jsonc_remove(&text, &["sandbox", "enableWeakerNetworkIsolation"])
     }
 }
 
@@ -204,6 +204,20 @@ mod tests {
                 .unwrap()
                 .contains(&json!("gh *"))
         );
+    }
+
+    #[test]
+    fn claude_settings_keep_the_layout_and_escapes() {
+        // Spec 5: strict JSON edits keep the file's layout and spelling, not only its values.
+        let old = "{\n    \"effortLevel\": \"caf\\u00e9\",\n    \"hooks\": {\"Stop\": []}\n}\n";
+
+        let out = settings_text(old, Os::Linux, GhPath::Inside).unwrap();
+
+        assert!(
+            out.contains("\n    \"effortLevel\": \"caf\\u00e9\",\n"),
+            "{out}"
+        );
+        assert!(out.contains("\"hooks\": {\"Stop\": []}"), "{out}");
     }
 
     #[test]
