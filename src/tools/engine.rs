@@ -64,7 +64,7 @@ impl Plan {
 
 /// Handlers that only configure a tool that is already installed. An adopted install runs them too (ruling T12-2
 /// covers configuration steps), so rtk on Claude gets its hook whether relaxkit installed rtk or found it.
-const CONFIGURATION_HANDLERS: [&str; 1] = ["rtk_claude_hook"];
+const CONFIGURATION_HANDLERS: [&str; 2] = ["rtk_claude_hook", "opencode_sandbox_config"];
 
 /// The steps of a recipe on `kind` that install or add nothing: the configuration an adopted install still
 /// needs (for example `rtk init -g`, `caveman telemetry off` or the rtk hook).
@@ -719,6 +719,18 @@ exec = ["caveman", "telemetry", "off"]
         parse_recipe(text).expect("fixture parses")
     }
 
+    /// Points every handler step at a name the registry does not hold, so the unimplemented-handler path runs. The
+    /// parser accepts only names in `KNOWN_HANDLERS`, and every one of those is implemented now.
+    fn unregistered_handler(recipe: &mut Recipe) {
+        for steps in recipe.install.values_mut() {
+            for step in steps.iter_mut() {
+                if let Step::Handler { name } = step {
+                    *name = "not_yet_built".to_string();
+                }
+            }
+        }
+    }
+
     fn node(root: &Path) -> NodeInstall {
         NodeInstall {
             version: "v24.22.3".to_string(),
@@ -1183,6 +1195,44 @@ exec = ["caveman", "telemetry", "off"]
     }
 
     #[test]
+    fn adopted_install_still_runs_the_opencode_sandbox_config_handler() {
+        let text = r#"
+id = "fixture"
+title = "Fixture"
+kind = "plugin"
+hosts = ["opencode"]
+needs_login = false
+telemetry_default_off = true
+
+[version]
+npm = "fixture-pkg"
+pin = "1.2.3"
+
+[minimum_host]
+opencode = "2.2.6"
+
+[probe.opencode]
+argv = ["fixture-pkg", "--help"]
+
+[[install.opencode]]
+plugin = "fixture-pkg@{version}"
+
+[[install.opencode]]
+handler = "opencode_sandbox_config"
+"#;
+        let recipe = fixture(text);
+
+        let steps = config_steps(&recipe, HostKind::Opencode);
+
+        assert!(
+            steps.iter().any(
+                |step| matches!(step, Step::Handler { name } if name == "opencode_sandbox_config")
+            ),
+            "{steps:?}"
+        );
+    }
+
+    #[test]
     fn an_unsupported_handler_on_one_host_runs_nothing_on_either_host() {
         let root = tempfile::tempdir().unwrap();
         let text = r#"
@@ -1213,7 +1263,8 @@ exec = ["fixture-pkg", "install"]
 [[install.opencode]]
 handler = "opencode_sandbox_config"
 "#;
-        let recipe = fixture(text);
+        let mut recipe = fixture(text);
+        unregistered_handler(&mut recipe);
         let runner = Recorder::new(FakeRunner::new());
         let ctx = ctx_with(root.path(), &runner, FakeNet::new());
         let hosts = vec![claude(root.path(), "2.1.330"), opencode(root.path())];
@@ -1223,10 +1274,7 @@ handler = "opencode_sandbox_config"
 
         let err = eng.install(&recipe).unwrap_err();
 
-        assert!(
-            format!("{err:#}").contains("opencode_sandbox_config"),
-            "{err:#}"
-        );
+        assert!(format!("{err:#}").contains("not_yet_built"), "{err:#}");
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
     }
 
@@ -1408,9 +1456,10 @@ handler = "opencode_sandbox_config"
         let root = tempfile::tempdir().unwrap();
         let text = EXEC_FIXTURE.replace(
             "[[install.claude]]\nexec = [\"rtk\", \"telemetry\", \"disable\"]",
-            "[[install.claude]]\nhandler = \"opencode_sandbox_config\"",
+            "[[install.claude]]\nhandler = \"serena_init\"",
         );
-        let recipe = fixture(&text);
+        let mut recipe = fixture(&text);
+        unregistered_handler(&mut recipe);
         let runner = Recorder::new(FakeRunner::new().reply("fixture-pkg install", Output::ok("")));
         let ctx = ctx_with(root.path(), &runner, FakeNet::new());
         let hosts = vec![claude(root.path(), "2.1.330")];
@@ -1420,10 +1469,7 @@ handler = "opencode_sandbox_config"
 
         let err = eng.install(&recipe).unwrap_err();
 
-        assert!(
-            format!("{err:#}").contains("opencode_sandbox_config"),
-            "{err:#}"
-        );
+        assert!(format!("{err:#}").contains("not_yet_built"), "{err:#}");
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
     }
 

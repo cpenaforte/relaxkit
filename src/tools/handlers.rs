@@ -1,6 +1,5 @@
 //! The named code paths a recipe's `handler` steps run. Each one does a step that data alone cannot express.
-//! Handlers that belong to later tasks (opencode_sandbox_config) are not here,
-//! so the engine refuses them by name before any command runs.
+//! A handler name that is not in the registry is refused by the engine by name before any command runs.
 
 use std::path::Path;
 
@@ -31,6 +30,7 @@ pub fn lookup(name: &str) -> Option<HandlerFn> {
         "serena_init" => Some(serena_init),
         "claude_marketplace" => Some(claude_marketplace),
         "rtk_claude_hook" => Some(rtk_claude_hook),
+        "opencode_sandbox_config" => Some(opencode_sandbox_config),
         _ => None,
     }
 }
@@ -234,6 +234,18 @@ fn rtk_claude_hook(
     apply_rtk_hook(engine.ctx, engine.run, host)
 }
 
+/// Writes the global OpenCode sandbox config in enforce mode (spec 7, owner decision O6). It runs after the recipe's
+/// `plugin` step, which pins the plugin, and refuses when that pin is not listed.
+fn opencode_sandbox_config(
+    engine: &Engine<'_>,
+    recipe: &Recipe,
+    host: &dyn Host,
+    _vars: &mut Vars,
+) -> Result<()> {
+    let version = pinned(recipe)?;
+    crate::sandbox::opencode::apply(engine.ctx, engine.run, host, version)
+}
+
 fn pinned(recipe: &Recipe) -> Result<&str> {
     recipe
         .pin
@@ -251,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn opencode_sandbox_config_is_still_not_registered() {
-        assert!(lookup("opencode_sandbox_config").is_none());
+    fn opencode_sandbox_config_is_registered() {
+        assert!(lookup("opencode_sandbox_config").is_some());
     }
 }

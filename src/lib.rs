@@ -13,6 +13,7 @@ pub mod presets;
 pub mod recipe;
 pub mod roles;
 pub mod runtime;
+pub mod sandbox;
 pub mod state;
 pub mod tools;
 
