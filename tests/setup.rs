@@ -585,6 +585,41 @@ const LOCKED_RECIPES: &[(&str, &str, &str, &str)] = &[
 ];
 
 #[test]
+fn setup_with_an_unreadable_opencode_list_keeps_the_user_model_and_says_the_tier_is_not_applied() {
+    // K122 / F23-22: setup cannot resolve a tier without the list, so the owner's implementer model stays, and the
+    // output says the tier was not applied.
+    let scratch = Scratch::new();
+    write_lock_except(&scratch, None);
+    let config = scratch.home().join(".config/opencode/opencode.json");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        &config,
+        "{\"agents\": {\"implementer\": {\"model\": \"anthropic/claude-sonnet-5-5\"}}}\n",
+    )
+    .unwrap();
+
+    let output = scratch
+        .relaxkit()
+        .arg("setup")
+        .output()
+        .expect("setup runs");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&config).unwrap()).expect("opencode.json is JSON");
+    assert_eq!(
+        json["agents"]["implementer"]["model"],
+        serde_json::json!("anthropic/claude-sonnet-5-5"),
+        "{text}"
+    );
+    assert!(text.contains("tier roles were not applied"), "{text}");
+}
+
+#[test]
 fn an_unreadable_opencode_plugins_entry_stops_setup_before_any_write() {
     // R6-1: an OpenCode `plugins` entry that is not a list stops setup before any OpenCode file is written. The config
     // file and AGENTS.md keep their bytes, no `opencode plugin` call runs, nothing is repaired, and the run exits 1
