@@ -21,8 +21,8 @@ pub fn load_all() -> Result<Vec<Recipe>> {
     Ok(recipes)
 }
 
-/// Parses the `.toml` files of one directory. The embed is not recursive, so a subdirectory would be
-/// skipped silently. The loader refuses one instead.
+/// Parses the `.toml` files of one directory. `files()` lists only direct children, so a recipe in a
+/// subdirectory would be skipped silently. The loader refuses a subdirectory instead.
 fn load_dir(dir: &Dir<'_>) -> Result<Vec<Recipe>> {
     if let Some(sub) = dir.dirs().next() {
         bail!(
