@@ -1357,6 +1357,53 @@ fn a_first_move_from_an_unversioned_entry_records_without_the_updated_label() {
 }
 
 #[test]
+fn a_claude_plugin_at_the_newest_release_is_current_with_no_call() {
+    // The listing reports `7.0.2-22f0b463e7a5`; the newest release tag is `7.0.2`. The build suffix is not a different
+    // version, so the plugin is current: a check says so, and an update makes no marketplace or plugin call (K72, F3-2).
+    let fx = Fixture::new();
+    fx.shell
+        .on("claude plugin marketplace update", Output::ok(""));
+    fx.shell.on(
+        "claude plugin list",
+        Output::ok("superpowers@anthropic-plugin-directory  Version: 7.0.2-22f0b463e7a5\n"),
+    );
+    fx.shell
+        .on("claude plugin update superpowers@", Output::ok(""));
+    fx.lock(&[(
+        "superpowers",
+        "7.0.2-22f0b463e7a5",
+        "claude-plugin:anthropic-plugin-directory",
+        &["claude"],
+    )]);
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.2"}"#,
+    );
+
+    let checked = fx.run(true, Some("superpowers")).unwrap();
+    assert!(
+        matches!(row(&checked, "superpowers").result, RowResult::Current),
+        "check: {:?}",
+        row(&checked, "superpowers")
+    );
+
+    let updated = fx.run(false, Some("superpowers")).unwrap();
+    assert!(
+        matches!(row(&updated, "superpowers").result, RowResult::Current),
+        "update: {:?}",
+        row(&updated, "superpowers")
+    );
+    let lines = fx.shell.lines();
+    assert!(
+        lines
+            .iter()
+            .all(|l| !l.starts_with("claude plugin marketplace update")
+                && !l.starts_with("claude plugin update")),
+        "a current plugin was updated: {lines:?}"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

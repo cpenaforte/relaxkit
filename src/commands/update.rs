@@ -327,7 +327,7 @@ fn plan<'r>(
                 Ok(newest) => {
                     plan.needs = present
                         .iter()
-                        .any(|kind| entry.version_for(kind.as_str()) != newest);
+                        .any(|kind| !at_newest(*kind, entry.version_for(kind.as_str()), &newest));
                     plan.newest = Some(newest);
                     if !plan.needs {
                         plan.skip = Some(RowResult::Current);
@@ -337,6 +337,16 @@ fn plan<'r>(
         }
     }
     plan
+}
+
+/// Whether a locked version is the newest release. A Claude Code listing version carries a build suffix after its
+/// first `-` (such as `7.0.2-22f0b463e7a5`) that the release tag does not carry, so for the Claude host only the part
+/// before the first `-` is compared (F3-2). Other hosts compare the whole version.
+fn at_newest(kind: HostKind, locked: &str, newest: &str) -> bool {
+    match kind {
+        HostKind::Claude => locked.split('-').next() == Some(newest),
+        _ => locked == newest,
+    }
 }
 
 /// The hosts a locked tool is on, that the recipe names, and that are installed now, in host order.
