@@ -3,6 +3,7 @@
 pub mod chromium;
 pub mod gh;
 pub mod nvm;
+pub mod rtk;
 pub mod uv;
 
 use std::fs;

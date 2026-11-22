@@ -1,11 +1,14 @@
 //! The Chromium that Playwright MCP drives. It comes from the same `@playwright/mcp` version that the MCP
 //! entry pins, so the browser build always matches the server.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use semver::Version;
+
+use std::path::{Path, PathBuf};
 
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
+use crate::platform;
 use crate::runtime::{nvm, utf8};
 use crate::state::RunId;
 
@@ -92,5 +95,85 @@ mod tests {
         assert!(ensure_chromium(&ctx, &RunId::new(), "latest").is_err());
         assert!(ensure_chromium(&ctx, &RunId::new(), "^0.0.86").is_err());
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
+    }
+}
+
+/// The Chromium that Playwright installed: `PLAYWRIGHT_BROWSERS_PATH` when set, else Playwright's cache.
+pub fn installed_chromium(ctx: &Ctx) -> Result<PathBuf> {
+    let root = match std::env::var_os("PLAYWRIGHT_BROWSERS_PATH").filter(|value| !value.is_empty())
+    {
+        Some(path) => PathBuf::from(path),
+        None => platform::playwright_cache_dir(&ctx.dirs.home)?,
+    };
+    chromium_binary_in(&root)
+}
+
+/// The Chromium executable in the newest `chromium-<revision>` directory under `root`.
+pub fn chromium_binary_in(root: &Path) -> Result<PathBuf> {
+    let mut newest: Option<(u64, PathBuf)> = None;
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(revision) = name
+                .to_str()
+                .and_then(|name| name.strip_prefix("chromium-"))
+                .and_then(|rest| rest.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            if newest.as_ref().is_none_or(|(best, _)| revision > *best) {
+                newest = Some((revision, entry.path()));
+            }
+        }
+    }
+    let (_, dir) = newest.ok_or_else(|| {
+        anyhow!(
+            "no Chromium under {}; the playwright recipe installs it first",
+            root.display()
+        )
+    })?;
+    for relative in platform::chromium_candidates()? {
+        let candidate = dir.join(relative);
+        if platform::is_executable(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    bail!(
+        "the Chromium under {} has no known executable path for this OS",
+        dir.display()
+    )
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+    use crate::platform::chromium_candidates;
+
+    #[test]
+    fn the_newest_revision_wins_and_its_binary_is_found() {
+        let root = tempfile::tempdir().unwrap();
+        let older = root.path().join("chromium-1100");
+        let newer = root.path().join("chromium-1255");
+        let binary = chromium_candidates().unwrap()[0];
+        std::fs::create_dir_all(older.join(binary).parent().unwrap()).unwrap();
+        std::fs::write(older.join(binary), "old").unwrap();
+        std::fs::create_dir_all(newer.join(binary).parent().unwrap()).unwrap();
+        std::fs::write(newer.join(binary), "new").unwrap();
+        for path in [older.join(binary), newer.join(binary)] {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::create_dir_all(root.path().join("chromium_headless_shell-1300")).unwrap();
+
+        assert_eq!(chromium_binary_in(root.path()).unwrap(), newer.join(binary));
+    }
+
+    #[test]
+    fn a_missing_chromium_is_an_error_that_says_what_to_run() {
+        let root = tempfile::tempdir().unwrap();
+
+        let err = chromium_binary_in(root.path()).unwrap_err();
+
+        assert!(format!("{err:#}").contains("playwright"), "{err:#}");
     }
 }

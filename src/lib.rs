@@ -13,6 +13,7 @@ pub mod recipe;
 pub mod roles;
 pub mod runtime;
 pub mod state;
+pub mod tools;
 
 use anyhow::{Result, anyhow};
 

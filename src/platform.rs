@@ -73,6 +73,26 @@ pub fn current_arch() -> Result<Arch> {
     }
 }
 
+/// Where Playwright keeps its browsers unless `PLAYWRIGHT_BROWSERS_PATH` says otherwise.
+pub fn playwright_cache_dir(home: &Path) -> Result<PathBuf> {
+    Ok(match current_os()? {
+        Os::MacOs => home.join("Library").join("Caches").join("ms-playwright"),
+        Os::Linux => home.join(".cache").join("ms-playwright"),
+    })
+}
+
+/// Paths of the Chromium executable inside one `chromium-<revision>` directory, for this OS and architecture.
+/// The first one that exists is used.
+pub fn chromium_candidates() -> Result<Vec<&'static str>> {
+    Ok(match current_os()? {
+        Os::MacOs => vec![
+            "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+            "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        ],
+        Os::Linux => vec!["chrome-linux64/chrome", "chrome-linux/chrome"],
+    })
+}
+
 /// True when `path` is a regular file with at least one execute bit set.
 pub fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
