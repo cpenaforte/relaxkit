@@ -75,6 +75,8 @@ const refusedCalls = [
   ["auth", "status"],
   ["config", "get", "x"],
   ["extension", "list"],
+  ["help", "myext"],
+  ["help"],
 ];
 for (const args of refusedCalls) {
   test(`refuses gh ${args.join(" ")} without spawning`, async () => {

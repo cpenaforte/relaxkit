@@ -11,9 +11,11 @@ import { formatFailure, runProcess } from "./process.js";
  * The first argument must be one of these. Taken from `gh --help` (gh version 2.105.0):
  * the CORE COMMANDS, GITHUB ACTIONS COMMANDS and ADDITIONAL COMMANDS sections, plus
  * `help` and `version`. Then `alias`, `config`, `extension` and `auth` are removed,
- * because they are always refused. The list is a snapshot: when gh adds or renames a
- * built-in command, update this list. `gh <name>` for a name that is not built in
- * runs an installed alias or extension outside the sandbox, so unknown names are refused.
+ * because they are always refused. `help` is excluded too: `gh help <name>` is rewritten
+ * to `<name> --help` for a name that is not built in, which runs an installed extension.
+ * The list is a snapshot: when gh adds or renames a built-in command, update this list.
+ * `gh <name>` for a name that is not built in runs an installed alias or extension
+ * outside the sandbox, so unknown names are refused.
  */
 export const GH_BUILTIN_COMMANDS = [
   // CORE COMMANDS (auth removed)
@@ -49,8 +51,7 @@ export const GH_BUILTIN_COMMANDS = [
   "ssh-key",
   "status",
   "variable",
-  // help and version
-  "help",
+  // version (help excluded, see above)
   "version",
 ];
 
