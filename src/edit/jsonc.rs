@@ -77,6 +77,21 @@ pub fn jsonc_restore(text: &str, original: Option<&str>, path: &[&str]) -> Resul
     }
 }
 
+/// Restores `path` as `jsonc_restore` does, but only while it still holds `written`, the value relaxkit wrote. A value
+/// changed by hand stays (K118).
+pub fn jsonc_restore_if(
+    text: &str,
+    original: Option<&str>,
+    path: &[&str],
+    written: &Value,
+) -> Result<String> {
+    if jsonc_get(text, path)?.as_ref() == Some(written) {
+        jsonc_restore(text, original, path)
+    } else {
+        Ok(text.to_string())
+    }
+}
+
 /// Reads the value at `path`, or `None` when it is absent.
 pub fn jsonc_get(text: &str, path: &[&str]) -> Result<Option<Value>> {
     let parsed = jsonc_parser::parse_to_value(text, &ParseOptions::default())

@@ -7,11 +7,13 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::config::{KitConfig, effective};
 use crate::ctx::Ctx;
-use crate::edit::{block_remove, block_upsert, jsonc_get, jsonc_remove, jsonc_restore, jsonc_set};
+use crate::edit::{
+    block_remove, block_upsert, jsonc_get, jsonc_remove, jsonc_restore_if, jsonc_set,
+};
 use crate::host::{Host, HostKind};
 use crate::roles::{Role, resolve_opencode};
 use crate::state::{OriginalText, RunId, original_text, safe_write};
@@ -132,14 +134,22 @@ pub fn apply_compact(
 /// wrote it (F23-11). The routing block is removed. A managed agent block is removed only when the original file did
 /// not have it and nothing else is left in it. Any other agent the user defined, and the rest of the file, stay as
 /// they are. With no earlier journaled write to revert (K117), the config file is left alone.
-pub fn unset_roles(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
+pub fn unset_roles(
+    ctx: &Ctx,
+    run: &RunId,
+    host: &dyn Host,
+    config: &KitConfig,
+    available: &[String],
+) -> Result<()> {
     require_opencode(host)?;
     let path = host.config_file(ctx);
     let old = read_config(&path)?;
     let text = match original_text(ctx, run, &path)? {
         OriginalText::NoEarlierRecord => old.clone(),
-        OriginalText::Created => strip_managed_agents(&old, None)?,
-        OriginalText::Text(original) => strip_managed_agents(&old, Some(&original))?,
+        OriginalText::Created => strip_managed_agents(&old, None, config, available)?,
+        OriginalText::Text(original) => {
+            strip_managed_agents(&old, Some(&original), config, available)?
+        }
     };
     write_if_changed(ctx, run, &path, &old, &text)?;
 
@@ -149,19 +159,46 @@ pub fn unset_roles(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     write_if_changed(ctx, run, &agents_path, &agents_old, &agents_new)
 }
 
+/// The value setup wrote under `agents.<id>.<key>`, or `None` when setup writes no such key (a model no listed id
+/// matches gets no `model` key, so the agent inherits the host default).
+fn written_value(config: &KitConfig, available: &[String], id: &str, key: &str) -> Option<Value> {
+    if id == PLANNER_AGENT {
+        return match key {
+            "model" => resolve_opencode(&effective(config, Role::Planner), available)
+                .map(|model| json!(model)),
+            _ => None,
+        };
+    }
+    let (_, role, description) = SUBAGENTS.iter().find(|(agent, _, _)| *agent == id)?;
+    match key {
+        "mode" => Some(json!("subagent")),
+        "description" => Some(json!(description)),
+        "model" => resolve_opencode(&effective(config, *role), available).map(|model| json!(model)),
+        _ => None,
+    }
+}
+
 /// The config text with each managed agent key restored to `original`, and the agent blocks that relaxkit alone
 /// created removed once they are empty.
-fn strip_managed_agents(text: &str, original: Option<&str>) -> Result<String> {
+fn strip_managed_agents(
+    text: &str,
+    original: Option<&str>,
+    config: &KitConfig,
+    available: &[String],
+) -> Result<String> {
     let mut text = text.to_string();
     for id in managed_agent_ids() {
-        // Only the keys relaxkit wrote come out; a key the user added under the same agent stays (K106).
+        // Only the keys relaxkit wrote come out; a key the user added under the same agent stays (K106). A key
+        // comes out only while it holds the value setup wrote (K118).
         let keys: &[&str] = if id == PLANNER_AGENT {
             &["model"]
         } else {
             &["mode", "description", "model"]
         };
         for key in keys {
-            text = jsonc_restore(&text, original, &["agents", id, key])?;
+            if let Some(written) = written_value(config, available, id, key) {
+                text = jsonc_restore_if(&text, original, &["agents", id, key], &written)?;
+            }
         }
         let emptied = jsonc_get(&text, &["agents", id])?
             .and_then(|value| value.as_object().map(|object| object.is_empty()))
@@ -536,7 +573,7 @@ mod tests {
         .unwrap();
         fs::write(config_path(root.path()), &with_custom).unwrap();
 
-        unset_roles(&ctx, &RunId::new(), &host).unwrap();
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
 
         let text = read(&config_path(root.path()));
         assert_eq!(
@@ -570,7 +607,7 @@ mod tests {
         .unwrap();
         fs::write(config_path(root.path()), &with_user).unwrap();
 
-        unset_roles(&ctx, &RunId::new(), &host).unwrap();
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
 
         let text = read(&config_path(root.path()));
         assert_eq!(
@@ -613,7 +650,7 @@ mod tests {
         let ctx = ctx(root.path());
         apply_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
 
-        unset_roles(&ctx, &RunId::new(), &host).unwrap();
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
 
         let text = read(&config_path(root.path()));
         assert_eq!(
@@ -622,5 +659,37 @@ mod tests {
             "{text}"
         );
         assert_eq!(get(&text, &["agents", "implementer"]), None, "{text}");
+    }
+
+    #[test]
+    fn a_model_changed_by_hand_after_setup_stays_through_unset() {
+        // F23-13 / K118: the user's model before setup is not restored over a value the owner set after setup.
+        let root = tempfile::tempdir().unwrap();
+        let before = jsonc_set(
+            FIXTURE,
+            &["agents", "plan", "model"],
+            &json!("anthropic/claude-sonnet-5-5"),
+        )
+        .unwrap();
+        seed(root.path(), &before);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+        apply_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+        let by_hand = jsonc_set(
+            &read(&config_path(root.path())),
+            &["agents", "plan", "model"],
+            &json!("anthropic/claude-haiku-5-5"),
+        )
+        .unwrap();
+        fs::write(config_path(root.path()), &by_hand).unwrap();
+
+        unset_roles(&ctx, &RunId::new(), &host, &balanced(), &available()).unwrap();
+
+        let text = read(&config_path(root.path()));
+        assert_eq!(
+            get(&text, &["agents", "plan", "model"]),
+            Some(json!("anthropic/claude-haiku-5-5")),
+            "{text}"
+        );
     }
 }

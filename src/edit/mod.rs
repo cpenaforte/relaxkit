@@ -5,7 +5,9 @@ pub mod jsonc;
 pub mod toml;
 
 pub use block::{block_get, block_remove, block_upsert};
-pub use jsonc::{jsonc_append, jsonc_get, jsonc_remove, jsonc_restore, jsonc_set};
+pub use jsonc::{
+    jsonc_append, jsonc_get, jsonc_remove, jsonc_restore, jsonc_restore_if, jsonc_set,
+};
 pub use toml::{toml_get, toml_set};
 
 #[cfg(test)]

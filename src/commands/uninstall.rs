@@ -15,7 +15,7 @@ use crate::config::KitConfig;
 use crate::config_apply::claude;
 use crate::config_apply::opencode;
 use crate::ctx::Ctx;
-use crate::edit::{block_remove, jsonc_get, jsonc_remove, jsonc_restore, jsonc_set};
+use crate::edit::{block_remove, jsonc_get, jsonc_remove, jsonc_restore_if, jsonc_set};
 use crate::host::{Host, HostKind, detect_hosts};
 use crate::recipe::{Step, load_all};
 use crate::sandbox::{self, opencode as sandbox_opencode};
@@ -32,7 +32,9 @@ pub fn run(ctx: &Ctx) -> Result<Vec<String>> {
             remove_mcp_entries(ctx, host.as_ref(), &names, &mut lines)?;
             match host.info().kind {
                 HostKind::Claude => remove_claude(ctx, run, host.as_ref(), &config, &mut lines)?,
-                HostKind::Opencode => remove_opencode(ctx, run, host.as_ref(), &mut lines)?,
+                HostKind::Opencode => {
+                    remove_opencode(ctx, run, host.as_ref(), &config, &mut lines)?
+                }
             }
         }
         remove_bin_copies(ctx, run, &mut lines)?;
@@ -128,7 +130,7 @@ fn strip_claude_keys(
     rtk_command: &str,
 ) -> Result<String> {
     // F23-8: a scalar key goes only while it still holds the value setup or privacy wrote.
-    let mut text = remove_if_written(
+    let mut text = jsonc_restore_if(
         old,
         original,
         &["env", "SUPERPOWERS_DISABLE_TELEMETRY"],
@@ -143,7 +145,7 @@ fn strip_claude_keys(
         "failIfUnavailable",
         "enableWeakerNetworkIsolation",
     ] {
-        text = remove_if_written(&text, original, &["sandbox", key], &json!(true))?;
+        text = jsonc_restore_if(&text, original, &["sandbox", key], &json!(true))?;
     }
     let domains = not_in_original(
         original,
@@ -159,7 +161,7 @@ fn strip_claude_keys(
     // K118: the window goes only while it holds the value compact-at wrote.
     if let Some(compact_at) = config.compact_at {
         for model in claude::claude_models(&config.for_host(HostKind::Claude)) {
-            text = remove_if_written(
+            text = jsonc_restore_if(
                 &text,
                 original,
                 &["modelSettings", &model, "autoCompactWindow"],
@@ -171,8 +173,21 @@ fn strip_claude_keys(
 }
 
 /// The OpenCode agents and routing block the pack wrote, and the sandbox policy file it wrote.
-fn remove_opencode(ctx: &Ctx, run: &RunId, host: &dyn Host, lines: &mut Vec<String>) -> Result<()> {
-    opencode::unset_roles(ctx, run, host)?;
+fn remove_opencode(
+    ctx: &Ctx,
+    run: &RunId,
+    host: &dyn Host,
+    config: &KitConfig,
+    lines: &mut Vec<String>,
+) -> Result<()> {
+    let available = crate::commands::setup::opencode_models(ctx, host);
+    opencode::unset_roles(
+        ctx,
+        run,
+        host,
+        &config.for_host(HostKind::Opencode),
+        &available,
+    )?;
     // No compaction buffer is removed: relaxkit writes none on OpenCode (K114), so one present is the user's.
     // Only a regular file is removed: a link is left alone, since undo does not restore links it never journaled.
     let policy = sandbox_opencode::sandbox_config_path(ctx);
@@ -304,21 +319,6 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// Removes a scalar key only while it still holds `written`, the value relaxkit set. A value the owner changed by hand
-/// stays (F23-8).
-fn remove_if_written(
-    text: &str,
-    original: Option<&str>,
-    path: &[&str],
-    written: &Value,
-) -> Result<String> {
-    if jsonc_get(text, path)?.as_ref() == Some(written) {
-        jsonc_restore(text, original, path)
-    } else {
-        Ok(text.to_string())
-    }
 }
 
 /// The entries of `wanted` that the list at `path` did not hold before relaxkit wrote it.
