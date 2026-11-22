@@ -141,6 +141,8 @@ impl Scratch {
             fs::create_dir_all(path).expect("scratch dir");
         }
         fs::write(&log, "").expect("call log");
+        // The AppArmor profile that Ubuntu 24.04 needs for the sandbox, stood in by a file so no test reads /etc.
+        fs::write(root.join("relaxkit-bwrap"), "").expect("profile stand-in");
         for name in STUBS {
             write_executable(&bin.join(name), STUB);
         }
@@ -255,6 +257,13 @@ impl Scratch {
             .env("PATH", self.path())
             .env("NVM_DIR", self.home.join(".nvm"))
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
+            .env(
+                "RELAXKIT_APPARMOR_PROFILE",
+                self.home
+                    .parent()
+                    .expect("scratch root")
+                    .join("relaxkit-bwrap"),
+            )
             .env("RELAXKIT_STUB_LOG", &self.log)
             .env("RELAXKIT_STUB_STATE", &self.state)
             .env("HTTPS_PROXY", CLOSED_PROXY)
