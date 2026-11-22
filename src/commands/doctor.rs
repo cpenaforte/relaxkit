@@ -320,6 +320,14 @@ fn plugin_check(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> 
     Ok(())
 }
 
+/// The command a person runs to check a probe `doctor` does not run, with the locked version filled in.
+fn shown_argv(argv: &[String], version: &str) -> String {
+    argv.iter()
+        .map(|arg| arg.replace("{npx}", "npx").replace("{version}", version))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Each locked tool's probe, for each installed host it is locked on. A probe whose program is set at install time
 /// (`{npx}`) is not run here.
 fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Result<()> {
@@ -345,16 +353,13 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             let Some((program, args)) = probe.argv.split_first() else {
                 continue;
             };
-            let shown = std::iter::once(program.as_str())
-                .chain(args.iter().map(String::as_str))
-                .collect::<Vec<_>>()
-                .join(" ");
+            let shown = shown_argv(&probe.argv, &tool.version);
             if program.starts_with('{') {
                 // Not run is never an ok: the probe is unverified until someone runs it (ruling Important item 6).
                 checks.push(Check::warn(
                     &check_id,
-                    "not run: its program is set at install time",
-                    format!("doctor does not run this probe; run `{shown}` yourself to check it"),
+                    "not run here: the program is chosen at install time",
+                    format!("run `{shown}` to check it yourself"),
                 ));
                 continue;
             }
@@ -572,6 +577,16 @@ pub fn to_json(checks: &[Check]) -> Value {
 mod tests {
     use super::*;
     use crate::platform::{Os, prerequisite_plan};
+
+    #[test]
+    fn a_probe_shown_to_a_person_has_its_placeholders_filled_in() {
+        let argv = ["{npx}", "-y", "ccusage@{version}", "--offline", "--help"].map(String::from);
+
+        assert_eq!(
+            shown_argv(&argv, "20.0.51"),
+            "npx -y ccusage@20.0.51 --offline --help"
+        );
+    }
 
     #[test]
     fn missing_sandbox_packages_fail_with_the_one_sudo_command_as_the_fix() {
