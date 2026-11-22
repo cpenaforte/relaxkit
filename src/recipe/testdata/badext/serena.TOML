@@ -1,0 +1,1 @@
+# Wrong extension on purpose: the loader must refuse this file, not skip it.

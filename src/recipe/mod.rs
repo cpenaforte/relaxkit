@@ -34,7 +34,10 @@ fn load_dir(dir: &Dir<'_>) -> Result<Vec<Recipe>> {
     for file in dir.files() {
         let path = file.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
-            continue;
+            bail!(
+                "recipe directory has a file that is not a `.toml` recipe: `{}`",
+                path.display()
+            );
         }
         let shown = path.display().to_string();
         let text = file
@@ -490,6 +493,15 @@ argv = ["fixture", "--version"]
         let text = FIXTURE.replace("\"--version\"", "\"{version\"");
         let err = parse_recipe(&text).unwrap_err().to_string();
         assert!(err.contains("`fixture`"), "error was: {err}");
+    }
+
+    static BAD_EXTENSION: Dir<'static> =
+        include_dir!("$CARGO_MANIFEST_DIR/src/recipe/testdata/badext");
+
+    #[test]
+    fn a_non_toml_file_in_the_recipe_directory_is_an_error() {
+        let err = load_dir(&BAD_EXTENSION).unwrap_err().to_string();
+        assert!(err.contains("serena.TOML"), "error was: {err}");
     }
 
     static NESTED: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/src/recipe/testdata/nested");
