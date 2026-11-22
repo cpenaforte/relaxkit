@@ -452,13 +452,13 @@ impl<'a> Engine<'a> {
         Ok(cmd.env("PATH", &self.search_path()?))
     }
 
-    /// PATH for an MCP entry: the node link, then the system directories.
-    /// The PATH an MCP entry runs with: the node link, then the uv tool bin (where `uv tool install` puts `serena`),
-    /// then the system directories.
+    /// The PATH an MCP entry runs with, as `mcp_path_dirs` lists it.
     fn mcp_path(&self) -> String {
-        let node = self.ctx.dirs.data.join("node").join("bin");
-        let uv = self.ctx.dirs.home.join(".local").join("bin");
-        format!("{}:{}:/usr/bin:/bin", node.display(), uv.display())
+        mcp_path_dirs(self.ctx)
+            .iter()
+            .map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(":")
     }
 
     fn search_path(&self) -> Result<String> {
@@ -534,6 +534,17 @@ impl<'a> Engine<'a> {
         );
         lock.save(self.ctx, self.run)
     }
+}
+
+/// The directories an MCP entry's command is found in, in order: the Node link, then `~/.local/bin` (where
+/// `uv tool install` puts `serena`), then the system directories. No other PATH is inherited (spec 4, items 4 and 5).
+pub fn mcp_path_dirs(ctx: &Ctx) -> Vec<PathBuf> {
+    vec![
+        ctx.dirs.data.join("node").join("bin"),
+        ctx.dirs.home.join(".local").join("bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ]
 }
 
 /// The route of a binary or npm recipe found at `path`: Brew under a Homebrew prefix, otherwise by recipe kind.

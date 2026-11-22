@@ -11,11 +11,13 @@ use crate::ctx::Ctx;
 use crate::edit::jsonc_get;
 use crate::exec::Cmd;
 use crate::host::{Host, HostKind, detect_hosts, v1_mcp_entries};
-use crate::platform::PrereqPlan;
-use crate::recipe::load_all;
+use crate::platform::{PrereqPlan, is_executable};
+use crate::recipe::{Kind, Step, load_all};
+use crate::runtime::nvm::{node_bin, npx_bin};
 use crate::sandbox::selftest::selftest;
 use crate::sandbox::{linux_prerequisites, plugin_health};
 use crate::state::lockfile::Lockfile;
+use crate::tools::engine::mcp_path_dirs;
 
 /// The outcome of one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +96,7 @@ pub fn checks_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<Vec<Check>> {
     project_check(ctx, &mut checks);
     plugin_check(ctx, &mut checks)?;
     tool_probe_checks(ctx, hosts, &mut checks)?;
+    mcp_checks(ctx, hosts, &mut checks)?;
     Ok(checks)
 }
 
@@ -332,6 +335,66 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
                     &check_id,
                     format!("`{shown}` did not run: {err:#}"),
                     "run `relaxkit setup` again",
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Each locked MCP entry's command must resolve on the MCP PATH (spec 6, ruling K58). The command is only looked for on
+/// disk: the server is not started and no network is used. A missing command is a fail.
+fn mcp_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Result<()> {
+    let Some(lock) = Lockfile::load(ctx)? else {
+        return Ok(());
+    };
+    let recipes = load_all()?;
+    let dirs = mcp_path_dirs(ctx);
+    for (id, tool) in &lock.tools {
+        let Some(recipe) = recipes
+            .iter()
+            .find(|recipe| &recipe.id == id && recipe.kind == Kind::Mcp)
+        else {
+            continue;
+        };
+        for host_name in &tool.hosts {
+            let Ok(kind) = host_name.parse::<HostKind>() else {
+                continue;
+            };
+            if !hosts.iter().any(|host| host.info().kind == kind) {
+                continue;
+            }
+            let program =
+                recipe
+                    .install
+                    .get(&kind)
+                    .into_iter()
+                    .flatten()
+                    .find_map(|step| match step {
+                        Step::Mcp { argv, .. } => argv.first().cloned(),
+                        _ => None,
+                    });
+            let Some(program) = program else {
+                continue;
+            };
+            let check_id = format!("mcp.{id}.{kind}");
+            let found = match program.as_str() {
+                "{npx}" => Some(npx_bin(ctx)).filter(|path| is_executable(path)),
+                "{node}" => Some(node_bin(ctx)).filter(|path| is_executable(path)),
+                _ => dirs
+                    .iter()
+                    .map(|dir| dir.join(&program))
+                    .find(|path| is_executable(path)),
+            };
+            checks.push(match found {
+                Some(path) => Check::ok(
+                    &check_id,
+                    format!("`{program}` resolves on the MCP PATH: {}", path.display()),
+                ),
+                None => Check::fail(
+                    &check_id,
+                    format!("`{program}` is not on the MCP PATH, so the {kind} entry cannot start"),
+                    format!("run `relaxkit setup` again; it reinstalls {id} and re-adds the entry"),
                 ),
             });
         }

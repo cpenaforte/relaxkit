@@ -115,6 +115,10 @@ impl Scratch {
             write_executable(&node_bin.join(name), STUB);
         }
         fs::write(nvm.join("nvm.sh"), NVM_SH).expect("nvm.sh");
+        // uv installs serena into ~/.local/bin, which is on the MCP PATH, so the locked serena entry resolves.
+        let local_bin = home.join(".local/bin");
+        fs::create_dir_all(&local_bin).expect("local bin");
+        write_executable(&local_bin.join("serena"), STUB);
         // A Chromium build already in Playwright's cache, so the `{chromium}` path resolves (a stub npx installs nothing).
         let cache = if cfg!(target_os = "macos") {
             home.join("Library/Caches/ms-playwright")

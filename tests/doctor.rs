@@ -341,6 +341,37 @@ fn doctor_flags_a_locked_tool_whose_probe_fails() {
 }
 
 #[test]
+fn doctor_fails_when_a_locked_mcp_command_is_missing_from_the_mcp_path() {
+    // The MCP entry starts `serena` from the MCP PATH (spec 6), so a missing command means the entry cannot start.
+    let root = tempfile::tempdir().unwrap();
+    lock(root.path(), &[("serena", "2.1.0", "uv", &["claude"])]);
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &[claude(root.path())],
+    )
+    .unwrap();
+    let missing = find(&checks, "mcp.serena.claude");
+    assert_eq!(missing.status, CheckStatus::Fail, "{missing:?}");
+    assert!(missing.fix.is_some(), "{missing:?}");
+
+    // The same command on the MCP PATH (~/.local/bin) passes.
+    let command = root.path().join(".local/bin/serena");
+    write(&command, "#!/bin/sh\n");
+    fs::set_permissions(
+        &command,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let checks = doctor::checks_for(
+        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &[claude(root.path())],
+    )
+    .unwrap();
+    assert_eq!(find(&checks, "mcp.serena.claude").status, CheckStatus::Ok);
+}
+
+#[test]
 fn doctor_exits_nonzero_when_a_check_fails() {
     let scratch = Scratch::claude_only();
     fs::create_dir_all(scratch.home().join(".claude")).unwrap();
