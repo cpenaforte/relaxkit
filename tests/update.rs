@@ -1350,7 +1350,7 @@ fn a_first_move_from_an_unversioned_entry_records_without_the_updated_label() {
     let report = fx.run(false, Some("superpowers")).unwrap();
 
     let row = row(&report, "superpowers");
-    assert!(!matches!(row.result, RowResult::Updated), "{row:?}");
+    assert!(matches!(row.result, RowResult::Recorded), "{row:?}");
     assert!(report.failed.is_empty(), "{report:?}");
     assert!(report.restart.contains(&HostKind::Claude), "{report:?}");
     assert_eq!(fx.read_lock().tools["superpowers"].version, "7.0.3");
@@ -1665,6 +1665,101 @@ fn an_mcp_host_already_at_the_newest_version_keeps_its_entry() {
         fx.read_lock().tools["playwright"].version_for("opencode"),
         "0.0.87"
     );
+}
+
+#[test]
+fn a_row_with_a_known_move_keeps_the_updated_label() {
+    // Claude was recorded without a version (unversioned) and OpenCode is at 7.0.1. Both move to 7.0.2. The
+    // unversioned Claude move carries no label of its own, but OpenCode's move from a known version does, so the row
+    // says "updated" (F4-2).
+    let mut fx = Fixture::new();
+    let root = fx.root().to_path_buf();
+    let config = root.join(".config/opencode/opencode.jsonc");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let old = "superpowers@git+https://github.com/obra/superpowers.git#v7.0.1";
+    let entries = Arc::new(Mutex::new(vec![old.to_string()]));
+    let initial = format!("{{\"plugins\": [\"{old}\"]}}\n");
+    fs::write(&config, initial).unwrap();
+    fx.hosts = vec![
+        Box::new(ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/local/bin/claude"),
+                version: "2.1.330".to_string(),
+            },
+            root.join(".claude"),
+            root.join(".claude.json"),
+        )),
+        Box::new(OpencodeHost::new(
+            HostInfo {
+                kind: HostKind::Opencode,
+                binary: PathBuf::from("/usr/local/bin/opencode"),
+                version: "2.2.6".to_string(),
+            },
+            root.join(".config/opencode"),
+        )),
+    ];
+    let version = Arc::new(Mutex::new("7.0.1".to_string()));
+    let listed = version.clone();
+    fx.shell
+        .on("claude plugin marketplace update", Output::ok(""));
+    fx.shell.answer(
+        "claude plugin list",
+        Arc::new(move |_| {
+            Output::ok(&format!(
+                "superpowers@anthropic-plugin-directory  Version: {}\n",
+                listed.lock().unwrap()
+            ))
+        }),
+    );
+    fx.shell
+        .on("claude plugin update superpowers@", Output::ok(""));
+    let moved = version.clone();
+    fx.shell.effect(
+        "claude plugin update superpowers@",
+        Arc::new(move |_| *moved.lock().unwrap() = "7.0.2".to_string()),
+    );
+    fx.shell.on("opencode plugin remove", Output::ok(""));
+    fx.shell.on("opencode plugin add", Output::ok(""));
+    fx.shell.on("opencode --version", Output::ok("2.2.6\n"));
+    let cfg = config.clone();
+    let added = entries.clone();
+    fx.shell.effect(
+        "opencode plugin add",
+        Arc::new(move |cmd| {
+            let spec = cmd.argv().last().cloned().unwrap_or_default();
+            let mut list = added.lock().unwrap();
+            list.clear();
+            list.push(spec);
+            fs::write(&cfg, format!("{{\"plugins\": [\"{}\"]}}\n", list[0])).unwrap();
+        }),
+    );
+    let mut tools = BTreeMap::new();
+    tools.insert(
+        "superpowers".to_string(),
+        LockedTool {
+            version: "unversioned".to_string(),
+            route: "opencode-plugin".to_string(),
+            hosts: vec!["claude".to_string(), "opencode".to_string()],
+            host_versions: BTreeMap::from([("opencode".to_string(), "7.0.1".to_string())]),
+        },
+    );
+    Lockfile {
+        relaxkit: "0.1.0".to_string(),
+        tools,
+    }
+    .save(&fx.ctx(), &fx.run)
+    .unwrap();
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.2"}"#,
+    );
+
+    let report = fx.run(false, Some("superpowers")).unwrap();
+
+    let row = row(&report, "superpowers");
+    assert!(matches!(row.result, RowResult::Updated), "{row:?}");
+    assert!(report.failed.is_empty(), "{report:?}");
 }
 
 #[test]

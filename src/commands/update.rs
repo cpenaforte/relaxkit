@@ -70,6 +70,9 @@ pub enum RowResult {
     NewestUnknown,
     /// A check found a newer release. Only a check reports this; a run would move the tool.
     Available,
+    /// A host's version was never recorded, and it is now recorded. Something ran, so this is not "current"; no move
+    /// from a known version happened, so it is not "updated" either (F4-2).
+    Recorded,
 }
 
 impl RowResult {
@@ -83,6 +86,7 @@ impl RowResult {
             RowResult::NotTouched(reason) => format!("not touched: {reason}"),
             RowResult::NewestUnknown => "newest unknown".to_string(),
             RowResult::Available => "update available".to_string(),
+            RowResult::Recorded => "version recorded".to_string(),
         }
     }
 }
@@ -738,14 +742,18 @@ fn tool_flow(
             let restart: Vec<HostKind> = changed.iter().map(|(kind, _)| *kind).collect();
             match record_moves(ctx, plan.id, &changed, None) {
                 Ok(()) => {
-                    // A move from a version that was never recorded records the version now. It is not an update of a
-                    // version the lock knew, so it carries no "updated" label; the hosts still restart (F3-1).
+                    // A move from a version that was never recorded records the version now. When every move in the
+                    // row came from such a version, nothing is "updated" and nothing is "current": the row is
+                    // "recorded". A move from a known version keeps the "updated" label (F4-2).
                     let from_unversioned = changed
                         .iter()
                         .any(|(kind, _)| entry.version_for(kind.as_str()) == UNVERSIONED);
-                    let result = if from_unversioned {
+                    let from_known = changed
+                        .iter()
+                        .any(|(kind, _)| entry.version_for(kind.as_str()) != UNVERSIONED);
+                    let result = if from_unversioned && !from_known {
                         row(
-                            RowResult::Current,
+                            RowResult::Recorded,
                             Some("the previous version was not recorded, so the new version is recorded now".to_string()),
                         )
                     } else {
