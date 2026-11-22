@@ -38,6 +38,15 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
             }
             fs::copy(&target, &backup)
                 .with_context(|| format!("cannot back up {}", target.display()))?;
+            // fs::copy gives the backup the target's mode. A target we cannot read, or one that is
+            // read-only, would leave a backup that we cannot open, or that a later copy in the same
+            // run cannot write over. Restore needs only the bytes, so the backup gets 0600.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))
+                    .with_context(|| format!("cannot set the mode of {}", backup.display()))?;
+            }
             // The copy must reach the disk before the journal record that names it is synced.
             // On Unix a read-only open can fsync, and it works when the copied mode is 0444.
             // Windows needs write access for FlushFileBuffers; opening does not truncate.
@@ -471,6 +480,48 @@ mod tests {
         let records = journal::read(&ctx.dirs).unwrap();
         let backup = records[0].backup.clone().expect("backup path");
         assert_eq!(fs::read_to_string(backup).unwrap(), "old");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_of_a_read_only_file_is_owner_readable_and_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "old").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
+
+        safe_write(&ctx, &RunId::new(), &file, "new").unwrap();
+
+        let backup = journal::read(&ctx.dirs).unwrap()[0]
+            .backup
+            .clone()
+            .expect("backup path");
+        let mode = fs::metadata(&backup).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "backup {} has mode {mode:o}", backup.display());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retry_in_the_same_run_can_copy_over_a_read_only_target_backup() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "old").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
+        let run = RunId::new();
+        safe_write(&ctx, &run, &file, "new").unwrap();
+        // Forces the path where the journal does not yet name the backup, as after an interrupted
+        // attempt. The next safe_write in this run copies the target over the existing backup.
+        fs::remove_file(ctx.dirs.data.join("journal.jsonl")).unwrap();
+
+        safe_write(&ctx, &run, &file, "newer").unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "newer");
     }
 
     /// True when some file under `root` holds exactly `text`.
