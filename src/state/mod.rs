@@ -3,8 +3,10 @@
 
 pub mod journal;
 pub mod lockfile;
+pub mod run;
 
 pub use journal::{EditRecord, RunId};
+pub use run::with_run_lock;
 
 use std::path::{Path, PathBuf};
 
@@ -90,13 +92,16 @@ fn backup_path(ctx: &Ctx, run: &RunId, target: &Path) -> PathBuf {
 }
 
 /// Reverts a run (the last one when `run` is `None`), newest change first. Returns the touched paths.
-/// The journal lock is held from the read to the rewrite, so an append from another process
-/// cannot be lost in between. A dry run changes nothing and takes no lock.
+/// The run lock is held for the whole undo, so no command can write files while they are reverted.
+/// Inside it, the journal lock is held from the read to the rewrite, so an append from another
+/// process cannot be lost in between. A dry run changes nothing and takes no lock.
 pub fn undo(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
     if ctx.dry_run {
         return revert(ctx, run);
     }
-    journal::with_journal_lock(&ctx.dirs, || revert(ctx, run))
+    with_run_lock(&ctx.dirs, || {
+        journal::with_journal_lock(&ctx.dirs, || revert(ctx, run))
+    })
 }
 
 /// The body of `undo`. The caller holds the journal lock unless this is a dry run.
@@ -508,6 +513,76 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&linked).unwrap(), "other bytes");
         assert_eq!(journal::read(&ctx.dirs).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn undo_waits_for_the_run_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let ctx = test_ctx(&root);
+        let file = root.join("settings.json");
+        fs::write(&file, "orig").unwrap();
+        safe_write(&ctx, &RunId::new(), &file, "new").unwrap();
+        let holder = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(ctx.dirs.data.join("run.lock"))
+            .unwrap();
+        holder.lock().unwrap();
+
+        let writer_root = root.clone();
+        let writer = std::thread::spawn(move || undo(&test_ctx(&writer_root), None).map(|_| ()));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(
+            !writer.is_finished(),
+            "undo ran while another handle held the run lock"
+        );
+
+        holder.unlock().unwrap();
+        writer.join().unwrap().unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "orig");
+    }
+
+    #[test]
+    fn dry_run_undo_does_not_take_or_create_the_run_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let mut ctx = test_ctx(&root);
+        let file = root.join("settings.json");
+        fs::write(&file, "orig").unwrap();
+        safe_write(&ctx, &RunId::new(), &file, "new").unwrap();
+        let lock = ctx.dirs.data.join("run.lock");
+        assert!(!lock.exists(), "setup created the run lock");
+        ctx.dry_run = true;
+
+        undo(&ctx, None).unwrap();
+        assert!(!lock.exists(), "dry-run undo created the run lock");
+
+        // Held by another handle, a dry run must still finish: it takes no lock.
+        let holder = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock)
+            .unwrap();
+        holder.lock().unwrap();
+        let writer_root = root.clone();
+        let writer = std::thread::spawn(move || {
+            let mut ctx = test_ctx(&writer_root);
+            ctx.dry_run = true;
+            undo(&ctx, None).map(|_| ())
+        });
+        for _ in 0..200 {
+            if writer.is_finished() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let finished = writer.is_finished();
+        holder.unlock().unwrap();
+        writer.join().unwrap().unwrap();
+        assert!(finished, "dry-run undo waited for the run lock");
     }
 
     #[test]
