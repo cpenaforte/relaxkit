@@ -52,7 +52,18 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
         };
         journal::append(&ctx.dirs, &record)?;
     }
+    ensure_parent(&target)?;
     write_atomic(&target, text.as_bytes())
+}
+
+/// Creates the directory that will hold `path`. `write_atomic` does not create directories,
+/// so a download into a missing directory fails, while edits and undo still create them.
+fn ensure_parent(path: &Path) -> Result<()> {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display())),
+        _ => Ok(()),
+    }
 }
 
 /// A symlink is followed, so the link itself survives the write. The result is absolute,
@@ -142,6 +153,7 @@ fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
             let bytes = fs::read(backup)
                 .with_context(|| format!("cannot read backup {}", backup.display()))?;
             keep_current(ctx, &record.file)?;
+            ensure_parent(&record.file)?;
             write_atomic(&record.file, &bytes)
         }
         (None, true) => {
@@ -404,6 +416,22 @@ mod tests {
             resolved.display()
         );
         assert!(resolved.ends_with("some/relative/settings.json"));
+    }
+
+    #[test]
+    fn undo_recreates_a_deleted_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let sub = dir.path().join("sub");
+        let file = sub.join("settings.json");
+        fs::create_dir(&sub).unwrap();
+        fs::write(&file, "orig").unwrap();
+        safe_write(&ctx, &RunId::new(), &file, "new").unwrap();
+        fs::remove_dir_all(&sub).unwrap();
+
+        undo(&ctx, None).unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "orig");
     }
 
     #[test]

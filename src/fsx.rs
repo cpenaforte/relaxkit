@@ -13,7 +13,6 @@ pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<()> {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
         _ => Path::new("."),
     };
-    fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
     let name = target
         .file_name()
         .ok_or_else(|| anyhow!("{} has no file name", target.display()))?;

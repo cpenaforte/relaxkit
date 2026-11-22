@@ -206,6 +206,21 @@ mod tests {
     }
 
     #[test]
+    fn download_into_a_missing_directory_fails_and_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-dir");
+        let dest = missing.join("tool.bin");
+        let (url, server) = serve_once("new body");
+        let net = HttpNet::new().unwrap();
+
+        let result = net.download(&url, &dest);
+
+        server.join().unwrap();
+        assert!(result.is_err());
+        assert!(!missing.exists(), "download created the missing directory");
+    }
+
+    #[test]
     fn github_latest_tag_parses_tag_name() {
         let net = FakeNet::new().with(
             "https://api.github.com/repos/nvm-sh/nvm/releases/latest",
