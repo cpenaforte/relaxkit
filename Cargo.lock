@@ -1220,6 +1220,7 @@ dependencies = [
  "directories",
  "include_dir",
  "jsonc-parser",
+ "libc",
  "minisign-verify",
  "predicates",
  "reqwest",

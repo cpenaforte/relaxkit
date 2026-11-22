@@ -156,8 +156,9 @@ fi
 
 if [ "$run_setup" -eq 1 ]; then
   # Setup may ask for the GitHub login. Its stdin is the terminal when there is one, never this script's pipe.
+  # The probe runs in a subshell: a failed redirect on `:` makes dash exit the whole script, silently, with no terminal.
   setup_stdin=/dev/null
-  if { : </dev/tty; } 2>/dev/null; then
+  if (exec </dev/tty) 2>/dev/null; then
     setup_stdin=/dev/tty
   fi
   "$bin_dir/relaxkit" setup <"$setup_stdin" \
