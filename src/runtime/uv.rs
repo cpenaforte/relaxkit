@@ -8,15 +8,26 @@ use anyhow::{Context, Result, bail};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::platform::is_executable;
-use crate::runtime::{download_dir, fresh_dir, utf8};
+use crate::runtime::{download_verified, utf8};
 use crate::state::RunId;
 
-/// The installer that Spike A6 ran with `UV_INSTALL_DIR` and `UV_NO_MODIFY_PATH=1`.
-pub const UV_INSTALL_URL: &str = "https://astral.sh/uv/install.sh";
+/// The uv release whose installer is run (owner decision O8).
+pub const UV_VERSION: &str = "0.13.9";
+
+/// The installer at `UV_VERSION`. It is run with `UV_INSTALL_DIR` and `UV_NO_MODIFY_PATH=1` (spike A6).
+pub const UV_INSTALL_URL: &str = "https://astral.sh/uv/0.13.9/install.sh";
+
+/// SHA-256 of that installer. The download must match before anything runs.
+pub const UV_INSTALL_SHA256: &str =
+    "ccc888115ac831bd9c30855c1d4abeae32fce679701d2aac8e72eb0beffb41c2";
 
 /// The uv to use: the one on the PATH, else the pack copy, else a fresh install into the pack bin dir.
 /// The installer never edits a profile, because `UV_NO_MODIFY_PATH=1` is set.
 pub fn ensure_uv(ctx: &Ctx, run: &RunId) -> Result<PathBuf> {
+    ensure_uv_pinned(ctx, run, UV_INSTALL_SHA256)
+}
+
+fn ensure_uv_pinned(ctx: &Ctx, run: &RunId, expected_sha256: &str) -> Result<PathBuf> {
     if let Some(path) = ctx.runner.which("uv") {
         return Ok(path);
     }
@@ -29,10 +40,7 @@ pub fn ensure_uv(ctx: &Ctx, run: &RunId) -> Result<PathBuf> {
             .info(&format!("would install uv into {}", ctx.dirs.bin.display()));
         return Ok(bin);
     }
-    let work = download_dir(ctx, run, "uv");
-    fresh_dir(&work)?;
-    let installer = work.join("install.sh");
-    ctx.net.download(UV_INSTALL_URL, &installer)?;
+    let installer = download_verified(ctx, run, "uv", UV_INSTALL_URL, expected_sha256)?;
     fs::create_dir_all(&ctx.dirs.bin)
         .with_context(|| format!("cannot create {}", ctx.dirs.bin.display()))?;
     let cmd = Cmd::new("sh")
@@ -75,6 +83,29 @@ mod tests {
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
     }
 
+    fn pin_of(body: &str) -> String {
+        crate::runtime::sha256_hex(body.as_bytes())
+    }
+
+    #[test]
+    fn an_installer_that_does_not_match_its_pin_is_not_run() {
+        let root = tempfile::tempdir().unwrap();
+        let runner = Recorder::new(FakeRunner::new().reply("sh ", Output::ok("")));
+        let net = FakeNet::new().with(UV_INSTALL_URL, "tampered\n");
+        let ctx = ctx_with(root.path(), &runner, net);
+
+        let err = ensure_uv_pinned(&ctx, &RunId::new(), &pin_of("echo installer\n")).unwrap_err();
+
+        let message = format!("{err:#}");
+        assert!(message.contains("install.sh"), "{message}");
+        assert!(message.contains("pinned"), "{message}");
+        assert!(
+            runner.lines().iter().all(|line| !line.starts_with("sh ")),
+            "the installer ran: {:?}",
+            runner.lines()
+        );
+    }
+
     #[test]
     fn uv_installs_with_the_flags_from_spike_a6_when_missing() {
         let root = tempfile::tempdir().unwrap();
@@ -87,7 +118,7 @@ mod tests {
         let net = FakeNet::new().with(UV_INSTALL_URL, "echo installer\n");
         let ctx = ctx_with(root.path(), &runner, net);
 
-        let uv = ensure_uv(&ctx, &RunId::new()).unwrap();
+        let uv = ensure_uv_pinned(&ctx, &RunId::new(), &pin_of("echo installer\n")).unwrap();
 
         assert_eq!(uv, bin_uv);
         let installs = runner.cmds();

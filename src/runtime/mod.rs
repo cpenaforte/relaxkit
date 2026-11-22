@@ -8,7 +8,7 @@ pub mod uv;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 
 use crate::ctx::Ctx;
 use crate::state::RunId;
@@ -33,6 +33,40 @@ pub(crate) fn fresh_dir(dir: &Path) -> Result<()> {
         Err(_) => {}
     }
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))
+}
+
+/// Downloads `url` into a fresh `download_dir(name)/install.sh` and returns that path only when the
+/// file's SHA-256 equals `expected`. A mismatch is an error that names the file, and nothing is run.
+/// An empty `expected` matches nothing.
+pub(crate) fn download_verified(
+    ctx: &Ctx,
+    run: &RunId,
+    name: &str,
+    url: &str,
+    expected: &str,
+) -> Result<PathBuf> {
+    let work = download_dir(ctx, run, name);
+    fresh_dir(&work)?;
+    let file = work.join("install.sh");
+    ctx.net.download(url, &file)?;
+    let bytes = fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
+    let actual = sha256_hex(&bytes);
+    if actual != expected {
+        bail!(
+            "{} does not match its pinned SHA-256 (expected {expected}, got {actual}); nothing was run",
+            file.display()
+        );
+    }
+    Ok(file)
+}
+
+/// SHA-256 of `bytes` as lowercase hex.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// A path as text for a command line. A non-UTF-8 path is an error, not a lossy string.

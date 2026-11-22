@@ -9,8 +9,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::host::run_edit;
-use crate::net::github_latest_tag;
-use crate::runtime::{download_dir, fresh_dir, utf8};
+use crate::runtime::{download_verified, utf8};
 use crate::state::RunId;
 
 /// The profile files nvm's installer may append to. Each is backed up and journaled before the install.
@@ -23,8 +22,12 @@ enum ProfileMode {
     Untouched,
 }
 
-/// The nvm repository whose latest release is installed.
-pub const NVM_REPO: &str = "nvm-sh/nvm";
+/// The nvm release whose installer relaxkit runs. Pinned by owner decision O8.
+pub const NVM_VERSION: &str = "v0.41.0";
+
+/// SHA-256 of nvm's `install.sh` at `NVM_VERSION`. The download must match before anything runs.
+pub const NVM_INSTALL_SHA256: &str =
+    "045932fe05f0d4247c946f2ec0ec4026dbfd8ce88a5f67ea28d8ea833227f48b";
 
 /// The Node major that relaxkit installs through nvm.
 pub const NODE_MAJOR: &str = "24";
@@ -53,6 +56,8 @@ pub struct NvmSearch {
     pub nvm_dir: Option<PathBuf>,
     pub xdg_config_home: Option<PathBuf>,
     pub brew_prefixes: Vec<PathBuf>,
+    /// The SHA-256 the nvm installer must match. Empty matches nothing, so a search built by hand fails closed.
+    pub installer_sha256: String,
 }
 
 impl NvmSearch {
@@ -65,6 +70,7 @@ impl NvmSearch {
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from),
             brew_prefixes: BREW_PREFIXES.iter().map(PathBuf::from).collect(),
+            installer_sha256: NVM_INSTALL_SHA256.to_string(),
         }
     }
 }
@@ -115,7 +121,13 @@ pub fn ensure_nvm_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NvmIn
         ctx.out.info("would install nvm from its latest release");
         return Ok(target);
     }
-    run_installer(ctx, run, &target, ProfileMode::Edit)?;
+    run_installer(
+        ctx,
+        run,
+        &target,
+        ProfileMode::Edit,
+        &search.installer_sha256,
+    )?;
     let out = ctx.runner.run(&nvm_cmd(&target, "command -v nvm")?)?;
     if out.code != 0 || out.stdout.trim() != "nvm" {
         bail!(
@@ -141,19 +153,27 @@ pub fn update_nvm_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NvmIn
         ctx.out.info("would update nvm from its latest release");
         return Ok(found);
     }
-    run_installer(ctx, run, &found, ProfileMode::Untouched)?;
+    run_installer(
+        ctx,
+        run,
+        &found,
+        ProfileMode::Untouched,
+        &search.installer_sha256,
+    )?;
     Ok(found)
 }
 
 /// Downloads the installer of the newest nvm release into a fresh directory and runs it with bash.
 /// The first install lets it edit the profile, after relaxkit has backed the profile up.
-fn run_installer(ctx: &Ctx, run: &RunId, nvm: &NvmInstall, mode: ProfileMode) -> Result<()> {
-    let tag = github_latest_tag(ctx.net.as_ref(), NVM_REPO)?;
-    let url = format!("https://raw.githubusercontent.com/nvm-sh/nvm/{tag}/install.sh");
-    let work = download_dir(ctx, run, "nvm");
-    fresh_dir(&work)?;
-    let installer = work.join("install.sh");
-    ctx.net.download(&url, &installer)?;
+fn run_installer(
+    ctx: &Ctx,
+    run: &RunId,
+    nvm: &NvmInstall,
+    mode: ProfileMode,
+    expected_sha256: &str,
+) -> Result<()> {
+    let url = format!("https://raw.githubusercontent.com/nvm-sh/nvm/{NVM_VERSION}/install.sh");
+    let installer = download_verified(ctx, run, "nvm", &url, expected_sha256)?;
     let cmd = Cmd::new("bash")
         .arg(utf8(&installer)?)
         .env("NVM_DIR", utf8(&nvm.dir)?);
@@ -313,8 +333,8 @@ mod tests {
     use crate::runtime::testing::{Recorder, ctx_with};
     use crate::state::journal;
 
-    const TAG_URL: &str = "https://api.github.com/repos/nvm-sh/nvm/releases/latest";
     const INSTALL_URL: &str = "https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh";
+    const INSTALLER: &str = "echo installer\n";
 
     fn write(path: &Path, text: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -345,10 +365,16 @@ mod tests {
         )
     }
 
-    fn net_with_latest_nvm() -> FakeNet {
-        FakeNet::new()
-            .with(TAG_URL, r#"{"tag_name":"v0.41.0"}"#)
-            .with(INSTALL_URL, "echo installer\n")
+    fn net_with_installer(body: &str) -> FakeNet {
+        FakeNet::new().with(INSTALL_URL, body)
+    }
+
+    /// A search whose pin is the hash of the fake installer, so the fake download passes verification.
+    fn pinned() -> NvmSearch {
+        NvmSearch {
+            installer_sha256: crate::runtime::sha256_hex(INSTALLER.as_bytes()),
+            ..NvmSearch::default()
+        }
     }
 
     #[test]
@@ -367,6 +393,7 @@ mod tests {
             nvm_dir: Some(custom.clone()),
             xdg_config_home: Some(xdg.clone()),
             brew_prefixes: vec![brew.clone()],
+            installer_sha256: String::new(),
         };
         nvm_at(&custom);
         nvm_at(&home);
@@ -418,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_nvm_installs_the_latest_tag() {
+    fn missing_nvm_installs_the_pinned_release() {
         let root = tempfile::tempdir().unwrap();
         let home = root.path();
         write(&home.join(".zshrc"), "export ZSH=1\n");
@@ -440,9 +467,9 @@ mod tests {
                     Output::ok("Downloading and installing node v24.22.3...\n"),
                 ),
         );
-        let ctx = ctx_with(home, &runner, net_with_latest_nvm());
+        let ctx = ctx_with(home, &runner, net_with_installer(INSTALLER));
 
-        let node = ensure_node_in(&ctx, &run, &none()).unwrap();
+        let node = ensure_node_in(&ctx, &run, &pinned()).unwrap();
 
         assert_eq!(node.version, "v24.22.3");
         let installer_run = runner
@@ -485,9 +512,9 @@ mod tests {
         write(&home.join(".zshrc"), "export ZSH=1\n");
         let run = RunId::new();
         let runner = Recorder::new(FakeRunner::new().reply("bash /", Output::ok("")));
-        let ctx = ctx_with(home, &runner, net_with_latest_nvm());
+        let ctx = ctx_with(home, &runner, net_with_installer(INSTALLER));
 
-        let nvm = update_nvm_in(&ctx, &run, &none()).unwrap();
+        let nvm = update_nvm_in(&ctx, &run, &pinned()).unwrap();
 
         assert_eq!(nvm.dir, home.join(".nvm"));
         let update = runner.cmds().into_iter().last().expect("the update ran");
@@ -505,6 +532,29 @@ mod tests {
         assert_eq!(
             fs::read_to_string(home.join(".zshrc")).unwrap(),
             "export ZSH=1\n"
+        );
+    }
+
+    #[test]
+    fn an_installer_that_does_not_match_its_pin_is_not_run() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let run = RunId::new();
+        let runner = Recorder::new(FakeRunner::new().reply("bash /", Output::ok("")));
+        let ctx = ctx_with(home, &runner, net_with_installer("tampered\n"));
+
+        let err = ensure_node_in(&ctx, &run, &pinned()).unwrap_err();
+
+        let message = format!("{err:#}");
+        assert!(message.contains("install.sh"), "{message}");
+        assert!(message.contains("pinned"), "{message}");
+        assert!(
+            runner
+                .lines()
+                .iter()
+                .all(|line| !line.starts_with("bash /")),
+            "the installer ran: {:?}",
+            runner.lines()
         );
     }
 

@@ -5,14 +5,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
-use sha2::{Digest, Sha256};
 
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::fsx::write_atomic;
 use crate::net::github_latest_tag;
 use crate::platform::{Arch, Os, current_arch, current_os, is_executable};
-use crate::runtime::{download_dir, fresh_dir, utf8};
+use crate::runtime::{download_dir, fresh_dir, sha256_hex, utf8};
 use crate::state::RunId;
 
 /// The repository whose release archive is installed.
@@ -123,13 +122,6 @@ fn install_private_copy(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<()
             .with_context(|| format!("cannot make {} executable", bin.display()))?;
     }
     Ok(())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 /// The release archive for `version` (no leading `v`), named as the release publishes it.
