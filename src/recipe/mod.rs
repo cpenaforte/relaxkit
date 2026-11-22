@@ -425,7 +425,11 @@ argv = ["fixture", "--version"]
         let err = parse_recipe(&bad).unwrap_err().to_string();
         assert!(err.contains("workdir"), "error was: {err}");
         assert!(err.contains("data directory"), "error was: {err}");
-        assert_eq!(by_id("serena").workdir.as_deref(), Some("data/serena"));
+        assert_eq!(
+            by_id("serena").workdir,
+            None,
+            "serena sets no workdir (owner decision)"
+        );
     }
 
     #[test]

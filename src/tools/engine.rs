@@ -900,6 +900,28 @@ handler = "rtk_claude_hook"
     }
 
     #[test]
+    fn a_recipe_that_sets_a_workdir_is_refused_before_any_step() {
+        let root = tempfile::tempdir().unwrap();
+        let text = EXEC_FIXTURE.replace("[version]", "workdir = \"data/serena\"\n\n[version]");
+        let recipe = fixture(&text);
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let hosts = vec![claude(root.path(), "2.1.330")];
+        let node = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node);
+
+        let err = eng.install(&recipe).unwrap_err();
+
+        assert!(
+            format!("{err:#}")
+                .contains("workdir not applied (SA-1, owner decision pending): fixture"),
+            "{err:#}"
+        );
+        assert!(runner.lines().is_empty(), "{:?}", runner.lines());
+    }
+
+    #[test]
     fn latest_version_reads_the_registry() {
         let root = tempfile::tempdir().unwrap();
         let net = FakeNet::new()

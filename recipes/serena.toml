@@ -1,14 +1,14 @@
-# Serena runs in a relaxkit-owned directory under the data directory, never in a user project (controller ruling SA-1).
+# Serena runs with --project-from-cwd, so it may write .serena/ inside a repo. The owner accepts that (spec commit 4354020),
+# and the recipe sets no workdir.
 # The pin lives in [version]. Updates reinstall (spike A I6), so an update mirrors install and reruns
-# `serena init`, which must be safe to run again. Not run here (serena is not installed); Task 12 checks it.
-# OpenCode is a terminal client, so its entry uses `--context ide` (spec section 5.1, ruling K9). Task 12 checks `serena start-mcp-server --help`.
+# `serena init`, which must be safe to run again.
+# OpenCode is a terminal client, so its entry uses `--context ide` (spec section 5.1, ruling K9).
 id = "serena"
 title = "Serena"
 kind = "mcp"
 hosts = ["claude", "opencode"]
 needs_login = false
 telemetry_default_off = true
-workdir = "data/serena"
 
 [version]
 pypi = "serena-agent"
