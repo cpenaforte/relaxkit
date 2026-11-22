@@ -12,7 +12,7 @@ use crate::config::{KitConfig, effective};
 use crate::ctx::Ctx;
 use crate::edit::{block_remove, block_upsert, json_get, json_set};
 use crate::host::Host;
-use crate::roles::{Role, resolve_claude};
+use crate::roles::{Role, RoleSetting, resolve_claude};
 use crate::state::{RunId, safe_write};
 
 /// The CLAUDE.md block that names the model for each subagent role.
@@ -40,14 +40,19 @@ pub fn apply_compact(
     write_if_changed(ctx, run, &path, &old, &text)
 }
 
-/// The Claude Code alias a role runs with. A pin to another provider has no alias on Claude Code, so the role
-/// keeps its tier instead: the tier it would have without that pin (spec 6.1, rule 1).
+/// The config as Claude Code reads it. A pin to another provider has no Claude alias, so it is dropped and the role
+/// keeps the tier it has without that pin (spec 6.1, rule 1). Roles derived from such a role then follow its preset tier.
+fn claude_view(config: &KitConfig) -> KitConfig {
+    let mut view = config.clone();
+    view.roles.retain(
+        |_, setting| !matches!(setting, RoleSetting::Pin(spec) if spec.provider != "anthropic"),
+    );
+    view
+}
+
+/// The Claude Code alias a role runs with. Always `Some`: the view holds no pin to another provider.
 fn claude_alias(config: &KitConfig, role: Role) -> Option<String> {
-    resolve_claude(&effective(config, role)).or_else(|| {
-        let mut tiered = config.clone();
-        tiered.roles.remove(&role);
-        resolve_claude(&effective(&tiered, role))
-    })
+    resolve_claude(&effective(&claude_view(config), role))
 }
 
 /// The Claude model ids the roles resolve to, in order. A tier writes its family's current model id.
@@ -407,6 +412,28 @@ mod tests {
         assert!(body.contains("planner → opus"), "{body}");
         assert!(!body.contains("gpt-x"), "{body}");
         assert!(body.contains("implementer → haiku"), "{body}");
+    }
+
+    #[test]
+    fn escalation_derives_from_a_pinned_implementer_preset_tier() {
+        // Spec 6.1 rule 1: the implementer keeps its preset tier on Claude, and escalation is one tier above that.
+        let root = tempfile::tempdir().unwrap();
+        let ctx = ctx(root.path());
+        let mut config = KitConfig::default();
+        config.roles.insert(
+            Role::Implementer,
+            RoleSetting::Pin(ModelSpec::parse("openai/gpt-x").unwrap()),
+        );
+
+        apply_roles(&ctx, &ctx.run, &host(root.path()), &config).unwrap();
+
+        let text = fs::read_to_string(root.path().join(".claude/CLAUDE.md")).unwrap();
+        let body = block_get(&text, "roles").expect("roles block");
+        assert!(body.contains("implementer → haiku"), "{body}");
+        assert!(
+            body.contains("escalation (fix-loop rounds 4–5) → sonnet"),
+            "{body}"
+        );
     }
 
     #[test]
