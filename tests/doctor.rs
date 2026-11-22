@@ -518,6 +518,47 @@ fn caveman_on_opencode_fails_unless_its_plugin_entry_is_listed() {
 }
 
 #[test]
+fn opencode_tuple_plugin_entries_are_read_by_their_first_element() {
+    // R6-2: OpenCode accepts `[name, options]` in `plugins`. The first element is the plugin spec. A tuple whose first
+    // element is not a string cannot be read, so it is a plugin-config Fail.
+    let root = tempfile::tempdir().unwrap();
+    lock(
+        root.path(),
+        &[("superpowers", "5.0.1", "opencode-plugin", &["opencode"])],
+    );
+    let runner = || {
+        refusing_sandbox(root.path())
+            .with_program("opencode", Path::new("/usr/local/bin/opencode"))
+            .reply(
+                "/usr/local/bin/opencode --version",
+                Output::ok("opencode 2.2.6\n"),
+            )
+    };
+    let config = config_file_in(&opencode_dir(root.path(), None));
+    write(
+        &config,
+        "{\"plugins\": [[\"superpowers@git+https://github.com/obra/superpowers.git#v5.0.1\", {}]]}\n",
+    );
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner(), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+    let probe = find(&checks, "tool.superpowers.opencode");
+    assert_eq!(probe.status, CheckStatus::Ok, "{probe:?}");
+
+    write(&config, "{\"plugins\": [[1, {}]]}\n");
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner(), FakeNet::new()),
+        &[opencode(root.path(), OPENCODE_VERSION)],
+    )
+    .unwrap();
+    let check = find(&checks, "plugin-config.superpowers.opencode");
+    assert_eq!(check.status, CheckStatus::Fail, "{check:?}");
+}
+
+#[test]
 fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
     // The probe's program lives only in relaxkit's bin directory, which the stub PATH does not hold. The engine finds it
     // there, so doctor must run it by its full path rather than by its bare name (ruling Important 6).

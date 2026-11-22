@@ -46,7 +46,12 @@ impl OpencodeHost {
             Some(Value::Array(items)) => items
                 .iter()
                 .map(|item| {
-                    item.as_str().map(String::from).ok_or_else(|| {
+                    // OpenCode also accepts `[name, options]`; the first element is the spec (ruling R6-2).
+                    let spec = match item {
+                        Value::Array(pair) if pair.len() == 2 => &pair[0],
+                        other => other,
+                    };
+                    spec.as_str().map(String::from).ok_or_else(|| {
                         anyhow!(
                             "plugins in {} has an entry that is not a string",
                             path.display()
