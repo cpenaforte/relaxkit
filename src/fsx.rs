@@ -8,6 +8,7 @@ use anyhow::{Context, Result, anyhow};
 
 /// Writes `bytes` to a temp file beside `target`, then renames it over `target`.
 /// On failure the temp file is removed and `target` is left as it was.
+/// The parent directory must already exist.
 /// A symlink target is resolved first, so the rename does not replace the link.
 pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<()> {
     let target = resolve_link(target)?;

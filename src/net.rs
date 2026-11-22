@@ -12,7 +12,7 @@ use crate::fsx::write_atomic;
 pub trait Net {
     /// Fetches a URL and returns its body as text. Non-success status is an error.
     fn get_text(&self, url: &str) -> Result<String>;
-    /// Fetches a URL and writes its body to `dest`.
+    /// Fetches a URL and writes its body to `dest`. The parent directory must already exist.
     fn download(&self, url: &str, dest: &Path) -> Result<()>;
 }
 
