@@ -40,6 +40,12 @@ pub struct ProbeResult {
 
 /// Runs the three probes through the pinned runtime and reports each one. A probe that cannot run is a failure.
 pub fn selftest(ctx: &Ctx, host: &dyn Host) -> Vec<ProbeResult> {
+    selftest_with(ctx, host, RUNTIME_PIN)
+}
+
+/// Runs the three probes through runtime `runtime` (an exact version). An update passes the runtime the candidate
+/// plugin declares, so the candidate is proven with the runtime it will run on (K83).
+pub fn selftest_with(ctx: &Ctx, host: &dyn Host, runtime: &str) -> Vec<ProbeResult> {
     let kind = host.info().kind;
     if ctx.dry_run {
         return PROBES
@@ -67,14 +73,15 @@ pub fn selftest(ctx: &Ctx, host: &dyn Host) -> Vec<ProbeResult> {
         .iter()
         .enumerate()
         .map(|(index, probe)| {
-            let (passed, ran, detail) =
-                match probe_command(ctx, index).and_then(|cmd| ctx.runner.run(&cmd)) {
-                    Ok(out) => {
-                        let (passed, detail) = judge(index, &out);
-                        (passed, reported_status(&out.stdout).is_some(), detail)
-                    }
-                    Err(err) => (false, false, format!("the runtime did not run: {err:#}")),
-                };
+            let (passed, ran, detail) = match probe_command_with(ctx, index, runtime)
+                .and_then(|cmd| ctx.runner.run(&cmd))
+            {
+                Ok(out) => {
+                    let (passed, detail) = judge(index, &out);
+                    (passed, reported_status(&out.stdout).is_some(), detail)
+                }
+                Err(err) => (false, false, format!("the runtime did not run: {err:#}")),
+            };
             ProbeResult {
                 probe,
                 passed,
@@ -88,8 +95,13 @@ pub fn selftest(ctx: &Ctx, host: &dyn Host) -> Vec<ProbeResult> {
 /// The command for probe `index`: the pinned runtime through the Node link, with the self-test's settings, run from
 /// the self-test project directory. The probe's own shell script follows `sh -c`.
 pub fn probe_command(ctx: &Ctx, index: usize) -> Result<Cmd> {
+    probe_command_with(ctx, index, RUNTIME_PIN)
+}
+
+/// `probe_command` through runtime `runtime`.
+pub fn probe_command_with(ctx: &Ctx, index: usize, runtime: &str) -> Result<Cmd> {
     let npx = utf8(&npx_bin(ctx))?.to_string();
-    let package = format!("{RUNTIME_PACKAGE}@{RUNTIME_PIN}");
+    let package = format!("{RUNTIME_PACKAGE}@{runtime}");
     let settings = utf8(&settings_file(ctx))?.to_string();
     let script = script(ctx, index)?;
     // The child gets the engine's search path, so the runtime is found through the Node link on a fresh machine (R3-1).

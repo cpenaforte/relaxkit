@@ -630,6 +630,7 @@ fn sandbox_plugin_moves_only_after_the_selftest_passes() {
             "https://registry.npmjs.org/opencode-sandbox/latest",
             r#"{"version":"0.7.1"}"#,
         );
+        serve_sandbox_candidate(&fx, "^0.0.76", &["0.0.76"]);
         let npx = fx.npx();
         fx.shell.on(
             &format!("{npx} --yes @anthropic-ai/sandbox-runtime@0.0.76"),
@@ -1230,9 +1231,34 @@ impl Registry {
     }
 }
 
+/// Serves the registry entries that tell the update which runtime the candidate 0.7.1 declares: the plugin's own
+/// entry with its runtime dependency `range`, and the runtime's published versions.
+fn serve_sandbox_candidate(fx: &Fixture, range: &str, published: &[&str]) {
+    fx.serve(
+        "https://registry.npmjs.org/opencode-sandbox",
+        &format!(
+            r#"{{"dist-tags":{{"latest":"0.7.1"}},"versions":{{"0.7.1":{{"dependencies":{{"@anthropic-ai/sandbox-runtime":"{range}"}}}}}}}}"#
+        ),
+    );
+    let versions: Vec<String> = published.iter().map(|v| format!("\"{v}\":{{}}")).collect();
+    fx.serve(
+        "https://registry.npmjs.org/@anthropic-ai%2fsandbox-runtime",
+        &format!(r#"{{"versions":{{{}}}}}"#, versions.join(",")),
+    );
+}
+
 /// A fixture whose only host is OpenCode, with a locked opencode-sandbox 0.7.0. The candidate 0.7.1 declares the
-/// runtime `runtime` in its registry metadata, and the runtime's published versions are `published`.
+/// runtime `runtime` (its self-test runs that exact version), and the runtime's published versions are `published`.
 fn sandbox_fixture(runtime: &str, published: &[&str], self_test: &'static str) -> Fixture {
+    sandbox_fixture_with(runtime, published, self_test, true)
+}
+
+fn sandbox_fixture_with(
+    runtime: &str,
+    published: &[&str],
+    self_test: &'static str,
+    serve_candidate: bool,
+) -> Fixture {
     let mut fx = Fixture::new();
     let config = fx.root().join(".config/opencode/opencode.jsonc");
     fs::create_dir_all(config.parent().unwrap()).unwrap();
@@ -1255,17 +1281,9 @@ fn sandbox_fixture(runtime: &str, published: &[&str], self_test: &'static str) -
         "https://registry.npmjs.org/opencode-sandbox/latest",
         r#"{"version":"0.7.1"}"#,
     );
-    fx.serve(
-        "https://registry.npmjs.org/opencode-sandbox",
-        &format!(
-            r#"{{"dist-tags":{{"latest":"0.7.1"}},"versions":{{"0.7.1":{{"dependencies":{{"@anthropic-ai/sandbox-runtime":"{runtime}"}}}}}}}}"#
-        ),
-    );
-    let versions: Vec<String> = published.iter().map(|v| format!("\"{v}\":{{}}")).collect();
-    fx.serve(
-        "https://registry.npmjs.org/@anthropic-ai%2fsandbox-runtime",
-        &format!(r#"{{"versions":{{{}}}}}"#, versions.join(",")),
-    );
+    if serve_candidate {
+        serve_sandbox_candidate(&fx, &format!("^{runtime}"), published);
+    }
     let npx = fx.npx();
     fx.shell.on(
         &format!("{npx} --yes @anthropic-ai/sandbox-runtime@{runtime}"),
@@ -1278,8 +1296,47 @@ fn sandbox_fixture(runtime: &str, published: &[&str], self_test: &'static str) -
 }
 
 #[test]
+fn sandbox_selftest_runs_the_runtime_the_candidate_declares() {
+    // The candidate 0.7.1 declares runtime 0.0.83, so its self-test runs 0.0.83 and not the pin 0.0.76 (K83). A
+    // failing probe keeps the locked plugin.
+    let fx = sandbox_fixture("0.0.83", &["0.0.76", "0.0.83"], "status=0\n");
+
+    let report = fx.run(false, Some("opencode-sandbox")).unwrap();
+
+    let lines = fx.shell.lines();
+    assert!(
+        lines.iter().any(|l| l.contains("sandbox-runtime@0.0.83")),
+        "the candidate's runtime was not self-tested: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|l| l.contains("sandbox-runtime@0.0.76")),
+        "the pinned runtime was used for the candidate: {lines:?}"
+    );
+    assert_eq!(report.failed, vec!["opencode-sandbox".to_string()]);
+    assert_eq!(fx.read_lock().tools["opencode-sandbox"].version, "0.7.0");
+}
+
+#[test]
+fn sandbox_plugin_stays_when_the_candidate_metadata_cannot_be_read() {
+    // A passing self-test is not enough: without the candidate's runtime nothing can be proven, so nothing moves.
+    let fx = sandbox_fixture_with("0.0.76", &["0.0.76"], "403\nstatus=7\n", false);
+
+    let report = fx.run(false, Some("opencode-sandbox")).unwrap();
+
+    let lines = fx.shell.lines();
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("opencode plugin add opencode-sandbox@0.7.1")),
+        "the plugin moved without its metadata: {lines:?}"
+    );
+    assert_eq!(report.failed, vec!["opencode-sandbox".to_string()]);
+    assert_eq!(fx.read_lock().tools["opencode-sandbox"].version, "0.7.0");
+}
+
+#[test]
 fn undo_keeps_an_existing_sandbox_config_when_the_plugin_does_not_move() {
-    let fx = sandbox_fixture("^0.0.76", &["0.0.76"], "status=0\n");
+    let fx = sandbox_fixture("0.0.76", &["0.0.76"], "status=0\n");
     let config = fx.root().join(".config/opencode/sandbox.json");
     fs::write(&config, "{\"mode\": \"advisory\"}\n").unwrap();
 
@@ -1296,7 +1353,7 @@ fn undo_keeps_an_existing_sandbox_config_when_the_plugin_does_not_move() {
 
 #[test]
 fn undo_does_not_delete_a_sandbox_config_the_update_never_created() {
-    let fx = sandbox_fixture("^0.0.76", &["0.0.76"], "status=0\n");
+    let fx = sandbox_fixture("0.0.76", &["0.0.76"], "status=0\n");
     let config = fx.root().join(".config/opencode/sandbox.json");
     assert!(!config.exists());
 

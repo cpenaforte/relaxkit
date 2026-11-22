@@ -21,8 +21,9 @@ use crate::recipe::{Recipe, VersionSource, load_all};
 use crate::runtime::nvm::{
     NodeInstall, NvmSearch, current_node, latest_node_24, link_node, update_node_in,
 };
+use crate::sandbox::candidate_runtime;
 use crate::sandbox::opencode::sandbox_config_path;
-use crate::sandbox::selftest::selftest;
+use crate::sandbox::selftest::selftest_with;
 use crate::state::lockfile::{LockedTool, Lockfile};
 use crate::state::{record_backup, record_link};
 use crate::tools::engine::Engine;
@@ -585,18 +586,35 @@ fn tool_flow(
             .iter()
             .find(|host| host.info().kind == HostKind::Opencode);
         if let Some(host) = host {
-            let failing: Vec<&str> = selftest(ctx, host.as_ref())
+            let kept = plan.installed.clone().unwrap_or_default();
+            // The candidate is proven with the runtime it declares. Without that metadata nothing can be proven, so
+            // nothing moves and the tool is named.
+            let runtime = match candidate_runtime(ctx, &target) {
+                Ok(runtime) => runtime,
+                Err(err) => {
+                    report.failed.push(plan.id.to_string());
+                    return (
+                        row(
+                            RowResult::NotTouched(format!(
+                                "{target} declares no readable runtime, so the locked {kept} stays"
+                            )),
+                            Some(format!("{err:#}")),
+                        ),
+                        Vec::new(),
+                    );
+                }
+            };
+            let failing: Vec<&str> = selftest_with(ctx, host.as_ref(), &runtime)
                 .iter()
                 .filter(|probe| !probe.passed)
                 .map(|probe| probe.probe)
                 .collect();
             if !failing.is_empty() {
                 report.failed.push(plan.id.to_string());
-                let kept = plan.installed.clone().unwrap_or_default();
                 return (
                     row(
                         RowResult::NotTouched(format!(
-                            "the sandbox self-test failed on {target}, so the locked {kept} stays"
+                            "the sandbox self-test on runtime {runtime} failed for {target}, so the locked {kept} stays"
                         )),
                         Some(failing.join("; ")),
                     ),

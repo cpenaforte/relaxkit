@@ -96,6 +96,31 @@ pub fn plugin_health(ctx: &Ctx, plugin_version: &str) -> Result<PluginHealth> {
     plugin_health_at(ctx, plugin_version, now_seconds())
 }
 
+/// The exact runtime version the candidate plugin `plugin_version` declares: the newest published runtime that matches
+/// the candidate's dependency range. Nothing is assumed when the registry cannot say, so the caller must not move.
+pub fn candidate_runtime(ctx: &Ctx, plugin_version: &str) -> Result<String> {
+    let net: &dyn Net = ctx.net.as_ref();
+    let plugin = npm_document(net, PLUGIN_PACKAGE)?;
+    let range = plugin["versions"][plugin_version]["dependencies"][RUNTIME_PACKAGE]
+        .as_str()
+        .ok_or_else(|| {
+            anyhow!("{PLUGIN_PACKAGE}@{plugin_version} has no {RUNTIME_PACKAGE} dependency")
+        })?;
+    let req = VersionReq::parse(range).with_context(|| {
+        format!("{PLUGIN_PACKAGE}@{plugin_version} has a bad {RUNTIME_PACKAGE} range")
+    })?;
+    let runtime = npm_document(net, RUNTIME_PACKAGE)?;
+    let best = runtime["versions"]
+        .as_object()
+        .ok_or_else(|| anyhow!("{RUNTIME_PACKAGE} lists no versions"))?
+        .keys()
+        .filter_map(|text| Version::parse(text).ok())
+        .filter(|version| version.pre.is_empty() && req.matches(version))
+        .max()
+        .ok_or_else(|| anyhow!("no published {RUNTIME_PACKAGE} matches {range}"))?;
+    Ok(best.to_string())
+}
+
 /// `plugin_health` with the clock given, so the release age is computed against a known instant in tests.
 fn plugin_health_at(ctx: &Ctx, plugin_version: &str, now: i64) -> Result<PluginHealth> {
     let net: &dyn Net = ctx.net.as_ref();
