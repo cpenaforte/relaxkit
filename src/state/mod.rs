@@ -516,6 +516,10 @@ mod tests {
         fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
         let run = RunId::new();
         safe_write(&ctx, &run, &file, "new").unwrap();
+        let backup = journal::read(&ctx.dirs).unwrap()[0]
+            .backup
+            .clone()
+            .expect("backup path");
         // Forces the path where the journal does not yet name the backup, as after an interrupted
         // attempt. The next safe_write in this run copies the target over the existing backup.
         fs::remove_file(ctx.dirs.data.join("journal.jsonl")).unwrap();
@@ -523,6 +527,10 @@ mod tests {
         safe_write(&ctx, &run, &file, "newer").unwrap();
 
         assert_eq!(fs::read_to_string(&file).unwrap(), "newer");
+        // As root, fs::copy overwrites the read-only backup and keeps the source mode, so only the
+        // explicit chmod in safe_write makes this 0600.
+        let mode = fs::metadata(&backup).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "backup {} has mode {mode:o}", backup.display());
     }
 
     #[test]
