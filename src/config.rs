@@ -17,6 +17,9 @@ use crate::state::{RunId, safe_write};
 
 const CONFIG_FILE: &str = "config.toml";
 
+/// The largest `compact_at` the config stores: it is written as a TOML integer, which is an i64.
+const COMPACT_MAX: u64 = i64::MAX as u64;
+
 /// The parsed `config.toml`. A missing file reads as `KitConfig::default()`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KitConfig {
@@ -40,8 +43,17 @@ impl KitConfig {
     /// Writes the config through `state::safe_write`, keeping comments and unknown keys. The caller
     /// holds the run lock. An unchanged config writes nothing.
     pub fn save(&self, ctx: &Ctx, run: &RunId) -> Result<()> {
+        if self
+            .compact_at
+            .is_some_and(|n| !(1..=COMPACT_MAX).contains(&n))
+        {
+            bail!("compact_at must be between 1 and {COMPACT_MAX}");
+        }
         let path = config_path(&ctx.dirs);
         let old = read_text(&path)?.unwrap_or_default();
+        if parse_text(&old).ok().as_ref() == Some(self) {
+            return Ok(());
+        }
         let mut text = toml_set(&old, &["preset"], toml_edit::value(self.preset.as_str()))?;
         text = match self.voice {
             Some(voice) => toml_set(&text, &["voice"], toml_edit::value(voice.as_str()))?,
@@ -107,7 +119,8 @@ pub fn parse_compact(text: &str) -> Result<u64> {
         bail!("compact_at must be above zero");
     }
     n.checked_mul(scale)
-        .ok_or_else(|| anyhow!("`{text}` is too large"))
+        .filter(|v| (1..=COMPACT_MAX).contains(v))
+        .ok_or_else(|| anyhow!("`{text}` is outside 1 to {COMPACT_MAX}"))
 }
 
 fn config_path(dirs: &KitDirs) -> PathBuf {
@@ -173,11 +186,13 @@ fn remove_key(text: &str, path: &[&str]) -> Result<String> {
             root.remove(key);
         }
         [table, key] => {
-            if let Some(child) = root.get_mut(table).and_then(Item::as_table_like_mut) {
-                child.remove(key);
-                if child.is_empty() {
-                    root.remove(table);
-                }
+            // The table goes only when this call removed the key and left the table empty.
+            let emptied = root
+                .get_mut(table)
+                .and_then(Item::as_table_like_mut)
+                .is_some_and(|child| child.remove(key).is_some() && child.is_empty());
+            if emptied {
+                root.remove(table);
             }
         }
         _ => bail!("unsupported config path {path:?}"),
@@ -193,6 +208,7 @@ mod tests {
     use crate::exec::FakeRunner;
     use crate::net::FakeNet;
     use crate::roles::{ModelSpec, Tier};
+    use crate::state::journal;
 
     fn pin(text: &str) -> RoleSetting {
         RoleSetting::Pin(ModelSpec::parse(text).unwrap())
@@ -292,6 +308,118 @@ mod tests {
     }
 
     #[test]
+    fn parse_compact_stays_within_one_to_i64_max() {
+        assert_eq!(
+            parse_compact("9223372036854775807").unwrap(),
+            i64::MAX as u64
+        );
+        assert!(parse_compact("9223372036854775808").is_err());
+        assert!(parse_compact("18446744073709551615").is_err());
+    }
+
+    #[test]
+    fn save_rejects_compact_values_outside_the_stored_range() {
+        for bad in [0, i64::MAX as u64 + 1] {
+            let dir = tempfile::tempdir().unwrap();
+            let dirs = KitDirs::rooted(dir.path());
+            let ctx = Ctx::for_test(dir.path(), FakeRunner::new(), FakeNet::new());
+            let config = KitConfig {
+                compact_at: Some(bad),
+                ..KitConfig::default()
+            };
+            assert!(
+                config.save(&ctx, &RunId::new()).is_err(),
+                "{bad} must be refused"
+            );
+            assert!(
+                !dirs.config.join("config.toml").exists(),
+                "{bad} must write nothing"
+            );
+            assert!(journal::read(&dirs).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn save_of_an_unchanged_file_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(dir.path());
+        fs::create_dir_all(&dirs.config).unwrap();
+        let original = "preset = \"careful\"\n\n# role pins go below\n[roles]\n";
+        fs::write(dirs.config.join("config.toml"), original).unwrap();
+        let ctx = Ctx::for_test(dir.path(), FakeRunner::new(), FakeNet::new());
+        let loaded = KitConfig::load(&dirs).unwrap();
+        loaded.save(&ctx, &RunId::new()).unwrap();
+        assert_eq!(
+            fs::read_to_string(dirs.config.join("config.toml")).unwrap(),
+            original
+        );
+        assert!(!dirs.backups.exists(), "no backup for an unchanged config");
+        assert!(
+            journal::read(&dirs).unwrap().is_empty(),
+            "no journal record"
+        );
+    }
+
+    #[test]
+    fn default_config_over_a_missing_or_empty_file_writes_nothing() {
+        let missing = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(missing.path());
+        let ctx = Ctx::for_test(missing.path(), FakeRunner::new(), FakeNet::new());
+        KitConfig::default().save(&ctx, &RunId::new()).unwrap();
+        assert!(!dirs.config.join("config.toml").exists());
+        assert!(journal::read(&dirs).unwrap().is_empty());
+
+        let empty = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(empty.path());
+        fs::create_dir_all(&dirs.config).unwrap();
+        fs::write(dirs.config.join("config.toml"), "").unwrap();
+        let ctx = Ctx::for_test(empty.path(), FakeRunner::new(), FakeNet::new());
+        KitConfig::default().save(&ctx, &RunId::new()).unwrap();
+        assert_eq!(
+            fs::read_to_string(dirs.config.join("config.toml")).unwrap(),
+            ""
+        );
+        assert!(journal::read(&dirs).unwrap().is_empty());
+    }
+
+    #[test]
+    fn default_config_keeps_unknown_keys_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(dir.path());
+        fs::create_dir_all(&dirs.config).unwrap();
+        fs::write(dirs.config.join("config.toml"), "future_key = 1\n").unwrap();
+        let ctx = Ctx::for_test(dir.path(), FakeRunner::new(), FakeNet::new());
+        KitConfig::default().save(&ctx, &RunId::new()).unwrap();
+        assert_eq!(
+            fs::read_to_string(dirs.config.join("config.toml")).unwrap(),
+            "future_key = 1\n"
+        );
+        assert!(!dirs.backups.exists());
+    }
+
+    #[test]
+    fn clearing_a_role_keeps_an_empty_table_that_held_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(dir.path());
+        fs::create_dir_all(&dirs.config).unwrap();
+        fs::write(
+            dirs.config.join("config.toml"),
+            "preset = \"careful\"\n\n# role pins go below\n[roles]\n",
+        )
+        .unwrap();
+        let ctx = Ctx::for_test(dir.path(), FakeRunner::new(), FakeNet::new());
+        let config = KitConfig {
+            preset: Preset::Careful,
+            voice: Some(Voice::Megacave),
+            ..KitConfig::default()
+        };
+        config.save(&ctx, &RunId::new()).unwrap();
+        let text = fs::read_to_string(dirs.config.join("config.toml")).unwrap();
+        assert!(text.contains("# role pins go below"), "{text}");
+        assert!(text.contains("[roles]"), "{text}");
+    }
+
+    #[test]
     fn load_rejects_the_tier_word_best() {
         let dir = tempfile::tempdir().unwrap();
         let dirs = KitDirs::rooted(dir.path());
@@ -313,6 +441,23 @@ mod tests {
         fs::write(dirs.config.join("config.toml"), "roles = \"smarter\"\n").unwrap();
         let err = format!("{:#}", KitConfig::load(&dirs).unwrap_err());
         assert!(err.contains("`roles` must be a table"), "{err}");
+    }
+
+    #[test]
+    fn load_reads_the_hyphenated_final_review_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(dir.path());
+        fs::create_dir_all(&dirs.config).unwrap();
+        fs::write(
+            dirs.config.join("config.toml"),
+            "[roles]\nfinal-review = \"smarter\"\n",
+        )
+        .unwrap();
+        let loaded = KitConfig::load(&dirs).unwrap();
+        assert_eq!(
+            loaded.roles.get(&Role::FinalReview),
+            Some(&RoleSetting::Tier(Tier::Smarter))
+        );
     }
 
     #[test]

@@ -43,8 +43,7 @@ impl Tier {
             "cheap" => Ok(Tier::Cheap),
             "standard" => Ok(Tier::Standard),
             "smarter" => Ok(Tier::Smarter),
-            "best" => bail!("`best` is not a tier; use `smarter` for the strongest model"),
-            other => bail!("unknown tier `{other}`; use cheap, standard or smarter"),
+            _ => bail!("unknown tier; use cheap, standard or smarter (smarter is the strongest)"),
         }
     }
 
@@ -91,7 +90,7 @@ impl Role {
             Role::Implementer => "implementer",
             Role::Reviewer => "reviewer",
             Role::Escalation => "escalation",
-            Role::FinalReview => "final_review",
+            Role::FinalReview => "final-review",
         }
     }
 }
@@ -226,8 +225,10 @@ fn family_version(model: &str, family: &str) -> Option<Vec<u64>> {
         .to_ascii_lowercase();
     let at = model.find(family)?;
     let rest = &model[at + family.len()..];
+    // Runs of eight or more digits are date stamps (`20250929`), not version parts.
     let version = rest
         .split(|c: char| !c.is_ascii_digit())
+        .filter(|digits| !digits.is_empty() && digits.len() < 8)
         .filter_map(|digits| digits.parse::<u64>().ok())
         .collect();
     Some(version)
@@ -350,12 +351,41 @@ mod tests {
             resolve_opencode(&RoleSetting::Tier(Tier::Smarter), &available).as_deref(),
             Some("anthropic/claude-opus-5-10")
         );
+
+        let sonnet: Vec<String> = [
+            "anthropic/claude-sonnet-4-5-20250929",
+            "anthropic/claude-sonnet-4-20250514",
+        ]
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+        assert_eq!(
+            resolve_opencode(&RoleSetting::Tier(Tier::Standard), &sonnet).as_deref(),
+            Some("anthropic/claude-sonnet-4-5-20250929"),
+            "an eight-digit date stamp must not outrank a real version"
+        );
+
+        let haiku: Vec<String> = [
+            "anthropic/claude-3-haiku-20240307",
+            "anthropic/claude-haiku-4-5",
+        ]
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+        assert_eq!(
+            resolve_opencode(&RoleSetting::Tier(Tier::Cheap), &haiku).as_deref(),
+            Some("anthropic/claude-haiku-4-5")
+        );
     }
 
     #[test]
     fn tier_word_best_is_rejected_with_a_smarter_hint() {
         let err = RoleSetting::parse("best").unwrap_err().to_string();
         assert!(err.contains("smarter"), "hint missing: {err}");
+        assert!(
+            !err.contains("best"),
+            "the product must not say best: {err}"
+        );
         assert!(Tier::parse("best").is_err());
         assert_eq!(
             RoleSetting::parse(" cheap ").unwrap(),
