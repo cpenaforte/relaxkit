@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::config::{KitConfig, effective};
 use crate::ctx::Ctx;
-use crate::edit::{block_remove, block_upsert, jsonc_remove, jsonc_set};
+use crate::edit::{block_remove, block_upsert, jsonc_get, jsonc_remove, jsonc_set};
 use crate::host::{Host, HostKind};
 use crate::roles::{Role, resolve_opencode};
 use crate::state::{RunId, safe_write};
@@ -128,19 +128,30 @@ pub fn apply_compact(
     Ok(CompactNote::Applied { buffer })
 }
 
-/// Removes what `apply_roles` wrote: the four subagents, the planner's model, and the routing block. Any other agent
-/// the user defined, and the rest of the file, stay as they are.
+/// Removes what `apply_roles` wrote: the keys it set under each managed agent, the planner's model, and the routing
+/// block. A managed agent block is removed only when nothing else is left in it. Any other agent the user defined, and
+/// the rest of the file, stay as they are.
 pub fn unset_roles(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     require_opencode(host)?;
     let path = host.config_file(ctx);
     let old = read_config(&path)?;
     let mut text = old.clone();
     for id in managed_agent_ids() {
-        text = if id == PLANNER_AGENT {
-            jsonc_remove(&text, &["agents", id, "model"])?
+        // Only the keys relaxkit wrote come out; a key the user added under the same agent stays (K106).
+        let keys: &[&str] = if id == PLANNER_AGENT {
+            &["model"]
         } else {
-            jsonc_remove(&text, &["agents", id])?
+            &["mode", "description", "model"]
         };
+        for key in keys {
+            text = jsonc_remove(&text, &["agents", id, key])?;
+        }
+        let emptied = jsonc_get(&text, &["agents", id])?
+            .and_then(|value| value.as_object().map(|object| object.is_empty()))
+            .unwrap_or(false);
+        if emptied {
+            text = jsonc_remove(&text, &["agents", id])?;
+        }
     }
     write_if_changed(ctx, run, &path, &old, &text)?;
 
@@ -519,5 +530,54 @@ mod tests {
         assert_eq!(get(&text, &["agents", "plan", "model"]), None, "{text}");
         assert!(text.contains("// my settings"), "{text}");
         assert!(get(&text, &["mcp", "legacy"]).is_some(), "{text}");
+    }
+
+    #[test]
+    fn unset_keeps_a_user_key_under_a_managed_agent() {
+        let root = tempfile::tempdir().unwrap();
+        seed(root.path(), FIXTURE);
+        let host = opencode(root.path());
+        let ctx = ctx(root.path());
+        apply_roles(&ctx, &ctx.run, &host, &balanced(), &available()).unwrap();
+        let mut with_user = jsonc_set(
+            &read(&config_path(root.path())),
+            &["agents", "reviewer", "permission"],
+            &json!({"bash": "ask"}),
+        )
+        .unwrap();
+        with_user = jsonc_set(
+            &with_user,
+            &["agents", "plan", "permission"],
+            &json!({"edit": "deny"}),
+        )
+        .unwrap();
+        fs::write(config_path(root.path()), &with_user).unwrap();
+
+        unset_roles(&ctx, &ctx.run, &host).unwrap();
+
+        let text = read(&config_path(root.path()));
+        assert_eq!(
+            get(&text, &["agents", "reviewer", "permission", "bash"]),
+            Some(json!("ask")),
+            "a user key under a managed agent survives: {text}"
+        );
+        assert_eq!(
+            get(&text, &["agents", "plan", "permission", "edit"]),
+            Some(json!("deny")),
+            "{text}"
+        );
+        for key in ["mode", "description", "model"] {
+            assert_eq!(
+                get(&text, &["agents", "reviewer", key]),
+                None,
+                "{key}: {text}"
+            );
+        }
+        assert_eq!(get(&text, &["agents", "plan", "model"]), None, "{text}");
+        assert_eq!(
+            get(&text, &["agents", "implementer"]),
+            None,
+            "an empty managed block is removed: {text}"
+        );
     }
 }
