@@ -124,6 +124,8 @@ fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
     if let Some(record) = mine.iter().find(|record| record.file.is_symlink()) {
         return Err(symlink_refusal(&record.file));
     }
+    // Every backup must open too, or undo would stop halfway through the run.
+    check_backups(&mine)?;
     let mut touched = Vec::with_capacity(mine.len());
     for record in mine.iter().rev() {
         restore(ctx, record)?;
@@ -157,6 +159,18 @@ fn keep_current(ctx: &Ctx, file: &Path) -> Result<()> {
         file.display(),
         backup.display()
     ));
+    Ok(())
+}
+
+/// Opens the backup of every record that has one, newest first, the order undo restores them in,
+/// so the first backup that cannot be opened is the one named. Nothing is written here.
+fn check_backups(mine: &[EditRecord]) -> Result<()> {
+    for record in mine.iter().rev() {
+        if let Some(backup) = &record.backup {
+            fs::File::open(backup)
+                .with_context(|| format!("cannot read backup {}", backup.display()))?;
+        }
+    }
     Ok(())
 }
 
@@ -572,6 +586,48 @@ mod tests {
         };
         names.sort();
         names
+    }
+
+    #[test]
+    fn undo_checks_every_backup_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let run = RunId::new();
+        let older = dir.path().join("older.json");
+        let newer = dir.path().join("newer.json");
+        fs::write(&older, "orig").unwrap();
+        fs::write(&newer, "orig").unwrap();
+        // Journal order is older then newer, so undo restores newer first and older last.
+        safe_write(&ctx, &run, &older, "setup").unwrap();
+        safe_write(&ctx, &run, &newer, "setup").unwrap();
+        let older_backup = journal::read(&ctx.dirs)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.file == older)
+            .and_then(|record| record.backup)
+            .expect("backup of the older file");
+        fs::remove_file(&older_backup).unwrap();
+        let journal_file = ctx.dirs.data.join("journal.jsonl");
+        let journal_before = fs::read(&journal_file).unwrap();
+        let newer_before = fs::read(&newer).unwrap();
+
+        let error = undo(&ctx, None).expect_err("undo ran with a missing backup");
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&older_backup.display().to_string()),
+            "message: {message}"
+        );
+        assert_eq!(
+            fs::read(&newer).unwrap(),
+            newer_before,
+            "the newer file was restored before the missing backup was found"
+        );
+        assert_eq!(
+            fs::read(&journal_file).unwrap(),
+            journal_before,
+            "the journal changed"
+        );
     }
 
     #[test]
