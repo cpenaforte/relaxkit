@@ -795,6 +795,15 @@ fn uninstall_removes_only_pack_managed_entries() {
     fs::create_dir_all(&bin).unwrap();
     fs::write(bin.join("rtk"), "rtk copy").unwrap();
 
+    // The user's own settings are on disk before relaxkit first writes the file. `privacy` then journals that
+    // file (F23-7), so the pack's entries written after it have an earlier record to revert to.
+    fs::write(
+        claude_settings(&home),
+        "{\"env\": {\"USER_KEY\": \"keep\"}, \"hooks\": {\"PreToolUse\": [{\"matcher\": \"Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"user-hook\"}]}]}}\n",
+    )
+    .unwrap();
+    scratch.relaxkit().arg("privacy").assert().success();
+
     // Pack-written Claude entries next to user ones.
     let rtk_command = format!("\"{}\" hook claude", bin.join("rtk").display());
     let settings = json!({

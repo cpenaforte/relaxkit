@@ -20,7 +20,7 @@ use crate::host::{Host, HostKind, detect_hosts};
 use crate::recipe::{Step, load_all};
 use crate::sandbox::{self, opencode as sandbox_opencode};
 use crate::state::lockfile::Lockfile;
-use crate::state::{RunId, original_text, record_backup, record_link, with_run_lock};
+use crate::state::{OriginalText, RunId, original_text, record_backup, record_link, with_run_lock};
 
 /// Removes the pack's entries and returns the report: what was removed, then what is left in place.
 pub fn run(ctx: &Ctx) -> Result<Vec<String>> {
@@ -90,19 +90,52 @@ fn remove_claude(
 ) -> Result<()> {
     let path = host.config_file(ctx);
     let old = read_or_empty(&path)?;
-    // F23-3 (K106): a key or list entry that was in the file before relaxkit first wrote it is the user's, and stays.
-    let original = original_text(ctx, run, &path)?;
-    let original = original.as_deref();
     let rtk_command = format!("\"{}\" hook claude", ctx.dirs.bin.join("rtk").display());
+    // K117: the settings keys are edited only when an earlier run journaled this file, so there is something to revert.
+    let settings_done = match original_text(ctx, run, &path)? {
+        OriginalText::NoEarlierRecord => false,
+        OriginalText::Created => {
+            let text = strip_claude_keys(&old, None, config, &rtk_command)?;
+            write_changed(ctx, run, &path, &old, &text)?;
+            true
+        }
+        OriginalText::Text(original) => {
+            let text = strip_claude_keys(&old, Some(&original), config, &rtk_command)?;
+            write_changed(ctx, run, &path, &old, &text)?;
+            true
+        }
+    };
+
+    let instructions = host.instructions_file(ctx);
+    let old = read_or_empty(&instructions)?;
+    let new = block_remove(&old, claude::ROLES_BLOCK);
+    write_changed(ctx, run, &instructions, &old, &new)?;
+    lines.push(if settings_done {
+        "removed the Claude Code keys relaxkit wrote and its roles block".to_string()
+    } else {
+        "left the Claude Code settings alone: no earlier run journaled them, so there is nothing to revert; removed its roles block".to_string()
+    });
+    Ok(())
+}
+
+/// The settings text with the keys relaxkit wrote taken out. `original` is the file before relaxkit first wrote it:
+/// a key or list entry that was there stays (F23-3), and a scalar key goes only while it holds the value relaxkit
+/// wrote (F23-8).
+fn strip_claude_keys(
+    old: &str,
+    original: Option<&str>,
+    config: &KitConfig,
+    rtk_command: &str,
+) -> Result<String> {
     // F23-8: a scalar key goes only while it still holds the value setup or privacy wrote.
     let mut text = remove_if_written(
-        &old,
+        old,
         original,
         &["env", "SUPERPOWERS_DISABLE_TELEMETRY"],
         &json!("1"),
     )?;
-    if !rtk_hook_in(original, &rtk_command)? {
-        text = remove_rtk_hook(&text, &rtk_command)?;
+    if !rtk_hook_in(original, rtk_command)? {
+        text = remove_rtk_hook(&text, rtk_command)?;
     }
     for key in [
         "enabled",
@@ -132,14 +165,7 @@ fn remove_claude(
             )?;
         }
     }
-    write_changed(ctx, run, &path, &old, &text)?;
-
-    let instructions = host.instructions_file(ctx);
-    let old = read_or_empty(&instructions)?;
-    let new = block_remove(&old, claude::ROLES_BLOCK);
-    write_changed(ctx, run, &instructions, &old, &new)?;
-    lines.push("removed the Claude Code keys relaxkit wrote and its roles block".to_string());
-    Ok(())
+    Ok(text)
 }
 
 /// The OpenCode agents and routing block the pack wrote, and the sandbox policy file it wrote.
@@ -507,6 +533,51 @@ mod tests {
         assert_eq!(
             get(&text, &["env", "USER_KEY"]),
             Some(json!("keep")),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn settings_keys_without_an_earlier_journal_record_are_left_alone() {
+        // K117 (c): nothing journaled by an earlier run is there to revert, so the settings keys are not touched.
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+        let host = ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/bin/claude"),
+                version: "2.1.330".into(),
+            },
+            root.path().join(".claude"),
+            root.path().join(".claude.json"),
+        );
+        let settings = host.config_file(&ctx);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(
+            &settings,
+            "{\"env\": {\"SUPERPOWERS_DISABLE_TELEMETRY\": \"1\"}, \"sandbox\": {\"enabled\": true}}",
+        )
+        .unwrap();
+
+        let mut lines = Vec::new();
+        remove_claude(
+            &ctx,
+            &RunId::new(),
+            &host,
+            &KitConfig::default(),
+            &mut lines,
+        )
+        .unwrap();
+
+        let text = fs::read_to_string(&settings).unwrap();
+        assert_eq!(
+            get(&text, &["env", "SUPERPOWERS_DISABLE_TELEMETRY"]),
+            Some(json!("1")),
+            "{text}"
+        );
+        assert_eq!(
+            get(&text, &["sandbox", "enabled"]),
+            Some(json!(true)),
             "{text}"
         );
     }
