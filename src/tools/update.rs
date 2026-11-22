@@ -117,6 +117,18 @@ impl Engine<'_> {
                     let vars = self.vars(next)?;
                     let expanded = next.expand(&[spec.to_string()], &vars)?;
                     host.plugin_update(self.ctx, &expanded[0])?;
+                    // The config must list the new spec before the lock may move (K67, R4-2): an exit of 0 from
+                    // `opencode plugin add` is not proof that the plugin is now at the target version.
+                    let name = plugin_name(&expanded[0]).to_string();
+                    let want = next.pin.clone().unwrap_or_default();
+                    let listed = host.plugin_list(self.ctx)?;
+                    if !listed.iter().any(|plugin| {
+                        plugin.name == name && plugin.version.as_deref() == Some(want.as_str())
+                    }) {
+                        bail!(
+                            "the OpenCode config does not list {name} at {want} after the update"
+                        );
+                    }
                 }
             }
         }

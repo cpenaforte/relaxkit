@@ -502,15 +502,14 @@ fn opencode_superpowers_moves_its_tag_by_remove_then_add() {
     fx.shell.on("opencode plugin remove", Output::ok(""));
     fx.shell.on("opencode plugin add", Output::ok(""));
     fx.shell.on("opencode --version", Output::ok("2.2.6\n"));
+    // The effect matches the command's own argv, not its display string: the display quotes the `+` and `#` of a git spec,
+    // so a display prefix would never match. An add writes the spec it was given, as OpenCode does.
     let cfg = config.clone();
     fx.shell.effect(
-        "opencode plugin add superpowers@git+https://github.com/obra/superpowers.git#v7.0.3",
-        Arc::new(move |_| {
-            fs::write(
-                &cfg,
-                "{\"plugins\": [\"superpowers@git+https://github.com/obra/superpowers.git#v7.0.3\"]}\n",
-            )
-            .unwrap();
+        "opencode plugin add",
+        Arc::new(move |cmd| {
+            let spec = cmd.argv().last().cloned().unwrap_or_default();
+            fs::write(&cfg, format!("{{\"plugins\": [\"{spec}\"]}}\n")).unwrap();
         }),
     );
 
@@ -916,6 +915,48 @@ fn a_failed_claude_update_still_restarts_claude() {
     assert!(
         report.restart.contains(&HostKind::Claude),
         "a changed Claude plugin was not listed to restart: {report:?}"
+    );
+}
+
+#[test]
+fn an_opencode_update_the_config_does_not_show_is_rolled_back_and_named() {
+    // `opencode plugin add` exits 0, but the config still lists the old spec. The new version is not confirmed, so the
+    // lock must not move, the tool goes back to its locked spec, and the report names it (K67, R4-2).
+    let mut fx = Fixture::new();
+    let config = fx.root().join(".config/opencode/opencode.jsonc");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let old = "superpowers@git+https://github.com/obra/superpowers.git#v7.0.2";
+    fs::write(&config, format!("{{\"plugins\": [\"{old}\"]}}\n")).unwrap();
+    fx.hosts = vec![Box::new(OpencodeHost::new(
+        HostInfo {
+            kind: HostKind::Opencode,
+            binary: PathBuf::from("/usr/local/bin/opencode"),
+            version: "2.2.6".to_string(),
+        },
+        fx.root().join(".config/opencode"),
+    ))];
+    fx.lock(&[("superpowers", "7.0.2", "opencode-plugin", &["opencode"])]);
+    let before = fx.read_lock();
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.3"}"#,
+    );
+    fx.shell.on("opencode plugin remove", Output::ok(""));
+    fx.shell.on("opencode plugin add", Output::ok(""));
+    fx.shell.on("opencode --version", Output::ok("2.2.6\n"));
+
+    let report = fx.run(false, Some("superpowers")).unwrap();
+
+    assert!(
+        matches!(row(&report, "superpowers").result, RowResult::RolledBack),
+        "{:?}",
+        row(&report, "superpowers")
+    );
+    assert_eq!(report.failed, vec!["superpowers".to_string()]);
+    assert_eq!(
+        fx.read_lock().tools["superpowers"],
+        before.tools["superpowers"],
+        "the lock moved to a version the config does not show"
     );
 }
 
