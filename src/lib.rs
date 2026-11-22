@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod brand;
 pub mod cli;
 pub mod commands;

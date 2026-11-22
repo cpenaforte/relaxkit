@@ -696,9 +696,10 @@ fn a_repair_never_moves_a_listed_unpinned_plugin() {
     let mut scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     scratch.clear_calls();
-    // The first `claude plugin list` of the rerun is caveman's listing check (caveman sorts first in the lock), which
-    // fails once. Caveman is the listed unpinned plugin that is repaired; the plugin is still never installed.
-    scratch.fail_once("claude plugin list");
+    // The first `claude plugin list` of the rerun is the Claude adapter's check in configure, which passes. The second
+    // is caveman's listing check in verify (caveman sorts first in the lock), which fails once. Caveman is the listed
+    // unpinned plugin that is repaired; the plugin is still never installed.
+    scratch.fail_once_after("claude plugin list", 1);
 
     let output = scratch.relaxkit().arg("setup").assert().success();
 
@@ -723,4 +724,36 @@ fn setup_does_not_record_a_brew_or_system_gh() {
     let lock =
         fs::read_to_string(scratch.home().join(".config/relaxkit/lock.toml")).unwrap_or_default();
     assert!(!lock.contains("[tools.gh]"), "{lock}");
+}
+
+#[test]
+fn setup_installs_the_adapter_for_each_detected_host() {
+    // Task 24 part A: configure installs the Claude adapter for each detected Claude host. A Claude-only home gets
+    // only that adapter, and no OpenCode call runs.
+    let scratch = Scratch::claude_only();
+
+    scratch.relaxkit().arg("setup").assert().success();
+
+    let calls = scratch.calls();
+    let count = |call: String| calls.iter().filter(|c| **c == call).count();
+    assert_eq!(
+        count(format!(
+            "claude plugin marketplace add {}",
+            relaxkit::brand::REPO
+        )),
+        1,
+        "{calls:?}"
+    );
+    assert_eq!(
+        count(format!(
+            "claude plugin install {0}@{0}",
+            relaxkit::brand::NAME
+        )),
+        1,
+        "{calls:?}"
+    );
+    assert!(
+        calls.iter().all(|call| !call.starts_with("opencode ")),
+        "{calls:?}"
+    );
 }
