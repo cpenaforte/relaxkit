@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::config::{KitConfig, effective};
 use crate::ctx::Ctx;
-use crate::edit::{block_remove, block_upsert, jsonc_get, jsonc_set};
+use crate::edit::{block_remove, block_upsert, jsonc_append, jsonc_get, jsonc_set};
 use crate::host::Host;
 use crate::roles::{Role, RoleSetting, resolve_claude};
 use crate::state::{RunId, safe_write};
@@ -159,7 +159,7 @@ pub fn apply_rtk_hook(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     let path = host.config_file(ctx);
     let old = read_text(&path)?;
     let command = rtk_hook_command(ctx);
-    let mut entries = match jsonc_get(&old, &["hooks", "PreToolUse"])? {
+    let entries = match jsonc_get(&old, &["hooks", "PreToolUse"])? {
         None => Vec::new(),
         Some(Value::Array(entries)) => entries,
         Some(_) => bail!("hooks.PreToolUse in {} is not a list", path.display()),
@@ -167,11 +167,12 @@ pub fn apply_rtk_hook(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     if entries.iter().any(|entry| is_rtk_hook(entry, &command)) {
         return Ok(());
     }
-    entries.push(json!({
+    // Only the new entry is appended, so the existing hooks keep their text, order and comments.
+    let entry = json!({
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": command}]
-    }));
-    let text = jsonc_set(&old, &["hooks", "PreToolUse"], &Value::Array(entries))?;
+    });
+    let text = jsonc_append(&old, &["hooks", "PreToolUse"], &entry)?;
     write_if_changed(ctx, run, &path, &old, &text)
 }
 
@@ -659,6 +660,39 @@ mod tests {
                 {"matcher": "Write", "hooks": [{"type": "command", "command": "lint"}]},
                 {"matcher": "Bash", "hooks": [{"type": "command", "command": hook_command(root.path())}]}
             ])
+        );
+    }
+
+    #[test]
+    fn rtk_hook_appends_to_pretooluse_and_keeps_order_and_comments() {
+        // Spec 5: the hook is appended; the existing hook objects keep their key order, their text and the comments.
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join(".claude")).unwrap();
+        let before = "{\n  // keep me\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"lint\"}]}, // first\n      {\"hooks\": [{\"type\": \"command\", \"command\": \"z-last\"}], \"matcher\": \"Read\"}\n    ]\n  }\n}\n";
+        fs::write(settings_path(root.path()), before).unwrap();
+        let ctx = ctx(root.path());
+
+        apply_rtk_hook(&ctx, &ctx.run, &host(root.path())).unwrap();
+
+        let text = fs::read_to_string(settings_path(root.path())).unwrap();
+        assert!(text.contains("// keep me"), "{text}");
+        assert!(text.contains("// first"), "{text}");
+        assert!(
+            text.contains("{\"hooks\": [{\"type\": \"command\", \"command\": \"z-last\"}], \"matcher\": \"Read\"}"),
+            "{text}"
+        );
+        let first = text.find("\"matcher\": \"Write\"").unwrap();
+        let second = text.find("\"matcher\": \"Read\"").unwrap();
+        let rtk = text.find(" hook claude").unwrap();
+        assert!(first < second && second < rtk, "{text}");
+        let entries = jsonc_get(&text, &["hooks", "PreToolUse"]).unwrap().unwrap();
+        assert_eq!(entries.as_array().unwrap().len(), 3, "{entries}");
+
+        apply_rtk_hook(&ctx, &ctx.run, &host(root.path())).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(settings_path(root.path())).unwrap(),
+            text
         );
     }
 
