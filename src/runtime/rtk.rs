@@ -115,6 +115,15 @@ fn install_latest(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<String> 
     fs::create_dir_all(&ctx.dirs.bin)
         .with_context(|| format!("cannot create {}", ctx.dirs.bin.display()))?;
     let bin = ctx.dirs.bin.join("rtk");
+    // A link at the pack copy (an adopted Homebrew rtk, or a dangling one) is removed first, so the release is written
+    // as a regular file and never through the link into another install (ruling R4-1).
+    if bin
+        .symlink_metadata()
+        .is_ok_and(|meta| meta.file_type().is_symlink())
+    {
+        fs::remove_file(&bin)
+            .with_context(|| format!("cannot remove the link {}", bin.display()))?;
+    }
     write_atomic(&bin, &body)?;
     #[cfg(unix)]
     {
@@ -273,6 +282,49 @@ mod tests {
         let lines = runner.lines();
         assert_eq!(lines.len(), 1, "the archive is unpacked: {lines:?}");
         assert!(lines[0].starts_with("tar -xf"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_repair_replaces_a_pack_link_without_writing_through_it() {
+        // R4-1: when the pack copy is a link to a Homebrew file, the repair removes the link and writes the release as a
+        // regular file, so the Homebrew file keeps its bytes.
+        let root = tempfile::tempdir().unwrap();
+        let (bytes, checksums) = release(root.path(), ARCHIVE, "rtk", None);
+        let brew = root.path().join("homebrew/bin/rtk");
+        fs::create_dir_all(brew.parent().unwrap()).unwrap();
+        fs::write(&brew, "brew bytes\n").unwrap();
+        let pack = bin_rtk(root.path());
+        fs::create_dir_all(pack.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&brew, &pack).unwrap();
+        let ctx = ctx_with(root.path(), &tar_runner(), net(bytes, &checksums));
+
+        reinstall_latest_for(&ctx, &RunId::new(), Os::Linux, Arch::X86_64).unwrap();
+
+        assert_eq!(fs::read_to_string(&brew).unwrap(), "brew bytes\n");
+        assert!(
+            pack.symlink_metadata().unwrap().file_type().is_file(),
+            "the pack copy is a regular file, not a link"
+        );
+        assert_eq!(fs::read_to_string(&pack).unwrap(), "#!/bin/sh\necho rtk\n");
+    }
+
+    #[test]
+    fn a_repair_replaces_a_dangling_pack_link() {
+        // R4-1: a dangling link at the pack copy is removed too, so the repair writes a regular file.
+        let root = tempfile::tempdir().unwrap();
+        let (bytes, checksums) = release(root.path(), ARCHIVE, "rtk", None);
+        let pack = bin_rtk(root.path());
+        fs::create_dir_all(pack.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(root.path().join("gone/rtk"), &pack).unwrap();
+        let ctx = ctx_with(root.path(), &tar_runner(), net(bytes, &checksums));
+
+        reinstall_latest_for(&ctx, &RunId::new(), Os::Linux, Arch::X86_64).unwrap();
+
+        assert!(
+            pack.symlink_metadata().unwrap().file_type().is_file(),
+            "the pack copy is a regular file, not a link"
+        );
+        assert_eq!(fs::read_to_string(&pack).unwrap(), "#!/bin/sh\necho rtk\n");
     }
 
     #[test]
