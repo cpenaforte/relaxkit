@@ -215,7 +215,7 @@ pub fn resolve_opencode(setting: &RoleSetting, available: &[String]) -> Option<S
     }
 }
 
-/// The numeric version after `family` in `model`, or `None` when `model` is not in that family.
+/// The numeric version after `family` in `model`, or `None` when `model` is not in that family or has no version.
 /// `claude-opus-5-10` gives `[5, 10]`, so 5-10 sorts after 5-9.
 pub(crate) fn family_version(model: &str, family: &str) -> Option<Vec<u64>> {
     let model = model
@@ -226,11 +226,15 @@ pub(crate) fn family_version(model: &str, family: &str) -> Option<Vec<u64>> {
     let at = model.find(family)?;
     let rest = &model[at + family.len()..];
     // Runs of eight or more digits are date stamps (`20250929`), not version parts.
-    let version = rest
+    let version: Vec<u64> = rest
         .split(|c: char| !c.is_ascii_digit())
         .filter(|digits| !digits.is_empty() && digits.len() < 8)
         .filter_map(|digits| digits.parse::<u64>().ok())
         .collect();
+    // F23-20: an id with no version (`claude-sonnet-latest`) is not a member of the family.
+    if version.is_empty() {
+        return None;
+    }
     Some(version)
 }
 
@@ -394,6 +398,16 @@ mod tests {
         assert_eq!(
             RoleSetting::parse("smarter").unwrap(),
             RoleSetting::Tier(Tier::Smarter)
+        );
+    }
+
+    #[test]
+    fn a_family_needs_a_version() {
+        // F23-20: `claude-sonnet-latest` has no version, so it is not the sonnet family.
+        assert_eq!(family_version("claude-sonnet-latest", "sonnet"), None);
+        assert_eq!(
+            family_version("claude-sonnet-5-5", "sonnet"),
+            Some(vec![5, 5])
         );
     }
 }
