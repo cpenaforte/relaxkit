@@ -70,6 +70,8 @@ pub struct Ctx {
     pub out: Reporter,
     pub dry_run: bool,
     pub project: Option<PathBuf>,
+    /// Lets a step run its `sudo` plan (ruling K47). Without it, the plan is only printed.
+    pub allow_sudo: bool,
     /// The run every journaled edit of this process belongs to, so `undo` reverts the whole process.
     pub run: RunId,
 }
@@ -84,12 +86,17 @@ impl Ctx {
             out: Reporter::capture(),
             dry_run: false,
             project: None,
+            allow_sudo: false,
             run: RunId::new(),
         }
     }
 
     /// A context for the real machine: discovered directories, real processes and HTTP.
-    pub fn system(dry_run: bool, project: Option<PathBuf>) -> anyhow::Result<Ctx> {
+    pub fn system(
+        dry_run: bool,
+        project: Option<PathBuf>,
+        allow_sudo: bool,
+    ) -> anyhow::Result<Ctx> {
         Ok(Ctx {
             dirs: KitDirs::discover()?,
             runner: Box::new(SystemRunner),
@@ -97,6 +104,7 @@ impl Ctx {
             out: Reporter::stdout(),
             dry_run,
             project,
+            allow_sudo,
             run: RunId::new(),
         })
     }

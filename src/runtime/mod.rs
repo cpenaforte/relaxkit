@@ -190,6 +190,7 @@ pub(crate) mod testing {
             out: Reporter::capture(),
             dry_run: false,
             project: None,
+            allow_sudo: false,
             run: RunId::new(),
         }
     }

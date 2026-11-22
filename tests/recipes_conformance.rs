@@ -110,6 +110,7 @@ fn rig() -> Rig {
         out: Reporter::capture(),
         dry_run: false,
         project: None,
+        allow_sudo: false,
         run: RunId::new(),
     };
     Rig { root, rec, ctx }

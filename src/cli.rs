@@ -24,7 +24,11 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Install prerequisites, the pack, config, sandbox and the GitHub login
-    Setup,
+    Setup {
+        /// Run the sandbox's sudo plan (Linux packages). Without it, setup prints the command instead
+        #[arg(long)]
+        allow_sudo: bool,
+    },
     /// Show versions, drift and enforced-vs-advisory settings
     Status,
     /// Check hooks, schemas, the sandbox self-test and MCP reachability

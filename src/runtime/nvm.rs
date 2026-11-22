@@ -626,6 +626,7 @@ mod tests {
             out: crate::ctx::Reporter::capture(),
             dry_run: false,
             project: None,
+            allow_sudo: false,
             run: RunId::new(),
         };
         let search = NvmSearch {
@@ -792,6 +793,7 @@ mod tests {
             out: crate::ctx::Reporter::capture(),
             dry_run: false,
             project: None,
+            allow_sudo: false,
             run: RunId::new(),
         };
 

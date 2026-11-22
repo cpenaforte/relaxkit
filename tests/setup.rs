@@ -1,0 +1,297 @@
+//! `relaxkit setup` against stub host commands in a temporary HOME (Task 19, rulings K46 to K54).
+
+mod support;
+
+use std::fs;
+use std::path::PathBuf;
+
+use predicates::prelude::*;
+use relaxkit::config::KitConfig;
+use relaxkit::ctx::Ctx;
+use relaxkit::exec::FakeRunner;
+use relaxkit::net::FakeNet;
+use relaxkit::platform::KitDirs;
+use relaxkit::presets::Preset;
+use relaxkit::state::undo;
+use support::{Scratch, tree};
+
+const STEP_NAMES: [&str; 7] = [
+    "detect",
+    "prerequisites",
+    "install",
+    "configure",
+    "sandbox",
+    "login",
+    "verify",
+];
+
+/// Host commands the stubs answer. A line starting with one of these names is a call to a host or tool.
+const TOOLS: [&str; 11] = [
+    "claude", "opencode", "gh", "brew", "uv", "rtk", "npm", "npx", "serena", "caveman", "sudo",
+];
+
+/// Argument words that change something on the machine. A call with one of them is mutating.
+const MUTATING_WORDS: [&str; 7] = [
+    "install",
+    "add",
+    "remove",
+    "init",
+    "telemetry",
+    "marketplace",
+    "routing",
+];
+
+fn is_mutating(call: &str) -> bool {
+    let mut words = call.split_whitespace();
+    let Some(program) = words.next() else {
+        return false;
+    };
+    TOOLS.contains(&program) && words.any(|word| MUTATING_WORDS.contains(&word))
+}
+
+fn position_of(text: &str, needle: &str) -> usize {
+    text.find(needle)
+        .unwrap_or_else(|| panic!("`{needle}` is missing from:\n{text}"))
+}
+
+#[test]
+fn setup_dry_run_prints_the_plan_and_writes_nothing() {
+    let scratch = Scratch::claude_only();
+    let before = tree(scratch.home());
+
+    let output = scratch
+        .relaxkit()
+        .args(["setup", "--dry-run"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).unwrap();
+    let positions: Vec<usize> = STEP_NAMES
+        .iter()
+        .map(|step| position_of(&text, &format!("{step}:")))
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
+    assert_eq!(
+        tree(scratch.home()),
+        before,
+        "a dry run changed the home tree"
+    );
+    let calls = scratch.calls();
+    assert!(
+        calls.iter().all(|call| call.ends_with(" --version")),
+        "a dry run ran more than host detection: {calls:?}"
+    );
+}
+
+#[test]
+fn detect_runs_before_any_install() {
+    let scratch = Scratch::claude_only();
+
+    scratch.relaxkit().arg("setup").assert().success();
+
+    let calls = scratch.calls();
+    assert_eq!(calls.first().map(String::as_str), Some("claude --version"));
+    let first_install = calls
+        .iter()
+        .position(|call| call.contains(" install") || call.contains(" add "))
+        .expect("an install call");
+    assert!(first_install > 0, "{calls:?}");
+}
+
+#[test]
+fn setup_runs_steps_in_spec_order() {
+    let scratch = Scratch::claude_only();
+
+    let output = scratch.relaxkit().arg("setup").assert().success();
+    let text = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+
+    let positions: Vec<usize> = STEP_NAMES
+        .iter()
+        .map(|step| position_of(&text, &format!("{step}:")))
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
+}
+
+#[test]
+fn setup_is_idempotent() {
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    let first = tree(scratch.home());
+    scratch.clear_calls();
+
+    scratch.relaxkit().arg("setup").assert().success();
+
+    let calls = scratch.calls();
+    let mutating: Vec<&String> = calls.iter().filter(|call| is_mutating(call)).collect();
+    assert!(mutating.is_empty(), "a second setup mutated: {mutating:?}");
+    let second = tree(scratch.home());
+    let data = scratch.home().join(".local");
+    let config_only = |files: &std::collections::BTreeMap<PathBuf, Vec<u8>>| {
+        files
+            .iter()
+            .filter(|(path, _)| !path.starts_with(&data))
+            .map(|(path, bytes)| (path.clone(), bytes.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    assert_eq!(config_only(&second), config_only(&first));
+}
+
+#[test]
+fn setup_with_only_claude_skips_opencode_steps() {
+    let scratch = Scratch::claude_only();
+
+    scratch.relaxkit().arg("setup").assert().success();
+
+    let calls = scratch.calls();
+    assert!(
+        calls.iter().all(|call| !call.starts_with("opencode ")),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn setup_with_only_opencode_runs_no_claude_step() {
+    // Caveman's OpenCode files come from GitHub, which this test does not reach, so the run is expected to stop
+    // there. The check is that no Claude Code step ran first.
+    let scratch = Scratch::new();
+    scratch.without("claude");
+
+    scratch
+        .relaxkit()
+        .arg("setup")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("caveman"));
+
+    let calls = scratch.calls();
+    assert!(
+        calls.iter().all(|call| !call.starts_with("claude ")),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn setup_with_neither_host_exits_nonzero_with_a_hint() {
+    let scratch = Scratch::new();
+    scratch.without("claude");
+    scratch.without("opencode");
+
+    scratch
+        .relaxkit()
+        .arg("setup")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Claude Code").and(predicate::str::contains("OpenCode")));
+}
+
+#[test]
+fn setup_asks_no_questions() {
+    let scratch = Scratch::claude_only();
+
+    scratch.relaxkit().arg("setup").assert().code(0);
+}
+
+#[test]
+fn interrupted_setup_is_undoable() {
+    let mut scratch = Scratch::claude_only();
+    let home = scratch.home().to_path_buf();
+    let settings = home.join(".claude/settings.json");
+    let claude_md = home.join(".claude/CLAUDE.md");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(&settings, "{\"theme\": \"dark\"}\n").unwrap();
+    fs::write(&claude_md, "# my notes\n").unwrap();
+    // The rtk probe runs after configure and sandbox have written the host files, so the run stops after those
+    // edits are journaled.
+    scratch.fail_calls_matching("rtk gain");
+
+    scratch.relaxkit().arg("setup").assert().failure();
+    assert_ne!(
+        fs::read_to_string(&settings).unwrap(),
+        "{\"theme\": \"dark\"}\n",
+        "the interrupted run should have edited settings.json before it stopped"
+    );
+
+    let ctx = Ctx::for_test(&home, FakeRunner::new(), FakeNet::new());
+    undo(&ctx, None).expect("undo");
+
+    assert_eq!(
+        fs::read_to_string(&settings).unwrap(),
+        "{\"theme\": \"dark\"}\n"
+    );
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), "# my notes\n");
+}
+
+#[test]
+fn setup_applies_the_balanced_preset_by_default() {
+    let scratch = Scratch::claude_only();
+
+    scratch.relaxkit().arg("setup").assert().success();
+
+    let home = scratch.home();
+    // A fresh machine has no config.toml, since a missing file reads as the defaults, which are balanced.
+    let preset = KitConfig::load(&KitDirs::rooted(home)).unwrap().preset;
+    assert_eq!(preset, Preset::Balanced);
+    let caveman = fs::read_to_string(home.join(".config/caveman/config.json")).unwrap();
+    assert!(
+        caveman.contains("\"defaultMode\": \"caveman\""),
+        "{caveman}"
+    );
+    let settings = fs::read_to_string(home.join(".claude/settings.json")).unwrap();
+    assert!(
+        settings.contains("SUPERPOWERS_DISABLE_TELEMETRY"),
+        "{settings}"
+    );
+    assert!(!settings.contains("autoCompactWindow"), "{settings}");
+    let claude_md = fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap();
+    assert!(claude_md.contains("opus"), "{claude_md}");
+    assert!(claude_md.contains("haiku"), "{claude_md}");
+    assert!(claude_md.contains("sonnet"), "{claude_md}");
+}
+
+#[test]
+fn setup_keeps_an_existing_preset() {
+    let scratch = Scratch::claude_only();
+    let config_dir = scratch.home().join(".config/relaxkit");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("config.toml"), "preset = \"careful\"\n").unwrap();
+
+    scratch.relaxkit().arg("setup").assert().success();
+
+    let config = fs::read_to_string(config_dir.join("config.toml")).unwrap();
+    assert!(config.contains("preset = \"careful\""), "{config}");
+}
+
+#[test]
+fn setup_exits_3_when_the_login_needs_the_owner() {
+    let mut scratch = Scratch::claude_only();
+    scratch.gh_auth_status(1);
+
+    let output = scratch
+        .relaxkit()
+        .arg("setup")
+        .assert()
+        .code(3)
+        .get_output()
+        .clone();
+
+    let text = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        text.contains("/gh auth login --web --clipboard && ") && text.contains("gh auth setup-git"),
+        "{text}"
+    );
+    assert!(
+        text.contains("verify:"),
+        "the steps after login must still run:\n{text}"
+    );
+    assert!(
+        scratch
+            .calls()
+            .iter()
+            .all(|call| !call.contains("gh auth login")),
+        "setup must not start the web login without a terminal"
+    );
+}

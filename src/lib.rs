@@ -1,5 +1,6 @@
 pub mod brand;
 pub mod cli;
+pub mod commands;
 pub mod config;
 pub mod config_apply;
 pub mod ctx;
@@ -21,12 +22,16 @@ pub mod tools;
 use anyhow::{Result, anyhow};
 
 use cli::{Cli, Command};
+use ctx::Ctx;
 
-/// Runs a parsed command. Each handler is a stub until its task lands.
-pub fn run(cli: Cli) -> Result<()> {
+/// Runs a parsed command and returns the process exit code. Each handler is a stub until its task lands.
+pub fn run(cli: Cli) -> Result<i32> {
     match cli.command {
-        Command::Setup
-        | Command::Status
+        Command::Setup { allow_sudo } => {
+            let ctx = Ctx::system(cli.dry_run, None, allow_sudo)?;
+            Ok(commands::setup::run(&ctx)?.exit_code)
+        }
+        Command::Status
         | Command::Doctor
         | Command::Update { .. }
         | Command::Config(_)
