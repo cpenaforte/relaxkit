@@ -206,20 +206,25 @@ fn rejects_a_bad_signature() {
     let mut checksums = fixture("checksums.txt");
     checksums.push(b'\n');
     let runner = Recorder::default();
-    let ctx = ctx_for(
-        root.path(),
-        &runner,
-        release(
-            fixture("archive.tar.gz"),
-            checksums,
-            fixture("checksums.txt.minisig"),
-        ),
+    let net = release(
+        fixture("archive.tar.gz"),
+        checksums,
+        fixture("checksums.txt.minisig"),
     );
+    let requests = net.clone();
+    let ctx = ctx_for(root.path(), &runner, net);
 
     let err = selfupdate::apply(&ctx, &exe, &test_key(), false)
         .expect_err("a checksums file with a bad signature was accepted");
 
     assert!(format!("{err:#}").contains("does not verify"), "{err:#}");
+    // The order (K94): the archive is not requested until the checksums file has verified.
+    let archive_url = format!("{}/{}", base_url(), asset());
+    assert!(
+        !requests.requested().contains(&archive_url),
+        "the archive was requested before the signature was checked: {:?}",
+        requests.requested()
+    );
     assert_eq!(fs::read_to_string(&exe).unwrap(), "old binary\n");
     assert_eq!(mode(&exe), 0o755);
     assert!(!ctx.dirs.bin.join("relaxkit.prev").exists());

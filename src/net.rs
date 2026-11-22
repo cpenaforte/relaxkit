@@ -55,6 +55,8 @@ impl Net for HttpNet {
 #[derive(Default)]
 struct FakeState {
     bodies: BTreeMap<String, Vec<u8>>,
+    /// Every URL asked for, in order, including the failed ones.
+    requested: Vec<String>,
 }
 
 /// Scripted network. Clones share state.
@@ -83,10 +85,15 @@ impl FakeNet {
         self
     }
 
+    /// Every URL requested so far, in order. Clones share the log.
+    pub fn requested(&self) -> Vec<String> {
+        self.state.lock().expect("fake net lock").requested.clone()
+    }
+
     fn bytes(&self, url: &str) -> Result<Vec<u8>> {
-        self.state
-            .lock()
-            .expect("fake net lock")
+        let mut state = self.state.lock().expect("fake net lock");
+        state.requested.push(url.to_string());
+        state
             .bodies
             .get(url)
             .cloned()
