@@ -156,38 +156,34 @@ impl<'a> Engine<'a> {
         self.probed_binary(recipe, kind)
     }
 
-    /// The version and route of the recipe's binary when it is on the PATH and reports a version: the probe's first
-    /// word is looked up, then `--version` is read from it. Nothing is returned for a missing or silent binary.
-    fn probed_binary(&self, recipe: &Recipe, kind: HostKind) -> Result<Option<(String, Route)>> {
-        let Some(probe) = recipe.probe.get(&kind) else {
-            return Ok(None);
-        };
-        let Some(bin) = probe.argv.first().filter(|arg| !arg.starts_with('{')) else {
-            return Ok(None);
-        };
-        let Some(path) = self.ctx.runner.which(bin) else {
-            return Ok(None);
-        };
-        let version = self
-            .ctx
+    /// The probe's first word, when that binary is on the PATH: its name and the path it resolves to.
+    fn probe_on_path(&self, recipe: &Recipe, kind: HostKind) -> Option<(String, PathBuf)> {
+        let probe = recipe.probe.get(&kind)?;
+        let bin = probe.argv.first().filter(|arg| !arg.starts_with('{'))?;
+        let path = self.ctx.runner.which(bin)?;
+        Some((bin.clone(), path))
+    }
+
+    /// The version a binary reports for `--version`, when it reports one.
+    fn reported_version(&self, bin: &str) -> Option<String> {
+        self.ctx
             .runner
             .run(&Cmd::new(bin).arg("--version"))
             .ok()
             .filter(|out| out.code == 0)
-            .and_then(|out| parse_version(&out.stdout));
-        let Some(version) = version else {
+            .and_then(|out| parse_version(&out.stdout))
+    }
+
+    /// The version and route of the recipe's binary when it is on the PATH and reports a version. Nothing is returned
+    /// for a missing or silent binary.
+    fn probed_binary(&self, recipe: &Recipe, kind: HostKind) -> Result<Option<(String, Route)>> {
+        let Some((bin, path)) = self.probe_on_path(recipe, kind) else {
             return Ok(None);
         };
-        let route = if BREW_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
-            Route::Brew
-        } else {
-            match recipe.kind {
-                Kind::Npm => Route::Npm,
-                Kind::Binary => Route::Script,
-                _ => Route::Unknown,
-            }
+        let Some(version) = self.reported_version(&bin) else {
+            return Ok(None);
         };
-        Ok(Some((version, route)))
+        Ok(Some((version, binary_route(recipe, &path))))
     }
 
     /// Installs the recipe on every host it names. A host that is not installed, or is too old, is skipped. An
@@ -279,8 +275,6 @@ impl<'a> Engine<'a> {
             .unwrap_or_else(|| UNVERSIONED.to_string()))
     }
 
-    /// The probed binary of a binary or npm recipe, read after its steps ran. Plugin and MCP recipes have no binary
-    /// version of their own, so they return nothing here.
     fn binary_after_steps(
         &self,
         recipe: &Recipe,
@@ -289,7 +283,14 @@ impl<'a> Engine<'a> {
         if !matches!(recipe.kind, Kind::Binary | Kind::Npm) || plugin_spec(recipe, kind).is_some() {
             return Ok(None);
         }
-        self.probed_binary(recipe, kind)
+        // A binary that is on the PATH but reports no version is recorded as unversioned, never as the pin.
+        let Some((bin, path)) = self.probe_on_path(recipe, kind) else {
+            return Ok(None);
+        };
+        let version = self
+            .reported_version(&bin)
+            .unwrap_or_else(|| UNVERSIONED.to_string());
+        Ok(Some((version, binary_route(recipe, &path))))
     }
 
     /// Decides what happens on one host without changing anything: skip, adopt, or install.
@@ -498,6 +499,18 @@ impl<'a> Engine<'a> {
             },
         );
         lock.save(self.ctx, self.run)
+    }
+}
+
+/// The route of a binary or npm recipe found at `path`: Brew under a Homebrew prefix, otherwise by recipe kind.
+fn binary_route(recipe: &Recipe, path: &std::path::Path) -> Route {
+    if BREW_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
+        return Route::Brew;
+    }
+    match recipe.kind {
+        Kind::Npm => Route::Npm,
+        Kind::Binary => Route::Script,
+        _ => Route::Unknown,
     }
 }
 
@@ -886,6 +899,46 @@ exec = ["caveman", "telemetry", "off"]
         let lock = Lockfile::load(&ctx).unwrap().unwrap();
         assert_eq!(lock.tools["rtk"].version, "1.1.0");
         assert_eq!(lock.tools["rtk"].route, "brew");
+    }
+
+    #[test]
+    fn a_path_binary_whose_version_cannot_be_read_is_unversioned_not_the_pin() {
+        let root = tempfile::tempdir().unwrap();
+        let rtk = load_all()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == "rtk")
+            .unwrap();
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .with_program("rtk", Path::new("/opt/homebrew/bin/rtk"))
+                .reply("rtk --version", Output::fail(1, "no version"))
+                .reply("rtk init -g --opencode", Output::ok(""))
+                .reply("rtk telemetry disable", Output::ok("")),
+        );
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let hosts = vec![opencode(root.path())];
+        let node_install = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node_install);
+
+        let outcomes = eng.install(&rtk).unwrap();
+
+        assert!(
+            outcomes.contains(&(
+                HostKind::Opencode,
+                Outcome::Installed {
+                    version: UNVERSIONED.to_string()
+                }
+            )),
+            "{outcomes:?}"
+        );
+        // An unreadable version is not locked, so no rtk entry is written.
+        let lock = Lockfile::load(&ctx).unwrap();
+        let has_rtk = lock
+            .as_ref()
+            .is_some_and(|lock| lock.tools.contains_key("rtk"));
+        assert!(!has_rtk, "{lock:?}");
     }
 
     #[test]
