@@ -70,6 +70,17 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// The SHA-256 that a checksums file lists for `name`. Each line is `<hex>  <name>`, with an optional `*` before
+/// the name.
+pub(crate) fn checksum_for(checksums: &str, name: &str) -> Result<String> {
+    checksums
+        .lines()
+        .filter_map(|line| line.split_once(char::is_whitespace))
+        .find(|(_, file)| file.trim().trim_start_matches('*') == name)
+        .map(|(hash, _)| hash.trim().to_ascii_lowercase())
+        .ok_or_else(|| anyhow!("the checksums file has no entry for {name}"))
+}
+
 /// A path as text for a command line. A non-UTF-8 path is an error, not a lossy string.
 pub(crate) fn utf8(path: &Path) -> Result<&str> {
     path.to_str()

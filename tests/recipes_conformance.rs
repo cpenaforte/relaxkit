@@ -237,6 +237,18 @@ fn npm(rig: &Rig) -> String {
     rig.ctx.dirs.data.join("node/bin/npm").display().to_string()
 }
 
+/// The version probe of the pack's own rtk copy, by full path, as the engine runs it after a fresh install.
+fn pack_rtk_probe(rig: &Rig) -> Vec<String> {
+    vec![
+        KitDirs::rooted(rig.root.path())
+            .bin
+            .join("rtk")
+            .display()
+            .to_string(),
+        "--version".to_string(),
+    ]
+}
+
 fn expect_calls(actual: &[Vec<String>], expected: Vec<Vec<String>>) {
     assert_eq!(actual, expected.as_slice());
 }
@@ -306,11 +318,14 @@ fn rtk_on_claude_runs_init_then_writes_the_hook_then_telemetry_off() {
     let rig = prepared();
     let (result, calls) = install(&rig, "rtk", HostKind::Claude);
     assert!(result.is_ok(), "{result:?}");
+    let probe = pack_rtk_probe(&rig);
     expect_calls(
         &calls,
         vec![
+            probe.clone(),
             tokens(&["rtk", "init", "-g"]),
             tokens(&["rtk", "telemetry", "disable"]),
+            probe,
         ],
     );
     let settings = std::fs::read_to_string(rig.root.path().join(".claude/settings.json")).unwrap();
@@ -337,6 +352,24 @@ fn adopted_rtk_on_claude_still_gets_the_hook() {
 }
 
 #[test]
+fn rtk_in_the_pack_bin_is_recorded_with_the_version_it_reports() {
+    let rig = prepared();
+    let bin = KitDirs::rooted(rig.root.path()).bin.join("rtk");
+    rig.rec.reply(
+        &format!("{} --version", bin.display()),
+        Output::ok("rtk 1.4.0\n"),
+    );
+    let (result, _) = install(&rig, "rtk", HostKind::Claude);
+    let outcomes = result.unwrap();
+    assert!(
+        matches!(&outcomes[0].1, Outcome::Adopted { version, .. } if version == "1.4.0"),
+        "{outcomes:?}"
+    );
+    let lock = Lockfile::load(&rig.ctx).unwrap().unwrap();
+    assert_eq!(lock.tools["rtk"].version, "1.4.0");
+}
+
+#[test]
 fn rtk_on_opencode_runs_init_then_telemetry_off_and_never_brew() {
     let rig = prepared();
     let (result, calls) = install(&rig, "rtk", HostKind::Opencode);
@@ -346,6 +379,7 @@ fn rtk_on_opencode_runs_init_then_telemetry_off_and_never_brew() {
         vec![
             tokens(&["rtk", "init", "-g", "--opencode"]),
             tokens(&["rtk", "telemetry", "disable"]),
+            pack_rtk_probe(&rig),
         ],
     );
     assert!(calls.iter().all(|call| call[0] != "brew"), "{calls:?}");

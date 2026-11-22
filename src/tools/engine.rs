@@ -12,6 +12,7 @@ use crate::ctx::Ctx;
 use crate::exec::{Cmd, Output};
 use crate::host::{Host, HostCheck, HostKind, check_minimum, edit_guarded, parse_version};
 use crate::net::{Net, github_latest_tag, npm_latest};
+use crate::platform::is_executable;
 use crate::recipe::{Kind, Recipe, Step, Vars, VersionSource};
 use crate::runtime::nvm::{BREW_PREFIXES, NodeInstall, node_bin, npx_bin};
 use crate::runtime::{chromium, rtk, utf8, uv};
@@ -165,12 +166,20 @@ impl<'a> Engine<'a> {
         self.probed_binary(recipe, kind)
     }
 
-    /// The probe's first word, when that binary is on the PATH: its name and the path it resolves to.
+    /// The probe's first word, when that binary is on the PATH: its name and the path it resolves to. A copy relaxkit
+    /// installed in its bin directory counts too, because the engine's commands search that directory. Such a copy
+    /// is probed by its full path, since the bare name is not on the PATH.
     fn probe_on_path(&self, recipe: &Recipe, kind: HostKind) -> Option<(String, PathBuf)> {
         let probe = recipe.probe.get(&kind)?;
         let bin = probe.argv.first().filter(|arg| !arg.starts_with('{'))?;
-        let path = self.ctx.runner.which(bin)?;
-        Some((bin.clone(), path))
+        if let Some(path) = self.ctx.runner.which(bin) {
+            return Some((bin.clone(), path));
+        }
+        if bin.contains('/') {
+            return None;
+        }
+        let own = self.ctx.dirs.bin.join(bin);
+        is_executable(&own).then(|| (own.to_string_lossy().into_owned(), own))
     }
 
     /// The version a binary reports for `--version`, when it reports one.

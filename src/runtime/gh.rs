@@ -11,7 +11,7 @@ use crate::exec::Cmd;
 use crate::fsx::write_atomic;
 use crate::net::github_latest_tag;
 use crate::platform::{Arch, Os, current_arch, current_os, is_executable};
-use crate::runtime::{download_dir, fresh_dir, sha256_hex, utf8};
+use crate::runtime::{checksum_for, download_dir, fresh_dir, sha256_hex, utf8};
 use crate::state::RunId;
 
 /// The repository whose release archive is installed.
@@ -83,7 +83,7 @@ fn install_private_copy(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<()
 
     let checksums = fs::read_to_string(&checksums_path)
         .with_context(|| format!("cannot read {}", checksums_path.display()))?;
-    let expected = expected_sha256(&checksums, &archive_name)?;
+    let expected = checksum_for(&checksums, &archive_name)?;
     let bytes = fs::read(&archive).with_context(|| format!("cannot read {}", archive.display()))?;
     let actual = sha256_hex(&bytes);
     if actual != expected {
@@ -139,16 +139,6 @@ fn asset_name(os: Os, arch: Arch, version: &str) -> String {
         _ => "tar.gz",
     };
     format!("gh_{version}_{os}_{arch}.{ext}")
-}
-
-/// The SHA-256 that the checksums file lists for `name`. Each line is `<hex>  <name>`.
-fn expected_sha256(checksums: &str, name: &str) -> Result<String> {
-    checksums
-        .lines()
-        .filter_map(|line| line.split_once(char::is_whitespace))
-        .find(|(_, file)| file.trim().trim_start_matches('*') == name)
-        .map(|(hash, _)| hash.trim().to_ascii_lowercase())
-        .ok_or_else(|| anyhow!("the checksums file has no entry for {name}"))
 }
 
 #[cfg(test)]
@@ -305,7 +295,7 @@ mod tests {
             "a".repeat(64),
             "b".repeat(64)
         );
-        assert_eq!(expected_sha256(&text, ARCHIVE).unwrap(), "b".repeat(64));
-        assert!(expected_sha256(&text, "missing.tar.gz").is_err());
+        assert_eq!(checksum_for(&text, ARCHIVE).unwrap(), "b".repeat(64));
+        assert!(checksum_for(&text, "missing.tar.gz").is_err());
     }
 }
