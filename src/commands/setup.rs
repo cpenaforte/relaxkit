@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use anyhow::{Result, bail};
 
-use crate::commands::doctor::{self, CheckStatus};
+use crate::commands::doctor::{self, Check, CheckStatus};
 use crate::config::KitConfig;
 use crate::config_apply::{claude, opencode, voice};
 use crate::ctx::Ctx;
@@ -156,7 +156,7 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
     configure(ctx, &run, hosts, &mut report)?;
     sandbox_step(ctx, &run, hosts, &mut report)?;
     let login = login_step(ctx, &run, &mut report)?;
-    let failed = verify_step(ctx, hosts, &mut report)?;
+    let failed = verify_step(ctx, hosts, &engine, &mut report)?;
 
     report.exit_code = match login {
         _ if failed => FAILED_CHECK_EXIT,
@@ -314,10 +314,40 @@ fn login_step(ctx: &Ctx, run: &RunId, report: &mut SetupReport) -> Result<Option
     Ok(Some(outcome))
 }
 
-/// The verify step runs `doctor` (ruling K50). Its checks print here, and a failed check makes setup exit 1. Returns
-/// whether any check failed.
-fn verify_step(ctx: &Ctx, hosts: &[Box<dyn Host>], report: &mut SetupReport) -> Result<bool> {
-    let checks = doctor::checks_for(ctx, hosts)?;
+/// The verify step runs `doctor` (ruling K50). A failing probe or MCP command is repaired by reinstalling its locked
+/// tool, and the checks run again (ruling OWNER-3). The checks print here, and a check that still fails makes setup
+/// exit 1. Returns whether any check failed.
+fn verify_step(
+    ctx: &Ctx,
+    hosts: &[Box<dyn Host>],
+    engine: &Engine<'_>,
+    report: &mut SetupReport,
+) -> Result<bool> {
+    let mut checks = doctor::checks_for(ctx, hosts)?;
+    let mut targets: Vec<(String, HostKind)> = Vec::new();
+    for check in &checks {
+        if let Some(target) = reinstall_target(check)
+            && !targets.contains(&target)
+        {
+            targets.push(target);
+        }
+    }
+    for (id, kind) in &targets {
+        let Some(recipe) = engine.recipes.iter().find(|recipe| &recipe.id == id) else {
+            continue;
+        };
+        match engine.reinstall(recipe, *kind) {
+            Ok(_) => report.say(
+                ctx,
+                "verify",
+                format!("repaired {id} on {kind}: reinstalled at its locked version and configured again"),
+            ),
+            Err(err) => report.say(ctx, "verify", format!("could not repair {id} on {kind}: {err:#}")),
+        }
+    }
+    if !targets.is_empty() {
+        checks = doctor::checks_for(ctx, hosts)?;
+    }
     let count = |status: CheckStatus| checks.iter().filter(|check| check.status == status).count();
     let (ok, warn, fail) = (
         count(CheckStatus::Ok),
@@ -354,6 +384,20 @@ fn verify_step(ctx: &Ctx, hosts: &[Box<dyn Host>], report: &mut SetupReport) -> 
         ),
     );
     Ok(fail > 0)
+}
+
+/// The locked tool a failing check repairs by reinstalling it: a failing probe (`tool.<id>.<host>`) or a missing MCP
+/// command (`mcp.<id>.<host>`). No other check has a reinstall repair (ruling OWNER-3).
+fn reinstall_target(check: &Check) -> Option<(String, HostKind)> {
+    if check.status != CheckStatus::Fail {
+        return None;
+    }
+    let rest = check
+        .id
+        .strip_prefix("tool.")
+        .or_else(|| check.id.strip_prefix("mcp."))?;
+    let (id, kind) = rest.rsplit_once('.')?;
+    Some((id.to_string(), kind.parse().ok()?))
 }
 
 /// A recipe is left alone when every host it names that is installed already has it in the lock. The lock

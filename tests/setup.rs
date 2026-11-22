@@ -360,3 +360,69 @@ fn setup_warns_on_anthropic_base_url_and_never_deletes_it() {
         "{after}"
     );
 }
+
+#[test]
+fn setup_reinstalls_a_tool_whose_probe_fails_and_passes_on_rerun() {
+    // OWNER-3 (i): a locked tool whose probe fails on a rerun is reinstalled at its locked version and configured
+    // again. The rerun finds the probe passing and exits 0.
+    let mut scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    scratch.clear_calls();
+    scratch.fail_once("rtk gain");
+
+    let output = scratch.relaxkit().arg("setup").assert().success();
+
+    let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    assert!(text.contains("repaired rtk on claude"), "{text}");
+    let calls = scratch.calls();
+    assert!(calls.iter().any(|call| call == "rtk gain"), "{calls:?}");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.as_str() == "rtk init -g")
+            .count(),
+        1,
+        "the reinstall runs the install steps once: {calls:?}"
+    );
+    assert!(
+        calls.iter().any(|call| call == "rtk telemetry disable"),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_repair_that_still_fails_leaves_a_fail_and_setup_exits_1() {
+    // OWNER-3 (iv): a probe that still fails after the repair stays a fail, and setup exits 1 with that check's fix.
+    let mut scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    scratch.fail_calls_matching("rtk gain");
+
+    let output = scratch.relaxkit().arg("setup").assert().code(1);
+
+    let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    assert!(text.contains("repaired rtk on claude"), "{text}");
+    assert!(text.contains("fail tool.rtk.claude"), "{text}");
+    assert!(text.contains("run `relaxkit setup` again"), "{text}");
+}
+
+#[test]
+fn setup_rewrites_a_hand_edited_relaxkit_key() {
+    // OWNER-3 (ii): a relaxkit-owned key changed by hand is written back to its expected value on a rerun.
+    let scratch = Scratch::claude_only();
+    let settings = scratch.home().join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        "{\"env\": {\"SUPERPOWERS_DISABLE_TELEMETRY\": \"0\"}}\n",
+    )
+    .unwrap();
+
+    scratch.relaxkit().arg("setup").assert().success();
+
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(
+        value["env"]["SUPERPOWERS_DISABLE_TELEMETRY"], "1",
+        "{value}"
+    );
+}

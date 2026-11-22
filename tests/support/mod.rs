@@ -41,6 +41,17 @@ if [ -n "$RELAXKIT_STUB_FAIL" ]; then
     *"$RELAXKIT_STUB_FAIL"*) echo "stub refused: $line" >&2; exit 1 ;;
   esac
 fi
+# RELAXKIT_STUB_FAIL_ONCE fails the first call that matches, then the fail-once marker is spent (shell builtins only).
+if [ -n "$RELAXKIT_STUB_FAIL_ONCE" ]; then
+  case "$line" in
+    *"$RELAXKIT_STUB_FAIL_ONCE"*)
+      if read -r armed < "$RELAXKIT_STUB_STATE/fail-once" 2>/dev/null && [ "$armed" = armed ]; then
+        echo "spent" > "$RELAXKIT_STUB_STATE/fail-once"
+        echo "stub refused once: $line" >&2
+        exit 1
+      fi ;;
+  esac
+fi
 case "$line" in
   *"@anthropic-ai/sandbox-runtime"*) printf 'status=1\n403\n'; exit 0 ;;
   "claude --version"|"claude -v") echo "2.1.330 (Claude Code)" ;;
@@ -174,6 +185,13 @@ impl Scratch {
     pub fn fail_calls_matching(&mut self, needle: &str) {
         self.extra_env
             .insert("RELAXKIT_STUB_FAIL".into(), needle.into());
+    }
+
+    /// Makes the first call whose command line contains `needle` fail; every later call succeeds.
+    pub fn fail_once(&mut self, needle: &str) {
+        fs::write(self.state.join("fail-once"), "armed\n").expect("arm fail-once");
+        self.extra_env
+            .insert("RELAXKIT_STUB_FAIL_ONCE".into(), needle.into());
     }
 
     /// Makes `gh auth status` exit with `code` (0 is logged in).

@@ -209,14 +209,7 @@ impl<'a> Engine<'a> {
     /// steps are checked before the first host runs anything. The lock is written only when every installed host
     /// succeeded.
     pub fn install(&self, recipe: &Recipe) -> Result<Vec<(HostKind, Outcome)>> {
-        // A recipe that sets a workdir cannot be applied through the Host API (SA-1). Until the owner decides how
-        // it is applied, the install is refused before any step, so the process never starts without it.
-        if recipe.workdir.is_some() {
-            bail!(
-                "workdir not applied (SA-1, owner decision pending): {}",
-                recipe.id
-            );
-        }
+        refuse_workdir(recipe)?;
         let mut planned: Vec<Planned<'_>> = Vec::new();
         for &kind in &recipe.hosts {
             let entry = match self.hosts.iter().find(|host| host.info().kind == kind) {
@@ -251,17 +244,7 @@ impl<'a> Engine<'a> {
                     outcomes.push((kind, Outcome::Adopted { version, route }));
                 }
                 Plan::Install => {
-                    let vars = self.run_steps(recipe, host)?;
-                    // A binary or npm tool records the version its binary reports after the steps ran, and that
-                    // binary's route. Only when nothing is reported does it fall back to the pin or the plugin rule.
-                    let (version, route) = match self.binary_after_steps(recipe, kind)? {
-                        Some(found) => found,
-                        None => {
-                            let version = self.installed_version(recipe, host)?;
-                            let marketplace = plugin_marketplace(recipe, kind, &vars);
-                            (version, install_route(recipe, kind, &marketplace))
-                        }
-                    };
+                    let (version, route) = self.install_here(recipe, kind, host)?;
                     rows.push((kind, version.clone(), route.clone()));
                     outcomes.push((kind, Outcome::Installed { version }));
                 }
@@ -269,6 +252,44 @@ impl<'a> Engine<'a> {
         }
         self.record(recipe, &rows)?;
         Ok(outcomes)
+    }
+
+    /// Runs every install step of the recipe on one host, and returns the version and route the lock records for it.
+    fn install_here(
+        &self,
+        recipe: &Recipe,
+        kind: HostKind,
+        host: &dyn Host,
+    ) -> Result<(String, Route)> {
+        let vars = self.run_steps(recipe, host)?;
+        // A binary or npm tool records the version its binary reports after the steps ran, and that binary's route.
+        // Only when nothing is reported does it fall back to the pin or the plugin rule.
+        match self.binary_after_steps(recipe, kind)? {
+            Some(found) => Ok(found),
+            None => {
+                let version = self.installed_version(recipe, host)?;
+                let marketplace = plugin_marketplace(recipe, kind, &vars);
+                Ok((version, install_route(recipe, kind, &marketplace)))
+            }
+        }
+    }
+
+    /// Runs the recipe's install steps again on one installed host, at the recipe's pin, and updates the lock for that
+    /// host. Unlike `install`, an adopted tool is not skipped, and the steps include the MCP entry, which the
+    /// configuration of an adopted install does not rerun. Setup uses this to repair a failing check (ruling OWNER-3).
+    pub fn reinstall(&self, recipe: &Recipe, kind: HostKind) -> Result<Outcome> {
+        refuse_workdir(recipe)?;
+        let Some(host) = self.hosts.iter().find(|host| host.info().kind == kind) else {
+            bail!(
+                "{kind} is not installed, so {} cannot be reinstalled on it",
+                recipe.id
+            );
+        };
+        let steps = recipe.install.get(&kind).cloned().unwrap_or_default();
+        self.preflight_steps(recipe, kind, &steps)?;
+        let (version, route) = self.install_here(recipe, kind, host.as_ref())?;
+        self.record(recipe, &[(kind, version.clone(), route)])?;
+        Ok(Outcome::Installed { version })
     }
 
     /// The version an install records. A plugin step that carries `{version}` is pinned, so the pin is recorded. A
@@ -534,6 +555,18 @@ impl<'a> Engine<'a> {
         );
         lock.save(self.ctx, self.run)
     }
+}
+
+/// A recipe that sets a workdir cannot be applied through the Host API (SA-1). Until the owner decides how it is
+/// applied, the install is refused before any step, so the process never starts without it.
+fn refuse_workdir(recipe: &Recipe) -> Result<()> {
+    if recipe.workdir.is_some() {
+        bail!(
+            "workdir not applied (SA-1, owner decision pending): {}",
+            recipe.id
+        );
+    }
+    Ok(())
 }
 
 /// The directories an MCP entry's command is found in, in order: the Node link, then `~/.local/bin` (where
