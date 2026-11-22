@@ -119,6 +119,67 @@ fn rtk_config_for(os: Os, home: &Path) -> PathBuf {
     }
 }
 
+/// What preparing Linux for the sandbox takes (spec 7). `lines` is shown to the user before the one sudo prompt, and
+/// `sudo` is that one invocation (`sudo` first). Both are empty when nothing is needed, which is every macOS plan.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PrereqPlan {
+    pub lines: Vec<String>,
+    pub sudo: Vec<String>,
+}
+
+/// The AppArmor profile that lets bubblewrap create user namespaces on Ubuntu 24.04 and later. The Linux sandbox
+/// needs it, because that release restricts unprivileged user namespaces by default (spec 7; spike B4).
+const BWRAP_PROFILE_PATH: &str = "/etc/apparmor.d/relaxkit-bwrap";
+const BWRAP_PROFILE: &str = "abi <abi/4.0>,\ninclude <tunables/global>\nprofile relaxkit-bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n";
+
+/// The plan for `os`. `os_release` is the text of `/etc/os-release` on Linux. Nothing here runs a command.
+pub fn prerequisite_plan(os: Os, os_release: Option<&str>) -> PrereqPlan {
+    if os != Os::Linux {
+        return PrereqPlan::default();
+    }
+    let mut lines = vec!["install bubblewrap and socat with apt-get".to_string()];
+    let mut script = "apt-get install -y bubblewrap socat".to_string();
+    if os_release.is_some_and(needs_userns_profile) {
+        lines.push(format!(
+            "write the AppArmor profile {BWRAP_PROFILE_PATH} so bubblewrap may create user namespaces, then load it"
+        ));
+        script.push_str(&format!(
+            " && printf '%s' '{BWRAP_PROFILE}' > {BWRAP_PROFILE_PATH} && apparmor_parser -r {BWRAP_PROFILE_PATH}"
+        ));
+    }
+    PrereqPlan {
+        lines,
+        sudo: vec![
+            "sudo".to_string(),
+            "sh".to_string(),
+            "-c".to_string(),
+            script,
+        ],
+    }
+}
+
+/// True for Ubuntu 24.04 or later, read from `/etc/os-release` text (`ID=ubuntu`, `VERSION_ID="24.04"`).
+fn needs_userns_profile(os_release: &str) -> bool {
+    let field = |key: &str| {
+        os_release.lines().find_map(|line| {
+            line.strip_prefix(key)?
+                .strip_prefix('=')
+                .map(|value| value.trim_matches('"').to_string())
+        })
+    };
+    if field("ID").as_deref() != Some("ubuntu") {
+        return false;
+    }
+    let Some(version) = field("VERSION_ID") else {
+        return false;
+    };
+    let mut parts = version.split('.').map(|part| part.parse::<u32>().ok());
+    matches!(
+        (parts.next().flatten(), parts.next().flatten()),
+        (Some(major), Some(minor)) if (major, minor) >= (24, 4)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +225,55 @@ mod tests {
             rtk_config_for(Os::Linux, home),
             PathBuf::from("/h/.config/rtk/config.toml")
         );
+    }
+
+    const UBUNTU_2404: &str = "NAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n";
+
+    #[test]
+    fn prerequisite_plan_on_macos_is_empty() {
+        assert_eq!(prerequisite_plan(Os::MacOs, None), PrereqPlan::default());
+    }
+
+    #[test]
+    fn prerequisite_plan_names_bubblewrap_and_socat_in_one_sudo_invocation() {
+        let plan = prerequisite_plan(Os::Linux, Some("ID=debian\nVERSION_ID=\"12\"\n"));
+
+        let sudo_words = plan.sudo.iter().filter(|word| *word == "sudo").count();
+        assert_eq!(sudo_words, 1, "{:?}", plan.sudo);
+        assert_eq!(plan.sudo.first().map(String::as_str), Some("sudo"));
+        let script = plan.sudo.join(" ");
+        assert!(script.contains("bubblewrap"), "{script}");
+        assert!(script.contains("socat"), "{script}");
+        assert!(!script.contains("apparmor_parser"), "{script}");
+    }
+
+    #[test]
+    fn prerequisite_plan_adds_the_apparmor_profile_on_ubuntu_2404_and_later() {
+        for release in [
+            UBUNTU_2404,
+            "ID=ubuntu\nVERSION_ID=\"24.10\"\n",
+            "ID=ubuntu\nVERSION_ID=\"26.04\"\n",
+        ] {
+            let plan = prerequisite_plan(Os::Linux, Some(release));
+            let script = plan.sudo.join(" ");
+            assert!(script.contains("apparmor_parser"), "{release}: {script}");
+            assert!(script.contains("userns"), "{release}: {script}");
+            assert_eq!(plan.sudo.iter().filter(|word| *word == "sudo").count(), 1);
+        }
+    }
+
+    #[test]
+    fn prerequisite_plan_skips_apparmor_before_ubuntu_2404_and_on_other_distros() {
+        for release in [
+            "ID=ubuntu\nVERSION_ID=\"22.04\"\n",
+            "ID_LIKE=ubuntu\nVERSION_ID=\"24.04\"\n",
+            "ID=debian\nVERSION_ID=\"13\"\n",
+        ] {
+            let plan = prerequisite_plan(Os::Linux, Some(release));
+            assert!(
+                !plan.sudo.join(" ").contains("apparmor_parser"),
+                "{release}"
+            );
+        }
     }
 }
