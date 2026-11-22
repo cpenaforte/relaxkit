@@ -102,6 +102,23 @@ pub fn is_executable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Where rtk keeps its `config.toml` under `home`. The macOS path is from spike A7; the Linux path follows the
+/// XDG default and is to be verified at Task 28.
+pub fn rtk_config_file(home: &Path) -> Result<PathBuf> {
+    Ok(rtk_config_for(current_os()?, home))
+}
+
+fn rtk_config_for(os: Os, home: &Path) -> PathBuf {
+    match os {
+        Os::MacOs => home
+            .join("Library")
+            .join("Application Support")
+            .join("rtk")
+            .join("config.toml"),
+        Os::Linux => home.join(".config").join("rtk").join("config.toml"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +151,18 @@ mod tests {
         assert_eq!(current_arch().unwrap(), Arch::Aarch64);
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         assert!(current_arch().is_err());
+    }
+
+    #[test]
+    fn rtk_config_path_follows_each_os() {
+        let home = Path::new("/h");
+        assert_eq!(
+            rtk_config_for(Os::MacOs, home),
+            PathBuf::from("/h/Library/Application Support/rtk/config.toml")
+        );
+        assert_eq!(
+            rtk_config_for(Os::Linux, home),
+            PathBuf::from("/h/.config/rtk/config.toml")
+        );
     }
 }

@@ -2,3 +2,5 @@
 //! config of caveman, and rtk's display config. Every write goes through `state::safe_write`.
 
 pub mod claude;
+pub mod privacy;
+pub mod voice;

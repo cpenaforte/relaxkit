@@ -8,10 +8,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 
 use crate::ctx::Ctx;
+use crate::edit::toml_set;
 use crate::exec::Cmd;
-use crate::platform::is_executable;
+use crate::platform::{is_executable, rtk_config_file};
 use crate::runtime::{download_verified, utf8};
 use crate::state::RunId;
+use crate::state::safe_write;
 
 /// The rtk release whose install script is run.
 pub const RTK_VERSION: &str = "v1.2.1";
@@ -63,6 +65,22 @@ fn ensure_rtk_pinned(ctx: &Ctx, run: &RunId, url: &str, expected_sha256: &str) -
         bail!("the rtk installer did not create {}", bin.display());
     }
     Ok(bin)
+}
+
+/// Sets rtk's `[display] pro_hint = false`, which hides the one-line RTK Pro notice that `rtk gain` prints about
+/// once a day (spec section 6, item 20: a proposal the owner may veto). Comments and other keys are kept.
+pub fn apply_defaults(ctx: &Ctx, run: &RunId) -> Result<()> {
+    let path = rtk_config_file(&ctx.dirs.home)?;
+    let old = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err).with_context(|| format!("cannot read {}", path.display())),
+    };
+    let text = toml_set(&old, &["display", "pro_hint"], toml_edit::value(false))?;
+    if text == old {
+        return Ok(());
+    }
+    safe_write(ctx, run, &path, &text)
 }
 
 #[cfg(test)]
@@ -129,5 +147,52 @@ mod tests {
             env.iter().any(|(key, _)| key == "RTK_INSTALL_DIR"),
             "{env:?}"
         );
+    }
+
+    #[test]
+    fn rtk_defaults_set_pro_hint_false_and_keep_comments() {
+        let root = tempfile::tempdir().unwrap();
+        let path = rtk_config_file(root.path()).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "# keep me\n[display]\n# hint\npro_hint = true\ncolor = true\n",
+        )
+        .unwrap();
+        let ctx = ctx_with(
+            root.path(),
+            &Recorder::new(FakeRunner::new()),
+            FakeNet::new(),
+        );
+
+        apply_defaults(&ctx, &ctx.run).unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# keep me"), "{text}");
+        assert!(text.contains("# hint"), "{text}");
+        assert!(text.contains("pro_hint = false"), "{text}");
+        assert!(text.contains("color = true"), "{text}");
+        assert!(!text.contains("pro_hint = true"), "{text}");
+    }
+
+    #[test]
+    fn rtk_defaults_create_the_config_when_missing_and_are_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let path = rtk_config_file(root.path()).unwrap();
+        let ctx = ctx_with(
+            root.path(),
+            &Recorder::new(FakeRunner::new()),
+            FakeNet::new(),
+        );
+
+        apply_defaults(&ctx, &ctx.run).unwrap();
+        let once = fs::read_to_string(&path).unwrap();
+        assert!(
+            once.contains("[display]") && once.contains("pro_hint = false"),
+            "{once}"
+        );
+
+        apply_defaults(&ctx, &ctx.run).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), once);
     }
 }
