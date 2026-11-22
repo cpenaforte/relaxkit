@@ -1,0 +1,32 @@
+# Needs Chromium first, so it requires the playwright recipe, which installs it.
+id = "chrome-devtools"
+title = "Chrome DevTools"
+kind = "mcp"
+hosts = ["claude", "opencode"]
+needs_login = false
+telemetry_default_off = true
+requires = ["playwright"]
+
+[version]
+npm = "chrome-devtools-mcp"
+
+[env]
+CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS = "1"
+
+[minimum_host]
+claude = "2.1.330"
+opencode = "2.2.6"
+
+[[install.claude]]
+mcp = "chrome-devtools"
+argv = ["{npx}", "-y", "chrome-devtools-mcp@1.13.0", "--executablePath", "{chromium}", "--no-usage-statistics", "--no-performance-crux"]
+
+[[install.opencode]]
+mcp = "chrome-devtools"
+argv = ["{npx}", "-y", "chrome-devtools-mcp@1.13.0", "--executablePath", "{chromium}", "--no-usage-statistics", "--no-performance-crux"]
+
+[probe.claude]
+argv = ["{npx}", "-y", "chrome-devtools-mcp@1.13.0", "--help"]
+
+[probe.opencode]
+argv = ["{npx}", "-y", "chrome-devtools-mcp@1.13.0", "--help"]

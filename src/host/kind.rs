@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use anyhow::{Result, anyhow};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostKind {
     Claude,
     Opencode,

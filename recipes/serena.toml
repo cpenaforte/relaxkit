@@ -1,0 +1,60 @@
+# Serena runs in a relaxkit-owned directory under the data directory, never in a user project (controller ruling SA-1).
+# The pin is resolved at install time from PyPI. Updates reinstall (spike A I6).
+# OpenCode has no confirmed context name, so its entry uses serena's default. Task 12 checks `serena start-mcp-server --help`.
+id = "serena"
+title = "Serena"
+kind = "mcp"
+hosts = ["claude", "opencode"]
+needs_login = false
+telemetry_default_off = true
+workdir = "data/serena"
+
+[version]
+pypi = "serena-agent"
+
+[env]
+SERENA_USAGE_REPORTING = "false"
+
+[minimum_host]
+claude = "2.1.330"
+opencode = "2.2.6"
+
+[[install.claude]]
+exec = ["uv", "tool", "install", "-p", "3.13", "serena-agent=={version}"]
+
+[[install.claude]]
+handler = "serena_init"
+
+[[install.claude]]
+mcp = "serena"
+argv = ["serena", "start-mcp-server", "--project-from-cwd", "--enable-web-dashboard", "False", "--context", "claude-code"]
+
+[[install.opencode]]
+exec = ["uv", "tool", "install", "-p", "3.13", "serena-agent=={version}"]
+
+[[install.opencode]]
+handler = "serena_init"
+
+[[install.opencode]]
+mcp = "serena"
+argv = ["serena", "start-mcp-server", "--project-from-cwd", "--enable-web-dashboard", "False"]
+
+[[update.claude]]
+exec = ["uv", "tool", "install", "-p", "3.13", "serena-agent=={version}"]
+
+[[update.claude]]
+mcp = "serena"
+argv = ["serena", "start-mcp-server", "--project-from-cwd", "--enable-web-dashboard", "False", "--context", "claude-code"]
+
+[[update.opencode]]
+exec = ["uv", "tool", "install", "-p", "3.13", "serena-agent=={version}"]
+
+[[update.opencode]]
+mcp = "serena"
+argv = ["serena", "start-mcp-server", "--project-from-cwd", "--enable-web-dashboard", "False"]
+
+[probe.claude]
+argv = ["serena", "--help"]
+
+[probe.opencode]
+argv = ["serena", "--help"]

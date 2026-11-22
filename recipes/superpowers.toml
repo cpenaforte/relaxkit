@@ -1,0 +1,33 @@
+# Status: provisional until Task 28 confirms it (spec section 11, O7).
+# Claude Code installs from the built-in anthropic-plugin-directory marketplace.
+# OpenCode installs a git tag under the V2 `plugins` key.
+# The OpenCode probe only checks that the host runs. The adapter reads plugin state from the config file.
+id = "superpowers"
+title = "Superpowers"
+kind = "plugin"
+hosts = ["claude", "opencode"]
+needs_login = false
+telemetry_default_off = true
+
+[version]
+github = "obra/superpowers"
+
+[env]
+SUPERPOWERS_DISABLE_TELEMETRY = "1"
+
+[minimum_host]
+claude = "2.1.330"
+opencode = "2.2.6"
+
+[[install.claude]]
+plugin = "superpowers@anthropic-plugin-directory"
+
+[[install.opencode]]
+plugin = "superpowers@git+https://github.com/obra/superpowers.git#v7.0.2"
+
+[probe.claude]
+argv = ["claude", "plugin", "list"]
+expect = "superpowers"
+
+[probe.opencode]
+argv = ["opencode", "--version"]

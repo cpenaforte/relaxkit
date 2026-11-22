@@ -1,0 +1,34 @@
+id = "rtk"
+title = "RTK"
+kind = "binary"
+hosts = ["claude", "opencode"]
+needs_login = false
+telemetry_default_off = true
+
+[version]
+github = "rtk-ai/rtk"
+
+[minimum_host]
+claude = "2.1.330"
+opencode = "2.2.6"
+
+[[install.claude]]
+exec = ["rtk", "init", "-g"]
+
+[[install.claude]]
+handler = "rtk_claude_hook"
+
+[[install.claude]]
+exec = ["rtk", "telemetry", "disable"]
+
+[[install.opencode]]
+exec = ["rtk", "init", "-g", "--opencode"]
+
+[[install.opencode]]
+exec = ["rtk", "telemetry", "disable"]
+
+[probe.claude]
+argv = ["rtk", "gain"]
+
+[probe.opencode]
+argv = ["rtk", "gain"]

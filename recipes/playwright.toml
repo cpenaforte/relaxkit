@@ -1,0 +1,35 @@
+# The Chromium download comes from the same exact @playwright/mcp version as the MCP entry.
+# `--browser chromium` is required: without it the entry uses Chrome stable (spike A I5).
+id = "playwright"
+title = "Playwright"
+kind = "mcp"
+hosts = ["claude", "opencode"]
+needs_login = false
+telemetry_default_off = true
+
+[version]
+npm = "@playwright/mcp"
+
+[minimum_host]
+claude = "2.1.330"
+opencode = "2.2.6"
+
+[[install.claude]]
+handler = "chromium"
+
+[[install.claude]]
+mcp = "playwright"
+argv = ["{npx}", "-y", "@playwright/mcp@{version}", "--browser", "chromium", "--isolated"]
+
+[[install.opencode]]
+handler = "chromium"
+
+[[install.opencode]]
+mcp = "playwright"
+argv = ["{npx}", "-y", "@playwright/mcp@{version}", "--browser", "chromium", "--isolated"]
+
+[probe.claude]
+argv = ["{npx}", "-y", "@playwright/mcp@{version}", "--help"]
+
+[probe.opencode]
+argv = ["{npx}", "-y", "@playwright/mcp@{version}", "--help"]

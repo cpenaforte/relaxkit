@@ -1,0 +1,17 @@
+# Open item: membership in anthropic-plugin-directory is not checked for this plugin. Task 28 confirms it.
+id = "frontend-design"
+title = "Frontend Design"
+kind = "plugin"
+hosts = ["claude"]
+needs_login = false
+telemetry_default_off = true
+
+[minimum_host]
+claude = "2.1.330"
+
+[[install.claude]]
+plugin = "frontend-design@anthropic-plugin-directory"
+
+[probe.claude]
+argv = ["claude", "plugin", "list"]
+expect = "frontend-design"

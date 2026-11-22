@@ -9,6 +9,7 @@ pub mod host;
 pub mod net;
 pub mod platform;
 pub mod presets;
+pub mod recipe;
 pub mod roles;
 pub mod state;
 

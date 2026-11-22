@@ -1,0 +1,46 @@
+# Routing stays off: `caveman off routing --yes` is required (spike A I4). Never run `caveman login`,
+# `caveman providers`, or `caveman --only opencode` (the last one writes the V1 key).
+# The Claude marketplace repo (JuliusBrussee/caveman) is not in this data: the claude_marketplace handler supplies it.
+id = "caveman"
+title = "Caveman"
+kind = "npm"
+hosts = ["claude", "opencode"]
+needs_login = false
+telemetry_default_off = true
+
+[version]
+npm = "@caveman-ai/cli"
+
+[minimum_host]
+claude = "2.1.330"
+opencode = "2.2.6"
+
+[[install.claude]]
+handler = "claude_marketplace"
+
+[[install.claude]]
+plugin = "caveman@caveman"
+
+[[install.claude]]
+handler = "caveman_cli"
+
+[[install.claude]]
+exec = ["caveman", "off", "routing", "--yes"]
+
+[[install.claude]]
+exec = ["caveman", "telemetry", "off"]
+
+[[install.opencode]]
+handler = "caveman_opencode"
+
+[[install.opencode]]
+exec = ["caveman", "off", "routing", "--yes"]
+
+[[install.opencode]]
+exec = ["caveman", "telemetry", "off"]
+
+[probe.claude]
+argv = ["caveman", "status"]
+
+[probe.opencode]
+argv = ["caveman", "status"]
