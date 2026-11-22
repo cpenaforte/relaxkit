@@ -92,7 +92,8 @@ fn backup_path(ctx: &Ctx, run: &RunId, target: &Path) -> PathBuf {
 }
 
 /// Reverts a run (the last one when `run` is `None`), newest change first. Returns the touched paths.
-/// The run lock is held for the whole undo, so no command can write files while they are reverted.
+/// The run lock is held for the whole undo, so no command that takes the run lock can write files
+/// while they are reverted.
 /// Inside it, the journal lock is held from the read to the rewrite, so an append from another
 /// process cannot be lost in between. A dry run changes nothing and takes no lock.
 pub fn undo(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {

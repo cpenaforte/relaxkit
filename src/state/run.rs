@@ -10,6 +10,7 @@ use crate::platform::KitDirs;
 /// Runs `body` while holding the exclusive run lock at `dirs.data/run.lock`. The lock is separate
 /// from the journal lock: `safe_write` and `journal::append` take only the journal lock, so a
 /// command that holds the run lock can call them without a reentrant lock.
+/// The lock is not reentrant: `body` must not call `undo` or `with_run_lock`.
 pub fn with_run_lock<T>(dirs: &KitDirs, body: impl FnOnce() -> Result<T>) -> Result<T> {
     fs::create_dir_all(&dirs.data)
         .with_context(|| format!("cannot create {}", dirs.data.display()))?;
