@@ -162,11 +162,18 @@ fn keep_current(ctx: &Ctx, file: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Opens the backup of every record that has one, newest first, the order undo restores them in,
-/// so the first backup that cannot be opened is the one named. Nothing is written here.
+/// Checks the backup of every record that has one, newest first, the order undo restores them in,
+/// so the first bad backup is the one named. A backup must be a regular file that opens. The
+/// metadata check comes first, because opening a directory succeeds and opening a FIFO blocks.
+/// Nothing is written here.
 fn check_backups(mine: &[EditRecord]) -> Result<()> {
     for record in mine.iter().rev() {
         if let Some(backup) = &record.backup {
+            let metadata = fs::metadata(backup)
+                .with_context(|| format!("cannot read backup {}", backup.display()))?;
+            if !metadata.is_file() {
+                return Err(anyhow!("backup {} is not a regular file", backup.display()));
+            }
             fs::File::open(backup)
                 .with_context(|| format!("cannot read backup {}", backup.display()))?;
         }
@@ -627,6 +634,41 @@ mod tests {
             fs::read(&journal_file).unwrap(),
             journal_before,
             "the journal changed"
+        );
+    }
+
+    #[test]
+    fn undo_refuses_a_backup_that_is_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let run = RunId::new();
+        let older = dir.path().join("older.json");
+        let newer = dir.path().join("newer.json");
+        fs::write(&older, "orig").unwrap();
+        fs::write(&newer, "orig").unwrap();
+        safe_write(&ctx, &run, &older, "setup").unwrap();
+        safe_write(&ctx, &run, &newer, "setup").unwrap();
+        let older_backup = journal::read(&ctx.dirs)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.file == older)
+            .and_then(|record| record.backup)
+            .expect("backup of the older file");
+        fs::remove_file(&older_backup).unwrap();
+        fs::create_dir(&older_backup).unwrap();
+        let newer_before = fs::read(&newer).unwrap();
+
+        let error = undo(&ctx, None).expect_err("undo accepted a directory as a backup");
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&older_backup.display().to_string()),
+            "message: {message}"
+        );
+        assert_eq!(
+            fs::read(&newer).unwrap(),
+            newer_before,
+            "the newer file was restored before the bad backup was found"
         );
     }
 
