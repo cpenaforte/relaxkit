@@ -1,8 +1,8 @@
 //! caveman's OpenCode source (owner decision, 2026-11-22; spec section 11, exception to O9). The repository is taken at
 //! its latest GitHub tag over HTTPS. Its npm package has no plugin files and its releases have no checksum, so the
-//! archive is checked entry by entry instead: no absolute names, no `..`, no hard links, and a symbolic link only when
-//! it stays inside the archive. Documented limit: no digest or signature check is possible, so a compromised repository
-//! or tag would pass.
+//! archive is checked entry by entry instead: no absolute names, no `..`, and no symbolic or hard links at all. A hard
+//! link is recognised by its `link to` marker in the listing, whatever its mode bits. Documented limit: no digest or
+//! signature check is possible, so a compromised repository or tag would pass.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -61,10 +61,11 @@ pub fn fetch_latest_source(ctx: &Ctx, run: &RunId) -> Result<PathBuf> {
     Ok(extract)
 }
 
-/// Refuses an archive with an unsafe name, or with any entry that is not a regular file or a directory, judged by the
-/// first character of each verbose line: a symbolic link (`l`), a hard link (`h`) or a device is refused before anything
-/// is unpacked. The listing is read twice, by name and by type, and the two must line up. A pax global header (`g`) is
-/// accepted: it holds no file content and creates nothing on disk.
+/// Refuses an archive with an unsafe name, a symbolic link, a hard link, or any other entry that is not a regular file
+/// or a directory, before anything is unpacked. A symbolic link is refused by its type (`l` as the first character of
+/// the verbose line). A hard link is refused by the `<name> link to ` marker in that line, because a header whose mode
+/// carries type bits lists with `-` and would pass the type check. The listing is read twice, by name and by type, and
+/// the two must line up. A pax global header (`g`) is accepted: it holds no file content and creates nothing on disk.
 fn check_archive(ctx: &Ctx, archive: &Path) -> Result<()> {
     let names = listing(ctx, archive, "-tf")?;
     let verbose = listing(ctx, archive, "-tvf")?;
@@ -73,6 +74,9 @@ fn check_archive(ctx: &Ctx, archive: &Path) -> Result<()> {
     }
     for (name, line) in names.iter().zip(verbose.iter()) {
         check_name(name)?;
+        if line.contains(&format!("{name} link to ")) {
+            bail!("hard link `{name}` refused; nothing was unpacked");
+        }
         match line.chars().next() {
             Some('-' | 'd' | 'g') => {}
             Some('l') => bail!("symbolic link `{name}` refused; nothing was unpacked"),
@@ -175,6 +179,7 @@ mod tests {
         kind: u8,
         link: &'a str,
         body: &'a [u8],
+        mode: &'a str,
     }
 
     fn file<'a>(name: &'a str, body: &'a [u8]) -> Entry<'a> {
@@ -183,6 +188,7 @@ mod tests {
             kind: b'0',
             link: "",
             body,
+            mode: "0000644",
         }
     }
 
@@ -192,6 +198,7 @@ mod tests {
             kind: b'5',
             link: "",
             body: &[],
+            mode: "0000755",
         }
     }
 
@@ -201,6 +208,7 @@ mod tests {
             kind,
             link: target,
             body: &[],
+            mode: "0000644",
         }
     }
 
@@ -210,7 +218,7 @@ mod tests {
         for entry in entries {
             let mut header = [0u8; 512];
             write_field(&mut header[0..100], entry.name.as_bytes());
-            write_field(&mut header[100..108], b"0000755");
+            write_field(&mut header[100..108], entry.mode.as_bytes());
             write_field(&mut header[108..116], b"0000000");
             write_field(&mut header[116..124], b"0000000");
             write_field(
@@ -398,6 +406,35 @@ mod tests {
         fs::write(tree.join("src/real.js"), "// real\n").unwrap();
 
         refuse_links_in(&tree).unwrap();
+    }
+
+    #[test]
+    fn a_hard_link_whose_mode_carries_type_bits_is_refused_before_extraction() {
+        let root = tempfile::tempdir().unwrap();
+        let archive = tar_bytes(&[
+            file("caveman-4.1.0/src/real.js", b"// real\n"),
+            Entry {
+                mode: "0100644",
+                ..link("caveman-4.1.0/copy.js", b'1', "caveman-4.1.0/src/real.js")
+            },
+        ]);
+        let runner = runner();
+        let ctx = ctx_with(root.path(), &runner, serve(archive));
+
+        let err = format!("{:#}", fetch_latest_source(&ctx, &ctx.run).unwrap_err());
+
+        assert!(
+            err.contains("hard link `caveman-4.1.0/copy.js` refused"),
+            "{err}"
+        );
+        assert!(
+            runner
+                .lines()
+                .iter()
+                .all(|line| !line.starts_with("tar -xf")),
+            "no extraction may run: {:?}",
+            runner.lines()
+        );
     }
 
     #[test]
