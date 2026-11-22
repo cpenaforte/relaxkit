@@ -182,6 +182,9 @@ mod tests {
     use crate::exec::{FakeRunner, Output};
     use crate::host::HostKind;
 
+    use crate::host::testing::Writing;
+    use crate::net::FakeNet;
+
     #[test]
     fn a_version_on_the_line_under_the_name_is_read() {
         // The real `claude plugin list` shape: the version is on its own line under the name line (verified 2026-11-22).
@@ -211,9 +214,16 @@ mod tests {
         assert_eq!(plugins[0].version.as_deref(), Some("7.0.2"));
         assert_eq!(plugins[1].version, None);
     }
-    use crate::host::testing::Writing;
-    use crate::net::FakeNet;
 
+    #[test]
+    fn a_plugin_without_a_version_line_does_not_borrow_the_next_plugins_version() {
+        // The first block has no Version line; the second block's version belongs to the second plugin only.
+        let text = "superpowers@one\n    Scope: user\nsuperpowers@two\n    Version: 7.0.3\n";
+        let plugins = parse_plugin_list(text);
+        assert_eq!(plugins.len(), 2, "{plugins:?}");
+        assert_eq!(plugins[0].version, None, "{plugins:?}");
+        assert_eq!(plugins[1].version.as_deref(), Some("7.0.3"), "{plugins:?}");
+    }
     fn host(root: &Path) -> ClaudeHost {
         ClaudeHost::new(
             HostInfo {
