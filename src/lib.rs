@@ -1,5 +1,6 @@
 pub mod brand;
 pub mod cli;
+pub mod config;
 pub mod ctx;
 pub mod edit;
 pub mod exec;
@@ -7,6 +8,8 @@ pub mod fsx;
 pub mod host;
 pub mod net;
 pub mod platform;
+pub mod presets;
+pub mod roles;
 pub mod state;
 
 use anyhow::{Result, anyhow};
