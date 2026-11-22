@@ -339,12 +339,19 @@ fn verify_step(
                     continue;
                 };
                 match engine.reinstall(recipe, *kind) {
-                    Ok(_) => report.say(
+                    Ok(Outcome::Installed { version }) => report.say(
                         ctx,
                         "verify",
-                        format!("repaired {id} on {kind}: reinstalled at its locked version and configured again"),
+                        format!(
+                            "repaired {id} on {kind}: reinstalled {version} and configured it again"
+                        ),
                     ),
-                    Err(err) => report.say(ctx, "verify", format!("could not repair {id} on {kind}: {err:#}")),
+                    Ok(_) => {}
+                    Err(err) => report.say(
+                        ctx,
+                        "verify",
+                        format!("could not repair {id} on {kind}: {err:#}"),
+                    ),
                 }
             }
             Repair::ReAddEntry(id, kind) => {

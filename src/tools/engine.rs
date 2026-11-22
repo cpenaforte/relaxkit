@@ -287,7 +287,19 @@ impl<'a> Engine<'a> {
         };
         let steps = recipe.install.get(&kind).cloned().unwrap_or_default();
         self.preflight_steps(recipe, kind, &steps)?;
-        let (version, route) = self.install_here(recipe, kind, host.as_ref())?;
+        // rtk is always the latest release (owner's exception, ruling R2-2), so its repair installs that release even
+        // when rtk is already on the PATH, and the release tag is what the lock records.
+        let latest = if recipe.id == "rtk" {
+            Some(
+                rtk::reinstall_latest(self.ctx, self.run)?
+                    .trim_start_matches('v')
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+        let (installed, route) = self.install_here(recipe, kind, host.as_ref())?;
+        let version = latest.unwrap_or(installed);
         self.record(recipe, &[(kind, version.clone(), route)])?;
         Ok(Outcome::Installed { version })
     }

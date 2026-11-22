@@ -26,6 +26,16 @@ pub fn ensure_rtk(ctx: &Ctx, run: &RunId) -> Result<PathBuf> {
     ensure_rtk_for(ctx, run, current_os()?, current_arch()?)
 }
 
+/// The repair install (ruling R2-2): installs the latest release into the pack bin even when rtk is already on the
+/// PATH, because rtk is always the latest release (owner's exception). Returns the release tag installed.
+pub fn reinstall_latest(ctx: &Ctx, run: &RunId) -> Result<String> {
+    reinstall_latest_for(ctx, run, current_os()?, current_arch()?)
+}
+
+fn reinstall_latest_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<String> {
+    install_latest(ctx, run, os, arch)
+}
+
 fn ensure_rtk_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<PathBuf> {
     if let Some(path) = ctx.runner.which("rtk") {
         return Ok(path);
@@ -48,7 +58,7 @@ fn ensure_rtk_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<PathBuf>
 /// Downloads the latest release's archive for this platform and its checksums into a fresh directory, checks the
 /// archive's SHA-256 against the checksums, and only then unpacks it and copies its `rtk` into the pack bin
 /// directory. A mismatch stops before anything is unpacked or written.
-fn install_latest(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<()> {
+fn install_latest(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<String> {
     let tag = github_latest_tag(ctx.net.as_ref(), RTK_REPO)?;
     if !tag_is_plain(&tag) {
         bail!(
@@ -105,7 +115,7 @@ fn install_latest(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<()> {
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o755))
             .with_context(|| format!("cannot make {} executable", bin.display()))?;
     }
-    Ok(())
+    Ok(tag)
 }
 
 /// A release tag made of letters, digits and `.`, `-`, `_`, `+` only, so it cannot change the download path.
@@ -233,6 +243,29 @@ mod tests {
 
         assert_eq!(path, PathBuf::from("/opt/homebrew/bin/rtk"));
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
+    }
+
+    #[test]
+    fn a_repair_installs_the_latest_release_even_when_rtk_is_on_the_path() {
+        // R2-2: rtk on the PATH is not enough for a repair; the latest release is installed and its tag returned.
+        let root = tempfile::tempdir().unwrap();
+        let (bytes, checksums) = release(root.path(), ARCHIVE, "rtk", None);
+        let runner = Recorder::new(
+            FakeRunner::new().with_program("rtk", Path::new("/opt/homebrew/bin/rtk")),
+        )
+        .real("tar -xf");
+        let ctx = ctx_with(root.path(), &runner, net(bytes, &checksums));
+
+        let tag = reinstall_latest_for(&ctx, &RunId::new(), Os::Linux, Arch::X86_64).unwrap();
+
+        assert_eq!(tag, "v9.9.9");
+        assert_eq!(
+            fs::read_to_string(bin_rtk(root.path())).unwrap(),
+            "#!/bin/sh\necho rtk\n"
+        );
+        let lines = runner.lines();
+        assert_eq!(lines.len(), 1, "the archive is unpacked: {lines:?}");
+        assert!(lines[0].starts_with("tar -xf"), "{lines:?}");
     }
 
     #[test]

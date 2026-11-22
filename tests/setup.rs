@@ -364,29 +364,34 @@ fn setup_warns_on_anthropic_base_url_and_never_deletes_it() {
 #[test]
 fn setup_reinstalls_a_tool_whose_probe_fails_and_passes_on_rerun() {
     // OWNER-3 (i): a locked tool whose probe fails on a rerun is reinstalled at its locked version and configured
-    // again. The rerun finds the probe passing and exits 0.
+    // again. The rerun finds the probe passing and exits 0. serena's probe is used: its reinstall runs only stubs.
     let mut scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     scratch.clear_calls();
-    scratch.fail_once("rtk gain");
+    scratch.fail_once("serena --help");
 
     let output = scratch.relaxkit().arg("setup").assert().success();
 
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
-    assert!(text.contains("repaired rtk on claude"), "{text}");
+    assert!(text.contains("repaired serena on claude"), "{text}");
     let calls = scratch.calls();
-    assert!(calls.iter().any(|call| call == "rtk gain"), "{calls:?}");
+    assert!(
+        calls.iter().any(|call| call == "serena --help"),
+        "{calls:?}"
+    );
     assert_eq!(
         calls
             .iter()
-            .filter(|call| call.as_str() == "rtk init -g")
+            .filter(|call| call.starts_with("uv tool install"))
             .count(),
         1,
         "the reinstall runs the install steps once: {calls:?}"
     );
     assert!(
-        calls.iter().any(|call| call == "rtk telemetry disable"),
-        "{calls:?}"
+        calls
+            .iter()
+            .any(|call| call.starts_with("claude mcp add --scope user serena")),
+        "the reinstall re-runs the MCP step: {calls:?}"
     );
 }
 
@@ -395,13 +400,13 @@ fn a_repair_that_still_fails_leaves_a_fail_and_setup_exits_1() {
     // OWNER-3 (iv): a probe that still fails after the repair stays a fail, and setup exits 1 with that check's fix.
     let mut scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
-    scratch.fail_calls_matching("rtk gain");
+    scratch.fail_calls_matching("serena --help");
 
     let output = scratch.relaxkit().arg("setup").assert().code(1);
 
     let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
-    assert!(text.contains("repaired rtk on claude"), "{text}");
-    assert!(text.contains("fail tool.rtk.claude"), "{text}");
+    assert!(text.contains("repaired serena on claude"), "{text}");
+    assert!(text.contains("fail tool.serena.claude"), "{text}");
     assert!(text.contains("run `relaxkit setup` again"), "{text}");
 }
 
