@@ -39,10 +39,14 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
             fs::copy(&target, &backup)
                 .with_context(|| format!("cannot back up {}", target.display()))?;
             // The copy must reach the disk before the journal record that names it is synced.
-            // Write access is needed for sync_all on Windows; opening does not truncate.
-            OpenOptions::new()
-                .write(true)
-                .open(&backup)
+            // On Unix a read-only open can fsync, and it works when the copied mode is 0444.
+            // Windows needs write access for FlushFileBuffers; opening does not truncate.
+            let opened = if cfg!(windows) {
+                OpenOptions::new().write(true).open(&backup)
+            } else {
+                fs::File::open(&backup)
+            };
+            opened
                 .and_then(|file| file.sync_all())
                 .with_context(|| format!("cannot flush the backup {}", backup.display()))?;
             EditRecord {
@@ -396,6 +400,24 @@ mod tests {
 
         assert!(link.is_symlink(), "the link was replaced by a regular file");
         assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_write_edits_a_read_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "old").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
+
+        safe_write(&ctx, &RunId::new(), &file, "new").unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new");
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o444);
     }
 
     /// True when some file under `root` holds exactly `text`.
