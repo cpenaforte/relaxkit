@@ -1,0 +1,19 @@
+name: e2e-linux
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      # A dry run, then setup, then `doctor --json` in a scratch home with stub host commands and the network closed.
+      # Each step must exit 0, and stdin is closed, so a prompt fails the run.
+      - name: Dry run, setup and doctor with stub hosts
+        run: cargo test --test e2e_linux

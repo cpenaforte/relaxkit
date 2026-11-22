@@ -13,7 +13,7 @@ use relaxkit::net::FakeNet;
 use relaxkit::platform::KitDirs;
 use relaxkit::presets::Preset;
 use relaxkit::state::undo;
-use support::{Scratch, tree};
+use support::{Scratch, tree, write_lock_except};
 
 const STEP_NAMES: [&str; 7] = [
     "detect",
@@ -566,47 +566,6 @@ fn a_listed_plugin_whose_cli_is_missing_gets_its_cli_installed_and_no_plugin_ins
 
 /// Writes a lock with every recipe locked on every host it names, except `skipped`, so setup's install step has
 /// nothing to do for the other recipes.
-fn write_lock_except(scratch: &Scratch, skipped: Option<&str>) {
-    let mut lock = String::from("relaxkit = \"0.1.0\"\n");
-    for (id, version, route, hosts) in LOCKED_RECIPES {
-        if Some(*id) == skipped {
-            continue;
-        }
-        lock.push_str(&format!(
-            "\n[tools.{id}]\nversion = \"{version}\"\nroute = \"{route}\"\nhosts = [{hosts}]\n"
-        ));
-    }
-    let lock_path = scratch.home().join(".config/relaxkit/lock.toml");
-    fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
-    fs::write(&lock_path, lock).unwrap();
-}
-
-const LOCKED_RECIPES: &[(&str, &str, &str, &str)] = &[
-    ("caveman", "4.1.0", "npm", "\"claude\", \"opencode\""),
-    ("ccusage", "1.0.0", "npm", "\"claude\", \"opencode\""),
-    (
-        "chrome-devtools",
-        "1.0.0",
-        "npm",
-        "\"claude\", \"opencode\"",
-    ),
-    (
-        "claude-md-management",
-        "1.0.0",
-        "claude-plugin",
-        "\"claude\"",
-    ),
-    ("frontend-design", "1.0.0", "claude-plugin", "\"claude\""),
-    ("playwright", "1.0.0", "npm", "\"claude\", \"opencode\""),
-    ("rtk", "1.2.1", "script", "\"claude\", \"opencode\""),
-    ("serena", "2.1.0", "uv", "\"claude\", \"opencode\""),
-    (
-        "superpowers",
-        "5.0.1",
-        "opencode-plugin",
-        "\"claude\", \"opencode\"",
-    ),
-];
 
 #[test]
 fn setup_with_an_unreadable_opencode_list_keeps_the_user_model_and_says_the_tier_is_not_applied() {
