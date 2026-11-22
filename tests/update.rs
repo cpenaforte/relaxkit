@@ -1911,7 +1911,7 @@ fn an_mcp_entry_is_shown_as_not_read_not_as_missing() {
 }
 
 #[test]
-fn gh_is_not_reported_as_a_tool_without_a_recipe() {
+fn status_reports_a_missing_gh_copy_and_not_a_present_one() {
     // gh is not a recipe: status does not print the "no recipe carries it" line for its entry (K84, G1). Its one line
     // is shown only when the pack copy is missing, which names gh and the path (F7-2).
     let fx = Fixture::new();
