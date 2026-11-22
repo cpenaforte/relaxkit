@@ -228,7 +228,7 @@ pub(crate) fn refuse_tier_without_list(
         return Ok(());
     }
     bail!(
-        "OpenCode's model list could not be read, so a tier cannot be applied to OpenCode now: pin an exact model (provider/model) or retry when `opencode models` works"
+        "OpenCode's model list could not be read, so a tier cannot be applied to OpenCode now: pin an exact model (provider/model) or retry when `opencode models --standalone` works"
     )
 }
 
@@ -433,7 +433,7 @@ fn remove_host_role(config: &mut KitConfig, host: HostKind, role: Role) {
 
 // ---- validation ------------------------------------------------------------------------------------------------
 
-/// Checks an exact pin (spec 6.1, rule 4). OpenCode's model must be in `opencode models`; an unknown name is rejected
+/// Checks an exact pin (spec 6.1, rule 4). OpenCode's model must be in `opencode models --standalone`; an unknown name is rejected
 /// with the closest matches, and an unreadable list accepts the pin with a warning. Claude Code takes aliases and
 /// `claude-*` ids, and warns on anything else. Without an OpenCode host there is no list, so nothing is checked there.
 fn check_pin(
@@ -456,11 +456,11 @@ fn check_pin(
                 let id = format!("{}/{}", spec.provider, spec.model);
                 match listing(ctx, host.as_ref()) {
                     None => ctx.out.warn(&format!(
-                        "could not read `opencode models`, so `{value}` is accepted without a check"
+                        "could not read `opencode models --standalone`, so `{value}` is accepted without a check"
                     )),
                     Some(ids) if ids.contains(&id) => {}
                     Some(ids) => bail!(
-                        "`{value}` is not a model OpenCode lists. Closest matches: {}. `opencode models` prints the full list",
+                        "`{value}` is not a model OpenCode lists. Closest matches: {}. `opencode models --standalone` prints the full list",
                         closest(&id, &ids).join(", ")
                     ),
                 }

@@ -82,7 +82,7 @@ relaxkit config show
 
 - Without `--host`, a change covers both hosts. `--host claude` or `--host opencode` limits it to one.
 - On Claude Code the `#variant` is ignored. OpenCode gets the full `provider/model#variant`.
-- On OpenCode, an exact model must be in the list that `opencode models` prints, or the command refuses it. If that list cannot be read, the value is accepted with a warning.
+- On OpenCode, an exact model must be in the list that `opencode models --standalone` prints, or the command refuses it. If that list cannot be read, the value is accepted with a warning.
 - On Claude Code, an Anthropic exact model that is not an alias or a `claude-*` id draws a warning. A pin to another provider is not used by Claude Code, and the role keeps its tier there.
 
 Other keys include `voice` and `compact-at`, for example `relaxkit config set compact-at 256k`.
