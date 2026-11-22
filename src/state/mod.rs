@@ -264,6 +264,13 @@ fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
             None => return Ok(Vec::new()),
         },
     };
+    // K117: a later group's change to a file this group touched must be undone first, or its base would be lost.
+    if let Some(file) = newer_change_to_touched_file(&records, &target) {
+        return Err(anyhow!(
+            "run {target} is not the newest change to {}; undo the later group first",
+            file.display()
+        ));
+    }
     let (mine, rest): (Vec<EditRecord>, Vec<EditRecord>) = records
         .into_iter()
         .partition(|record| group_of(record) == &target);
@@ -297,6 +304,24 @@ fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(touched)
+}
+
+/// The first file that `target` touched and that a later group changed, if any. A later group is a record after the
+/// target's last record that belongs to another group.
+fn newer_change_to_touched_file(records: &[EditRecord], target: &RunId) -> Option<PathBuf> {
+    let last = records
+        .iter()
+        .rposition(|record| group_of(record) == target)?;
+    let touched: BTreeSet<&Path> = records[..=last]
+        .iter()
+        .filter(|record| group_of(record) == target)
+        .map(|record| record.file.as_path())
+        .collect();
+    records[last + 1..]
+        .iter()
+        .filter(|record| group_of(record) != target)
+        .find(|record| touched.contains(record.file.as_path()))
+        .map(|record| record.file.clone())
 }
 
 /// Copies the current content of `file` to a fresh backup and reports it, so that undo

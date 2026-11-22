@@ -575,6 +575,49 @@ fn undo_restores_the_last_run() {
 }
 
 #[test]
+fn undo_of_an_older_group_is_refused_when_a_later_group_changed_the_same_file() {
+    // K117 / F23-6: undoing an older group would leave the later group's change to the same file without its base.
+    let scratch = Scratch::new();
+    with_models(&scratch, MODELS);
+    scratch.relaxkit().arg("privacy").assert().success();
+    let journal_text = read(&scratch.home().join(".local/share/relaxkit/journal.jsonl"));
+    let first: Value = serde_json::from_str(journal_text.lines().next().unwrap()).unwrap();
+    let older = first
+        .get("group")
+        .or_else(|| first.get("run"))
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
+    scratch
+        .relaxkit()
+        .args(["config", "set", "compact-at", "256k"])
+        .assert()
+        .success();
+    let before = tree(scratch.home());
+
+    let assert = scratch
+        .relaxkit()
+        .args(["undo", "--run", &older])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("is not the newest change to")
+            && stderr.contains("undo the later group first"),
+        "{stderr}"
+    );
+    assert_eq!(
+        tree(scratch.home()),
+        before,
+        "a refused undo writes nothing"
+    );
+
+    // Undo of the newest group still works.
+    scratch.relaxkit().arg("undo").assert().success();
+    assert!(!read(&claude_settings(scratch.home())).contains("autoCompactWindow"));
+}
+
+#[test]
 fn undo_reverts_a_run_group_as_one() {
     let root = tempfile::tempdir().unwrap();
     let dirs = KitDirs::rooted(root.path());
