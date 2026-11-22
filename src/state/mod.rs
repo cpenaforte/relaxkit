@@ -79,20 +79,15 @@ pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()>
     write_atomic(&target, text.as_bytes())
 }
 
-/// Flushes the directories from the backup's parent up to `dirs.data`, so the backup's entry and
-/// any directories made for it survive a crash before the journal record is synced. `dirs.backups`
-/// lies under `dirs.data`, so the walk stops at `dirs.data`. If it ever did not, the walk would stop
-/// at `dirs.backups` instead.
+/// Flushes the directories from the backup's parent up to `dirs.home`, inclusive, so the backup's
+/// entry, the directories made for it, and any fresh-home directories such as `.local/share`
+/// survive a crash before the journal record is synced. `dirs.backups` is under `dirs.data`, which
+/// is under `dirs.home`, so the walk reaches both.
 fn sync_backup_dirs(ctx: &Ctx, backup: &Path) -> Result<()> {
-    let stop = if ctx.dirs.backups.starts_with(&ctx.dirs.data) {
-        &ctx.dirs.data
-    } else {
-        &ctx.dirs.backups
-    };
     for dir in backup
         .ancestors()
         .skip(1)
-        .take_while(|dir| dir.starts_with(stop))
+        .take_while(|dir| dir.starts_with(&ctx.dirs.home))
     {
         sync_dir(dir)?;
     }
