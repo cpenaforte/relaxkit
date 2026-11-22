@@ -119,6 +119,10 @@ fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
     if mine.is_empty() {
         return Err(anyhow!("no journaled changes for run {target}"));
     }
+    // Checked before any write, removal or keep backup, so a refused undo leaves the run whole.
+    if let Some(record) = mine.iter().find(|record| record.file.is_symlink()) {
+        return Err(symlink_refusal(&record.file));
+    }
     let mut touched = Vec::with_capacity(mine.len());
     for record in mine.iter().rev() {
         restore(ctx, record)?;
@@ -155,16 +159,21 @@ fn keep_current(ctx: &Ctx, file: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The refusal for a journaled path that is now a symlink.
+fn symlink_refusal(file: &Path) -> anyhow::Error {
+    anyhow!(
+        "{} is now a symlink; undo leaves symlinks alone, so it was not restored",
+        file.display()
+    )
+}
+
 /// Puts one journaled file back: the backup's bytes, or nothing if the file was new.
 /// The current content is kept in a backup first.
 fn restore(ctx: &Ctx, record: &EditRecord) -> Result<()> {
     // Undo neither writes through nor removes a symlink: the journal describes the file, not the
     // link's target, and a link put back by the user is not something undo may change.
     if record.file.is_symlink() {
-        return Err(anyhow!(
-            "{} is now a symlink; undo leaves symlinks alone, so it was not restored",
-            record.file.display()
-        ));
+        return Err(symlink_refusal(&record.file));
     }
     match (&record.backup, record.created) {
         (Some(backup), _) => {
@@ -513,6 +522,55 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&linked).unwrap(), "other bytes");
         assert_eq!(journal::read(&ctx.dirs).unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn undo_checks_every_record_for_symlinks_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = test_ctx(dir.path());
+        let run = RunId::new();
+        let linked_later = dir.path().join("settings.json");
+        let regular = dir.path().join("other.json");
+        fs::write(&linked_later, "orig").unwrap();
+        fs::write(&regular, "orig").unwrap();
+        // Journal order is settings.json then other.json; undo restores newest first, so
+        // other.json would be restored before the symlink is reached.
+        safe_write(&ctx, &run, &linked_later, "setup").unwrap();
+        safe_write(&ctx, &run, &regular, "setup 2").unwrap();
+        let moved = dir.path().join("dotfiles-settings.json");
+        fs::rename(&linked_later, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, &linked_later).unwrap();
+        let backups_before = backup_dir_names(&ctx);
+
+        let error = undo(&ctx, None).expect_err("undo ignored a symlinked record");
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("undo leaves symlinks alone"),
+            "message: {message}"
+        );
+        assert_eq!(fs::read_to_string(&regular).unwrap(), "setup 2");
+        assert_eq!(fs::read_to_string(&moved).unwrap(), "setup");
+        assert_eq!(journal::read(&ctx.dirs).unwrap().len(), 2);
+        assert_eq!(
+            backup_dir_names(&ctx),
+            backups_before,
+            "a keep backup was written"
+        );
+    }
+
+    /// The names of everything under the backups directory, sorted.
+    #[cfg(unix)]
+    fn backup_dir_names(ctx: &Ctx) -> Vec<String> {
+        let mut names: Vec<String> = match fs::read_dir(&ctx.dirs.backups) {
+            Ok(entries) => entries
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        names.sort();
+        names
     }
 
     #[test]
