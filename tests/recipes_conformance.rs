@@ -792,6 +792,118 @@ fn an_unlisted_plugin_fails_closed_and_installs_nothing() {
             .all(|call| !call.contains(&"install".to_string())),
         "{calls:?}"
     );
+    let add = tokens(&[
+        "claude",
+        "plugin",
+        "marketplace",
+        "add",
+        "anthropics/claude-plugins-official",
+    ]);
+    assert_eq!(
+        calls.iter().filter(|call| **call == add).count(),
+        1,
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_plugin_only_the_official_marketplace_lists_is_installed_after_adding_it() {
+    let rig = prepared();
+    rig.rec.reply(
+        "claude plugin marketplace list",
+        Output::ok("❯ anthropic-plugin-directory   Source: Built in (Anthropic Directory)\n"),
+    );
+    write_catalog(&rig, "claude-plugins-official", &["claude-md-management"]);
+    let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
+    assert!(result.is_ok(), "{result:?}");
+    let add = calls
+        .iter()
+        .position(|call| {
+            *call
+                == tokens(&[
+                    "claude",
+                    "plugin",
+                    "marketplace",
+                    "add",
+                    "anthropics/claude-plugins-official",
+                ])
+        })
+        .expect("the official marketplace is added");
+    let install = calls
+        .iter()
+        .position(|call| {
+            *call
+                == tokens(&[
+                    "claude",
+                    "plugin",
+                    "install",
+                    "claude-md-management@claude-plugins-official",
+                ])
+        })
+        .expect("the plugin is installed from the official marketplace");
+    assert!(add < install, "{calls:?}");
+}
+
+#[test]
+fn the_official_marketplace_is_not_added_when_it_is_already_listed() {
+    let rig = prepared();
+    rig.rec.reply(
+        "claude plugin marketplace list",
+        Output::ok(
+            "❯ anthropic-plugin-directory   Source: Built in (Anthropic Directory)\n\
+             ❯ claude-plugins-official   Source: GitHub (anthropics/claude-plugins-official)\n",
+        ),
+    );
+    write_catalog(&rig, "claude-plugins-official", &["claude-md-management"]);
+    let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        calls.iter().all(|call| !call.contains(&"add".to_string())),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_dry_run_on_a_fresh_claude_plans_the_official_marketplace_and_does_not_fail() {
+    let mut rig = prepared();
+    rig.ctx.dry_run = true;
+    rig.rec.reply(
+        "claude plugin marketplace list",
+        Output::ok("❯ anthropic-plugin-directory   Source: Built in (Anthropic Directory)\n"),
+    );
+    let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        calls.iter().all(
+            |call| !call.contains(&"add".to_string()) && !call.contains(&"install".to_string())
+        ),
+        "{calls:?}"
+    );
+    let planned = "claude plugin marketplace add anthropics/claude-plugins-official";
+    let lines = rig.ctx.out.lines();
+    assert!(lines.iter().any(|line| line.contains(planned)), "{lines:?}");
+}
+
+#[test]
+fn a_failed_add_of_the_official_marketplace_names_the_marketplace() {
+    let rig = prepared();
+    rig.rec.reply(
+        "claude plugin marketplace list",
+        Output::ok("❯ anthropic-plugin-directory   Source: Built in (Anthropic Directory)\n"),
+    );
+    rig.rec.reply(
+        "claude plugin marketplace add",
+        Output::fail(1, "network unreachable"),
+    );
+    let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
+    let err = format!("{:#}", result.unwrap_err());
+    assert!(err.contains("claude-plugins-official"), "{err}");
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.contains(&"install".to_string())),
+        "{calls:?}"
+    );
 }
 
 #[test]
