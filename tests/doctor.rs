@@ -376,6 +376,33 @@ fn doctor_fails_when_a_locked_mcp_command_is_missing_from_the_mcp_path() {
 }
 
 #[test]
+fn a_plugin_probe_that_exits_zero_without_its_plugin_fails() {
+    // R3-5: a tool probe passes only when it exits 0 and its expect text is in its output. `claude plugin list` that
+    // exits 0 without superpowers in its list is a fail, not an ok.
+    let root = tempfile::tempdir().unwrap();
+    lock(
+        root.path(),
+        &[("superpowers", "1.2.0", "claude-plugin", &["claude"])],
+    );
+    let runner = refusing_sandbox(root.path())
+        .with_program("claude", Path::new("/usr/local/bin/claude"))
+        .reply("claude plugin list", Output::ok("claude-md-management@x\n"))
+        .reply(
+            "/usr/local/bin/claude plugin list",
+            Output::ok("claude-md-management@x\n"),
+        );
+
+    let checks = doctor::checks_for(
+        &ctx(root.path(), runner, FakeNet::new()),
+        &[claude(root.path())],
+    )
+    .unwrap();
+
+    let probe = find(&checks, "tool.superpowers.claude");
+    assert_eq!(probe.status, CheckStatus::Fail, "{probe:?}");
+}
+
+#[test]
 fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
     // The probe's program lives only in relaxkit's bin directory, which the stub PATH does not hold. The engine finds it
     // there, so doctor must run it by its full path rather than by its bare name (ruling Important 6).

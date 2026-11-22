@@ -17,11 +17,12 @@ use crate::platform::{
     BWRAP_PROFILE_PATH, PrereqPlan, apparmor_profile_present, is_executable,
     plan_needs_apparmor_profile,
 };
-use crate::recipe::{Kind, Step, load_all};
+use crate::recipe::{Kind, Probe, Recipe, Step, load_all};
 use crate::runtime::nvm::{node_bin, npx_bin};
 use crate::sandbox::selftest::selftest;
 use crate::sandbox::{linux_prerequisites, plugin_health};
 use crate::state::lockfile::Lockfile;
+use crate::tools::detect::{plugin_name, plugin_spec};
 use crate::tools::engine::{mcp_path_dirs, probe_path};
 
 /// The outcome of one check.
@@ -376,8 +377,19 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
                 .iter()
                 .fold(Cmd::new(&path.to_string_lossy()), |cmd, arg| cmd.arg(arg))
                 .env("PATH", &probe_path(ctx));
+            let expected = expected_text(recipe, kind, probe);
             checks.push(match ctx.runner.run(&cmd) {
-                Ok(out) if out.code == 0 => Check::ok(&check_id, format!("`{shown}` passed")),
+                Ok(out) if out.code == 0 => match expected {
+                    // A probe passes only when its output holds the expected text: exit 0 alone is not enough (R3-5).
+                    Some(text) if !out.stdout.contains(&text) && !out.stderr.contains(&text) => {
+                        Check::fail(
+                            &check_id,
+                            format!("`{shown}` exited 0 but its output does not contain {text}"),
+                            "run `relaxkit setup` again",
+                        )
+                    }
+                    _ => Check::ok(&check_id, format!("`{shown}` passed")),
+                },
                 Ok(out) => Check::fail(
                     &check_id,
                     format!("`{shown}` exited {}", out.code),
@@ -392,6 +404,20 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
         }
     }
     Ok(())
+}
+
+/// The text a passing probe's output must hold: the recipe's `expect`, or, for a `plugin list` probe with none, the
+/// recipe's plugin name for this host (ruling R3-5).
+fn expected_text(recipe: &Recipe, kind: HostKind, probe: &Probe) -> Option<String> {
+    if let Some(expect) = &probe.expect {
+        return Some(expect.clone());
+    }
+    let lists_plugins =
+        probe.argv.iter().any(|arg| arg == "plugin") && probe.argv.iter().any(|arg| arg == "list");
+    if lists_plugins {
+        return plugin_spec(recipe, kind).map(|spec| plugin_name(spec).to_string());
+    }
+    None
 }
 
 /// Each locked MCP entry's command must resolve on the MCP PATH (spec 6, ruling K58). The command is only looked for on
