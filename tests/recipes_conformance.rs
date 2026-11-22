@@ -28,7 +28,8 @@ struct Recording {
 #[derive(Default)]
 struct RecState {
     calls: Vec<Vec<String>>,
-    replies: Vec<(String, Output)>,
+    /// (prefix, output, consumed after one match)
+    replies: Vec<(String, Output, bool)>,
     programs: HashMap<String, PathBuf>,
 }
 
@@ -38,7 +39,16 @@ impl Recording {
             .lock()
             .unwrap()
             .replies
-            .push((prefix.to_string(), output));
+            .push((prefix.to_string(), output, false));
+    }
+
+    /// Answers the next matching command only; later matches fall through to the other replies.
+    fn reply_once(&self, prefix: &str, output: Output) {
+        self.state
+            .lock()
+            .unwrap()
+            .replies
+            .push((prefix.to_string(), output, true));
     }
 
     fn with_program(&self, name: &str, path: &str) {
@@ -61,12 +71,20 @@ impl Runner for Recording {
         let display = argv.join(" ");
         let mut state = self.state.lock().unwrap();
         state.calls.push(argv);
-        let out = state
+        let position = state
             .replies
             .iter()
-            .find(|(prefix, _)| display.starts_with(prefix.as_str()))
-            .map(|(_, output)| output.clone())
-            .unwrap_or_else(|| Output::ok(""));
+            .position(|(prefix, _, _)| display.starts_with(prefix.as_str()));
+        let out = match position {
+            Some(index) => {
+                let (_, output, once) = state.replies[index].clone();
+                if once {
+                    state.replies.remove(index);
+                }
+                output
+            }
+            None => Output::ok(""),
+        };
         Ok(out)
     }
 
@@ -230,7 +248,32 @@ fn superpowers_on_claude_installs_from_the_built_in_directory() {
                 "install",
                 "superpowers@anthropic-plugin-directory",
             ]),
+            tokens(&["claude", "plugin", "list"]),
         ],
+    );
+}
+
+#[test]
+fn superpowers_on_claude_records_the_version_the_host_reports_and_its_marketplace() {
+    let rig = prepared();
+    rig.rec.reply_once("claude plugin list", Output::ok(""));
+    rig.rec.reply(
+        "claude plugin list",
+        Output::ok("❯ superpowers@anthropic-plugin-directory   Version: 7.0.2-22f0b463e7a5   Scope: user   Status: ✔ enabled\n"),
+    );
+    let (result, _) = install(&rig, "superpowers", HostKind::Claude);
+    let outcomes = result.unwrap();
+    assert_eq!(
+        outcomes[0].1,
+        Outcome::Installed {
+            version: "7.0.2-22f0b463e7a5".to_string()
+        }
+    );
+    let lock = Lockfile::load(&rig.ctx).unwrap().unwrap();
+    assert_eq!(lock.tools["superpowers"].version, "7.0.2-22f0b463e7a5");
+    assert_eq!(
+        lock.tools["superpowers"].route,
+        "claude-plugin:anthropic-plugin-directory"
     );
 }
 
@@ -300,6 +343,7 @@ fn caveman_on_claude_adds_the_marketplace_then_installs_the_cli_and_turns_teleme
             ],
             tokens(&["caveman", "off", "routing", "--yes"]),
             tokens(&["caveman", "telemetry", "off"]),
+            tokens(&["claude", "plugin", "list"]),
         ],
     );
 }
@@ -592,6 +636,7 @@ fn claude_md_management_resolves_its_marketplace_from_the_catalog() {
                 "install",
                 "claude-md-management@anthropic-plugin-directory",
             ]),
+            tokens(&["claude", "plugin", "list"]),
         ],
     );
 }
@@ -606,15 +651,12 @@ fn frontend_design_resolves_its_marketplace_from_the_catalog() {
     );
     let (result, calls) = install(&rig, "frontend-design", HostKind::Claude);
     assert!(result.is_ok(), "{result:?}");
-    assert_eq!(
-        calls.last().unwrap(),
-        &tokens(&[
-            "claude",
-            "plugin",
-            "install",
-            "frontend-design@anthropic-plugin-directory"
-        ])
-    );
+    assert!(calls.contains(&tokens(&[
+        "claude",
+        "plugin",
+        "install",
+        "frontend-design@anthropic-plugin-directory"
+    ])));
 }
 
 #[test]

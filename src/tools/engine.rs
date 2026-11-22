@@ -229,11 +229,9 @@ impl<'a> Engine<'a> {
                 }
                 Plan::Install => {
                     let vars = self.run_steps(recipe, host)?;
-                    let version = recipe
-                        .pin
-                        .clone()
-                        .unwrap_or_else(|| UNVERSIONED.to_string());
-                    let route = install_route(recipe, kind, &vars.marketplace);
+                    let version = self.installed_version(recipe, host)?;
+                    let marketplace = plugin_marketplace(recipe, kind, &vars);
+                    let route = install_route(recipe, kind, &marketplace);
                     rows.push((kind, version.clone(), route.clone()));
                     outcomes.push((kind, Outcome::Installed { version }));
                 }
@@ -241,6 +239,28 @@ impl<'a> Engine<'a> {
         }
         self.record(recipe, &rows)?;
         Ok(outcomes)
+    }
+
+    /// The version an install records. A plugin step that carries `{version}` is pinned, so the pin is recorded. A
+    /// plugin step without it is installed at whatever the marketplace serves, so the version the host reports
+    /// after the install is recorded, and `UNVERSIONED` when it reports none.
+    fn installed_version(&self, recipe: &Recipe, host: &dyn Host) -> Result<String> {
+        let kind = host.info().kind;
+        if let Some(spec) = plugin_spec(recipe, kind)
+            && !spec.contains("{version}")
+        {
+            let name = plugin_name(spec);
+            let reported = host
+                .plugin_list(self.ctx)?
+                .into_iter()
+                .find(|plugin| plugin.name == name)
+                .and_then(|plugin| plugin.version);
+            return Ok(reported.unwrap_or_else(|| UNVERSIONED.to_string()));
+        }
+        Ok(recipe
+            .pin
+            .clone()
+            .unwrap_or_else(|| UNVERSIONED.to_string()))
     }
 
     /// Decides what happens on one host without changing anything: skip, adopt, or install.
@@ -416,8 +436,12 @@ impl<'a> Engine<'a> {
         if rows.is_empty() || self.ctx.dry_run {
             return Ok(());
         }
-        let (_, version, _) = &rows[0];
+        let (kind, version, _) = &rows[0];
         if check_version(version).is_err() {
+            self.ctx.out.info(&format!(
+                "{} on {kind} is not locked: the host reports no exact version",
+                recipe.id
+            ));
             return Ok(());
         }
         let first = &rows[0].2;
@@ -442,6 +466,19 @@ impl<'a> Engine<'a> {
             },
         );
         lock.save(self.ctx, self.run)
+    }
+}
+
+/// The marketplace a Claude plugin step installs from: the resolved `{marketplace}`, or the part after `@` in a
+/// plain spec. Empty for anything else.
+fn plugin_marketplace(recipe: &Recipe, kind: HostKind, vars: &Vars) -> String {
+    match plugin_spec(recipe, kind) {
+        Some(spec) if spec.contains("{marketplace}") => vars.marketplace.clone(),
+        Some(spec) => spec
+            .split_once('@')
+            .map(|(_, marketplace)| marketplace.to_string())
+            .unwrap_or_default(),
+        None => String::new(),
     }
 }
 
