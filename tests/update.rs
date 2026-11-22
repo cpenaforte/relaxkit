@@ -201,6 +201,7 @@ impl Fixture {
             project: None,
             allow_sudo: false,
             run: self.run.clone(),
+            group: None,
         }
     }
 

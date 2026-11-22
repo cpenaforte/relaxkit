@@ -719,6 +719,7 @@ mod tests {
             project: None,
             allow_sudo: false,
             run: RunId::new(),
+            group: None,
         };
         let search = NvmSearch {
             xdg_config_home: Some(home.join("xdg")),
@@ -886,6 +887,7 @@ mod tests {
             project: None,
             allow_sudo: false,
             run: RunId::new(),
+            group: None,
         };
 
         assert!(ensure_node_in(&ctx, &RunId::new(), &none()).is_err());

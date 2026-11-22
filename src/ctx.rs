@@ -74,6 +74,8 @@ pub struct Ctx {
     pub allow_sudo: bool,
     /// The run every journaled edit of this process belongs to, so `undo` reverts the whole process.
     pub run: RunId,
+    /// The run group this process belongs to when a parent process started it (K105). `None` for a top-level run.
+    pub group: Option<RunId>,
 }
 
 impl Ctx {
@@ -88,10 +90,12 @@ impl Ctx {
             project: None,
             allow_sudo: false,
             run: RunId::new(),
+            group: None,
         }
     }
 
-    /// A context for the real machine: discovered directories, real processes and HTTP.
+    /// A context for the real machine: discovered directories, real processes and HTTP. The run group comes from
+    /// the environment when a parent process started this one (K105).
     pub fn system(
         dry_run: bool,
         project: Option<PathBuf>,
@@ -106,7 +110,25 @@ impl Ctx {
             project,
             allow_sudo,
             run: RunId::new(),
+            group: group_from_env(std::env::var_os(RUN_GROUP_ENV).as_deref())?,
         })
+    }
+}
+
+/// The environment variable a self step sets for the tool run it re-executes (K105).
+pub const RUN_GROUP_ENV: &str = "RELAXKIT_RUN_GROUP";
+
+/// The run group named by the environment: `None` when unset or empty, else the id it holds. A value that is not a
+/// run id is an error, so a child never journals under a group it cannot name.
+pub fn group_from_env(value: Option<&std::ffi::OsStr>) -> anyhow::Result<Option<RunId>> {
+    match value.filter(|value| !value.is_empty()) {
+        None => Ok(None),
+        Some(text) => {
+            let text = text.to_string_lossy();
+            text.parse::<RunId>()
+                .map(Some)
+                .map_err(|err| anyhow::anyhow!("{RUN_GROUP_ENV}: {err}"))
+        }
     }
 }
 
@@ -149,5 +171,18 @@ mod tests {
         assert_eq!(ctx.dirs.config, PathBuf::from("/h/.config/relaxkit"));
         assert!(!ctx.dry_run);
         assert!(ctx.project.is_none());
+    }
+
+    #[test]
+    fn the_run_group_comes_from_the_environment_when_it_is_a_run_id() {
+        use std::ffi::OsStr;
+        assert_eq!(group_from_env(None).unwrap(), None);
+        assert_eq!(group_from_env(Some(OsStr::new(""))).unwrap(), None);
+        let id = RunId::new();
+        assert_eq!(
+            group_from_env(Some(OsStr::new(id.as_str()))).unwrap(),
+            Some(id)
+        );
+        assert!(group_from_env(Some(OsStr::new("../escape"))).is_err());
     }
 }

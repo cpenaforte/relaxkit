@@ -112,6 +112,7 @@ fn rig() -> Rig {
         project: None,
         allow_sudo: false,
         run: RunId::new(),
+        group: None,
     };
     Rig { root, rec, ctx }
 }

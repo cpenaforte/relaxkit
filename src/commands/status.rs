@@ -171,12 +171,15 @@ fn role_lines(ctx: &Ctx, hosts: &[Box<dyn Host>], config: &KitConfig, lines: &mu
         let setting = effective(config, role);
         let mut parts = Vec::new();
         for host in hosts {
-            match host.info().kind {
-                HostKind::Claude => parts.push(match resolve_claude(&setting) {
+            // Each host shows the setting it runs with, which a `--host` override may change (K-6.1 rule 3).
+            let kind = host.info().kind;
+            let own = effective(&config.for_host(kind), role);
+            match kind {
+                HostKind::Claude => parts.push(match resolve_claude(&own) {
                     Some(alias) => format!("claude {alias} (advisory)"),
                     None => "claude inherits the host default".to_string(),
                 }),
-                HostKind::Opencode => parts.push(match resolve_opencode(&setting, &available) {
+                HostKind::Opencode => parts.push(match resolve_opencode(&own, &available) {
                     Some(model) => {
                         let mode = if role == Role::Planner {
                             "advisory"
@@ -215,7 +218,7 @@ fn drift_lines(
             .into_owned();
         match host.info().kind {
             HostKind::Claude => {
-                let expected = roles_block_text(config);
+                let expected = roles_block_text(&config.for_host(HostKind::Claude));
                 let actual = block_get(&text, ROLES_BLOCK);
                 match (expected, actual) {
                     (Some(expected), Some(actual)) if actual.trim() == expected.trim() => {}

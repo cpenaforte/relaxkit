@@ -384,9 +384,15 @@ fn write_executable(path: &Path, bytes: &[u8]) -> Result<()> {
 /// passed on. A spawn error is an error. A non-zero exit is returned as the reason (K102).
 fn rerun(ctx: &Ctx, exe: &Path) -> Result<Option<String>> {
     let program = utf8(exe)?;
+    // The re-run belongs to this run's group, so `undo` reverts the self step and the tool run as one (K105).
+    let group = ctx.group.clone().unwrap_or_else(|| ctx.run.clone());
     let out = ctx
         .runner
-        .run(&Cmd::new(program).args(&["update", "--tools"]))
+        .run(
+            &Cmd::new(program)
+                .args(&["update", "--tools"])
+                .env(crate::ctx::RUN_GROUP_ENV, group.as_str()),
+        )
         .with_context(|| format!("the new relaxkit at {} did not run", exe.display()))?;
     for line in out.stdout.lines() {
         ctx.out.info(line);

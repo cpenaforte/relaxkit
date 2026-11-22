@@ -220,6 +220,7 @@ fn journal_creation(ctx: &Ctx, file: &Path) -> Result<()> {
             backup: None,
             created: true,
             link: None,
+            group: Some(crate::state::group_for(ctx, &ctx.run)),
         },
     )
 }

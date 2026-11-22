@@ -66,9 +66,9 @@ pub enum Command {
         /// Service to log in to
         target: LoginTarget,
     },
-    /// Revert the last change, or a named run
+    /// Revert the last change, or a named run group
     Undo {
-        /// Revert this run instead of the last one
+        /// Revert this run group (a self step and the tool run it re-executes) instead of the newest one
         #[arg(long)]
         run: Option<String>,
     },

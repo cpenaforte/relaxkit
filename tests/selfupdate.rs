@@ -151,6 +151,7 @@ fn ctx_for(root: &Path, runner: &Recorder, net: FakeNet) -> Ctx {
         project: None,
         allow_sudo: false,
         run: RunId::new(),
+        group: None,
     }
 }
 

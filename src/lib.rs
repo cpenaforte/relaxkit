@@ -20,10 +20,12 @@ pub mod selfupdate;
 pub mod state;
 pub mod tools;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
-use cli::{Cli, Command};
+use cli::{Cli, Command, ConfigCmd, HostArg, LoginTarget, PresetArg};
 use ctx::{Ctx, Reporter};
+use host::HostKind;
+use presets::Preset;
 use runtime::nvm::NvmSearch;
 
 /// Runs a parsed command and returns the process exit code. Each handler is a stub until its task lands.
@@ -143,12 +145,79 @@ pub fn run(cli: Cli) -> Result<i32> {
                 0
             })
         }
-        Command::Config(_)
-        | Command::Preset { .. }
-        | Command::Privacy { .. }
-        | Command::Login { .. }
-        | Command::Undo { .. }
-        | Command::Uninstall
-        | Command::Usage { .. } => Err(anyhow!("not implemented")),
+        Command::Config(config) => {
+            let project = cli.project.then(std::env::current_dir).transpose()?;
+            let ctx = Ctx::system(cli.dry_run, project, false)?;
+            match config {
+                ConfigCmd::Set { key, value, host } => {
+                    commands::config::set(&ctx, &key, &value, host.map(host_kind))?;
+                }
+                ConfigCmd::Unset { key, host } => {
+                    commands::config::unset(&ctx, &key, host.map(host_kind))?;
+                }
+                ConfigCmd::Show { key } => {
+                    if cli.json {
+                        println!("{}", commands::config::show_json(&ctx, key.as_deref())?);
+                    } else {
+                        for line in commands::config::show(&ctx, key.as_deref())? {
+                            ctx.out.info(&line);
+                        }
+                    }
+                }
+            }
+            Ok(0)
+        }
+        Command::Preset { name } => {
+            let ctx = Ctx::system(cli.dry_run, None, false)?;
+            commands::preset::run(&ctx, preset_of(name))?;
+            Ok(0)
+        }
+        Command::Privacy { claude_code } => {
+            let ctx = Ctx::system(cli.dry_run, None, false)?;
+            commands::privacy::run(&ctx, claude_code)?;
+            Ok(0)
+        }
+        Command::Login { target } => {
+            let ctx = Ctx::system(cli.dry_run, None, false)?;
+            match target {
+                LoginTarget::Github => commands::login::run(&ctx),
+            }
+        }
+        Command::Undo { run } => {
+            let ctx = Ctx::system(cli.dry_run, None, false)?;
+            for line in commands::undo::run(&ctx, run.as_deref())? {
+                ctx.out.info(&line);
+            }
+            Ok(0)
+        }
+        Command::Uninstall => {
+            let project = cli.project.then(std::env::current_dir).transpose()?;
+            let ctx = Ctx::system(cli.dry_run, project, false)?;
+            for line in commands::uninstall::run(&ctx)? {
+                ctx.out.info(&line);
+            }
+            Ok(0)
+        }
+        Command::Usage { args } => {
+            let ctx = Ctx::system(cli.dry_run, None, false)?;
+            commands::usage::run(&ctx, &args)
+        }
+    }
+}
+
+/// The host a `--host` flag names.
+fn host_kind(arg: HostArg) -> HostKind {
+    match arg {
+        HostArg::Claude => HostKind::Claude,
+        HostArg::OpenCode => HostKind::Opencode,
+    }
+}
+
+/// The preset a `preset` argument names.
+fn preset_of(arg: PresetArg) -> Preset {
+    match arg {
+        PresetArg::Lean => Preset::Lean,
+        PresetArg::Balanced => Preset::Balanced,
+        PresetArg::Careful => Preset::Careful,
     }
 }

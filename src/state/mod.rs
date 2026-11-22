@@ -8,6 +8,7 @@ pub mod run;
 pub use journal::{EditRecord, RunId};
 pub use run::with_run_lock;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use std::fs::{self, OpenOptions};
@@ -17,6 +18,17 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::ctx::Ctx;
 use crate::fsx::write_atomic;
+
+/// The run group a record belongs to: the record's group, or its own run for a record without one (K105).
+pub fn group_of(record: &EditRecord) -> &RunId {
+    record.group.as_ref().unwrap_or(&record.run)
+}
+
+/// The group a change made under `run` belongs to. A child process started by a self step has the parent's group
+/// (K105); any other process is its own group.
+pub fn group_for(ctx: &Ctx, run: &RunId) -> RunId {
+    ctx.group.clone().unwrap_or_else(|| run.clone())
+}
 
 /// Writes `text` to `path`, backing up the old file under the run and journaling the change.
 pub fn safe_write(ctx: &Ctx, run: &RunId, path: &Path, text: &str) -> Result<()> {
@@ -79,6 +91,7 @@ pub fn record_backup(ctx: &Ctx, run: &RunId, path: &Path) -> Result<()> {
             backup: Some(backup),
             created: false,
             link: None,
+            group: Some(group_for(ctx, run)),
         }
     } else {
         EditRecord {
@@ -87,6 +100,7 @@ pub fn record_backup(ctx: &Ctx, run: &RunId, path: &Path) -> Result<()> {
             backup: None,
             created: true,
             link: None,
+            group: Some(group_for(ctx, run)),
         }
     };
     journal::append(&ctx.dirs, &record)
@@ -121,6 +135,7 @@ pub fn record_link(ctx: &Ctx, run: &RunId, path: &Path) -> Result<()> {
             backup: None,
             created: false,
             link: Some(target),
+            group: Some(group_for(ctx, run)),
         },
     )
 }
@@ -193,7 +208,8 @@ fn backup_path(ctx: &Ctx, run: &RunId, target: &Path) -> PathBuf {
     ctx.dirs.backups.join(run.as_str()).join(relative)
 }
 
-/// Reverts a run (the last one when `run` is `None`), newest change first. Returns the touched paths.
+/// Reverts a run group (the newest one when `run` is `None`), newest change first. Returns the touched paths.
+/// Every record of the group is reverted, including the records of the child runs that belong to it (K105).
 /// The run lock is held for the whole undo, so no command that takes the run lock can write files
 /// while they are reverted.
 /// Inside it, the journal lock is held from the read to the rewrite, so an append from another
@@ -211,14 +227,15 @@ pub fn undo(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
 fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
     let records = journal::read(&ctx.dirs)?;
     let target = match run {
-        Some(run) => run.clone(),
+        Some(group) => group.clone(),
         None => match records.last() {
-            Some(last) => last.run.clone(),
+            Some(last) => group_of(last).clone(),
             None => return Ok(Vec::new()),
         },
     };
-    let (mine, rest): (Vec<EditRecord>, Vec<EditRecord>) =
-        records.into_iter().partition(|record| record.run == target);
+    let (mine, rest): (Vec<EditRecord>, Vec<EditRecord>) = records
+        .into_iter()
+        .partition(|record| group_of(record) == &target);
     if mine.is_empty() {
         return Err(anyhow!("no journaled changes for run {target}"));
     }
@@ -238,10 +255,14 @@ fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
     }
     if !ctx.dry_run {
         journal::rewrite_under_lock(&ctx.dirs, &rest)?;
-        let backups = ctx.dirs.backups.join(target.as_str());
-        if backups.exists() {
-            fs::remove_dir_all(&backups)
-                .with_context(|| format!("cannot remove {}", backups.display()))?;
+        // The backups of every run in the group, the lock snapshot among them, are removed with it.
+        let runs: BTreeSet<&RunId> = mine.iter().map(|record| &record.run).collect();
+        for run in runs {
+            let backups = ctx.dirs.backups.join(run.as_str());
+            if backups.exists() {
+                fs::remove_dir_all(&backups)
+                    .with_context(|| format!("cannot remove {}", backups.display()))?;
+            }
         }
     }
     Ok(touched)

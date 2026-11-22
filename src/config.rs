@@ -10,6 +10,7 @@ use toml_edit::{DocumentMut, Item};
 
 use crate::ctx::Ctx;
 use crate::edit::{toml_get, toml_set};
+use crate::host::HostKind;
 use crate::platform::KitDirs;
 use crate::presets::{Preset, Voice};
 use crate::roles::{Role, RoleSetting, tier_of};
@@ -20,17 +21,37 @@ const CONFIG_FILE: &str = "config.toml";
 /// The largest `compact_at` the config stores: it is written as a TOML integer, which is an i64.
 const COMPACT_MAX: u64 = i64::MAX as u64;
 
+/// The hosts a role can be set for on one host only, in the order `config.toml` writes them.
+const HOSTS: [HostKind; 2] = [HostKind::Claude, HostKind::Opencode];
+
 /// The parsed `config.toml`. A missing file reads as `KitConfig::default()`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KitConfig {
     pub preset: Preset,
+    /// Roles set for every host, under `[roles]`.
     pub roles: BTreeMap<Role, RoleSetting>,
+    /// Roles set for one host only, under `[hosts.<host>.roles]` (`config set --host`). They beat `roles` on that host.
+    pub host_roles: BTreeMap<HostKind, BTreeMap<Role, RoleSetting>>,
     /// `None` means the preset's own voice.
     pub voice: Option<Voice>,
     pub compact_at: Option<u64>,
 }
 
 impl KitConfig {
+    /// The config one host sees: the roles set for it, else the roles set for every host. The preset's tiers fill
+    /// in the rest, through `effective`.
+    pub fn for_host(&self, host: HostKind) -> KitConfig {
+        let mut roles = self.roles.clone();
+        if let Some(own) = self.host_roles.get(&host) {
+            roles.extend(own.iter().map(|(role, setting)| (*role, setting.clone())));
+        }
+        KitConfig {
+            roles,
+            host_roles: BTreeMap::new(),
+            ..self.clone()
+        }
+    }
+
     /// Reads `dirs.config/config.toml`. A missing file gives the default config.
     pub fn load(dirs: &KitDirs) -> Result<KitConfig> {
         let path = config_path(dirs);
@@ -74,6 +95,21 @@ impl KitConfig {
                 }
                 None => remove_key(&text, &key)?,
             };
+        }
+        for host in HOSTS {
+            for role in Role::ALL {
+                let key = ["hosts", host.as_str(), "roles", role.key()];
+                let own = self
+                    .host_roles
+                    .get(&host)
+                    .and_then(|roles| roles.get(&role));
+                text = match own {
+                    Some(setting) => {
+                        toml_set(&text, &key, toml_edit::value(setting.to_config_string()))?
+                    }
+                    None => remove_key(&text, &key)?,
+                };
+            }
         }
         if text == old {
             return Ok(());
@@ -164,6 +200,23 @@ fn parse_text(text: &str) -> Result<KitConfig> {
             config.roles.insert(role, setting);
         }
     }
+    if toml_get(text, &["hosts"])?.is_some_and(|item| item.as_table_like().is_none()) {
+        bail!("`hosts` must be a table");
+    }
+    for host in HOSTS {
+        for role in Role::ALL {
+            let path = ["hosts", host.as_str(), "roles", role.key()];
+            if let Some(word) = read_str(text, &path)? {
+                let setting = RoleSetting::parse(&word)
+                    .with_context(|| format!("hosts.{}.roles.{}", host.as_str(), role.key()))?;
+                config
+                    .host_roles
+                    .entry(host)
+                    .or_default()
+                    .insert(role, setting);
+            }
+        }
+    }
     Ok(config)
 }
 
@@ -177,27 +230,33 @@ fn read_str(text: &str, path: &[&str]) -> Result<Option<String>> {
     Ok(Some(value.to_string()))
 }
 
-/// Removes the key at `path` (a top-level key, or `table.key`). A table left empty is dropped too.
+/// Removes the key at `path`. A table that this call leaves empty is dropped too, up the path; a key that was not
+/// there removes nothing, so an empty table that held nothing stays.
 fn remove_key(text: &str, path: &[&str]) -> Result<String> {
     let mut doc: DocumentMut = text.parse().context("invalid TOML")?;
-    let root = doc.as_table_mut();
-    match path {
-        [key] => {
-            root.remove(key);
-        }
-        [table, key] => {
-            // The table goes only when this call removed the key and left the table empty.
-            let emptied = root
-                .get_mut(table)
-                .and_then(Item::as_table_like_mut)
-                .is_some_and(|child| child.remove(key).is_some() && child.is_empty());
-            if emptied {
-                root.remove(table);
-            }
-        }
-        _ => bail!("unsupported config path {path:?}"),
-    }
+    remove_at(doc.as_table_mut(), path);
     Ok(doc.to_string())
+}
+
+/// Removes the key at `path` below `table`. Returns whether a key was removed.
+fn remove_at(table: &mut dyn toml_edit::TableLike, path: &[&str]) -> bool {
+    match path {
+        [] => false,
+        [key] => table.remove(key).is_some(),
+        [head, rest @ ..] => {
+            let Some(child) = table.get_mut(head).and_then(Item::as_table_like_mut) else {
+                return false;
+            };
+            let (removed, empty) = {
+                let removed = remove_at(child, rest);
+                (removed, child.is_empty())
+            };
+            if removed && empty {
+                table.remove(head);
+            }
+            removed
+        }
+    }
 }
 
 #[cfg(test)]
@@ -206,6 +265,7 @@ mod tests {
 
     use super::*;
     use crate::exec::FakeRunner;
+    use crate::host::HostKind;
     use crate::net::FakeNet;
     use crate::roles::{ModelSpec, Tier};
     use crate::state::journal;
@@ -458,6 +518,58 @@ mod tests {
             loaded.roles.get(&Role::FinalReview),
             Some(&RoleSetting::Tier(Tier::Smarter))
         );
+    }
+
+    #[test]
+    fn a_host_role_overrides_the_shared_one_on_its_host_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(dir.path());
+        fs::create_dir_all(&dirs.config).unwrap();
+        fs::write(
+            dirs.config.join("config.toml"),
+            "[roles]\nreviewer = \"standard\"\n\n[hosts.opencode.roles]\nreviewer = \"smarter\"\n",
+        )
+        .unwrap();
+
+        let loaded = KitConfig::load(&dirs).unwrap();
+        assert_eq!(
+            loaded
+                .for_host(HostKind::Opencode)
+                .roles
+                .get(&Role::Reviewer),
+            Some(&RoleSetting::Tier(Tier::Smarter))
+        );
+        assert_eq!(
+            loaded.for_host(HostKind::Claude).roles.get(&Role::Reviewer),
+            Some(&RoleSetting::Tier(Tier::Standard))
+        );
+
+        let ctx = Ctx::for_test(dir.path(), FakeRunner::new(), FakeNet::new());
+        let mut cleared = loaded.clone();
+        cleared.host_roles.clear();
+        cleared.save(&ctx, &RunId::new()).unwrap();
+        let text = fs::read_to_string(dirs.config.join("config.toml")).unwrap();
+        assert!(
+            !text.contains("hosts"),
+            "an emptied host table is dropped: {text}"
+        );
+        assert!(text.contains("reviewer = \"standard\""), "{text}");
+    }
+
+    #[test]
+    fn host_roles_round_trip_through_config_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = KitDirs::rooted(dir.path());
+        let ctx = Ctx::for_test(dir.path(), FakeRunner::new(), FakeNet::new());
+        let mut config = KitConfig::default();
+        config
+            .host_roles
+            .entry(HostKind::Claude)
+            .or_default()
+            .insert(Role::Planner, pin("anthropic/claude-sonnet-5-5#high"));
+        config.save(&ctx, &RunId::new()).unwrap();
+
+        assert_eq!(KitConfig::load(&dirs).unwrap(), config);
     }
 
     #[test]

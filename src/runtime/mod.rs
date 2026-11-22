@@ -192,6 +192,7 @@ pub(crate) mod testing {
             project: None,
             allow_sudo: false,
             run: RunId::new(),
+            group: None,
         }
     }
 }

@@ -1,9 +1,16 @@
-//! The command handlers behind the CLI: setup, status and doctor.
+//! The command handlers behind the CLI.
 
+pub mod config;
 pub mod doctor;
+pub mod login;
+pub mod preset;
+pub mod privacy;
 pub mod setup;
 pub mod status;
+pub mod undo;
+pub mod uninstall;
 pub mod update;
+pub mod usage;
 
 use std::fs;
 use std::io::ErrorKind;

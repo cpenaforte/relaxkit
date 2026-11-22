@@ -1,3 +1,5 @@
+mod support;
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 
@@ -123,18 +125,31 @@ fn usage_help_flag_before_the_tool_is_relaxkit_help() {
 
 #[test]
 fn usage_help_flag_after_the_tool_reaches_the_handler() {
-    Command::cargo_bin("relaxkit")
-        .unwrap()
-        .args(["usage", "cargo", "--help"])
-        .assert()
-        .code(1)
-        .stdout(predicate::str::contains("Usage: relaxkit").not())
-        .stderr(predicate::str::contains("not implemented"));
-    Command::cargo_bin("relaxkit")
-        .unwrap()
-        .args(["usage", "cargo", "-h"])
-        .assert()
-        .code(1)
-        .stdout(predicate::str::contains("Usage: relaxkit").not())
-        .stderr(predicate::str::contains("not implemented"));
+    // The handler runs the pinned ccusage, so this runs in a Scratch home with the Node link in place: no real
+    // home and no real host command. The flag after the tool name is passed through, not read as relaxkit's help.
+    let scratch = support::Scratch::new();
+    let data = scratch.home().join(".local/share/relaxkit");
+    std::fs::create_dir_all(&data).unwrap();
+    std::os::unix::fs::symlink(
+        scratch.home().join(".nvm/versions/node/v24.13.0"),
+        data.join("node"),
+    )
+    .unwrap();
+    for flag in ["--help", "-h"] {
+        scratch.clear_calls();
+        scratch
+            .relaxkit()
+            .args(["usage", "cargo", flag])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Usage: relaxkit").not());
+        assert!(
+            scratch
+                .calls()
+                .iter()
+                .any(|call| call.contains(&format!("ccusage@20.0.51 cargo {flag}"))),
+            "{flag} must reach ccusage: {:?}",
+            scratch.calls()
+        );
+    }
 }

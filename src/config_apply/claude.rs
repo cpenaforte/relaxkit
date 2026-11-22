@@ -56,7 +56,7 @@ fn claude_alias(config: &KitConfig, role: Role) -> Option<String> {
 }
 
 /// The Claude model ids the roles resolve to, in order. A tier writes its family's current model id.
-fn claude_models(config: &KitConfig) -> BTreeSet<String> {
+pub fn claude_models(config: &KitConfig) -> BTreeSet<String> {
     Role::ALL
         .into_iter()
         .filter_map(|role| claude_alias(config, role))
@@ -222,7 +222,7 @@ pub fn disable_claude_code_telemetry(ctx: &Ctx, run: &RunId, host: &dyn Host) ->
 }
 
 /// What the Claude Code telemetry opt-in turns off, in the words the caller shows.
-const CLAUDE_TELEMETRY_WARNING: &str = "DISABLE_TELEMETRY also stops feature-flag fetching. That removes \
+pub const CLAUDE_TELEMETRY_WARNING: &str = "DISABLE_TELEMETRY also stops feature-flag fetching. That removes \
 synced claude.ai skills and plugins and /skill-doctor, and may break Remote Control. \
 The separate switch CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC also disables auto-updates; relaxkit does not set it.";
 
