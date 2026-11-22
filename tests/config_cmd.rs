@@ -282,6 +282,14 @@ fn best_is_rejected_with_a_smarter_hint() {
 fn compact_at_256k_writes_both_hosts() {
     let scratch = Scratch::new();
     with_models(&scratch, MODELS);
+    // A buffer the user set is not relaxkit's: compact-at must leave it as it is (K114).
+    let path = opencode_config(scratch.home());
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        jsonc_set("{}", &["compaction", "buffer"], &json!(40_000)).unwrap(),
+    )
+    .unwrap();
 
     let assert = scratch
         .relaxkit()
@@ -298,15 +306,14 @@ fn compact_at_256k_writes_both_hosts() {
         "Claude Code's threshold is absolute, so it is written"
     );
     // K114: OpenCode has no verified window source yet, so its compaction buffer is not written.
-    let opencode_text = fs::read_to_string(opencode_config(scratch.home())).unwrap_or_default();
-    let buffer = if opencode_text.is_empty() {
-        None
-    } else {
-        jsonc_get(&opencode_text, &["compaction", "buffer"]).unwrap()
-    };
     assert_eq!(
-        buffer, None,
-        "no OpenCode buffer without a verified window source"
+        jsonc_get(
+            &read(&opencode_config(scratch.home())),
+            &["compaction", "buffer"]
+        )
+        .unwrap(),
+        Some(json!(40_000)),
+        "no OpenCode buffer is written without a verified window source"
     );
     assert!(
         stderr.contains("no verified window source"),
@@ -741,6 +748,34 @@ fn preset_and_uninstall_refuse_project_and_write_nothing() {
         tree(scratch.home()),
         before,
         "a refused --project writes nothing"
+    );
+}
+
+#[test]
+fn uninstall_keeps_a_user_compaction_buffer() {
+    // K114 / F23-10: relaxkit writes no compaction buffer on OpenCode, so a buffer present is the user's.
+    let scratch = Scratch::new();
+    with_models(&scratch, MODELS);
+    scratch
+        .relaxkit()
+        .args(["config", "set", "compact-at", "256k"])
+        .assert()
+        .success();
+    let path = opencode_config(scratch.home());
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let config = jsonc_set("{}", &["compaction", "buffer"], &json!(40_000)).unwrap();
+    fs::write(&path, config).unwrap();
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+
+    assert_eq!(
+        jsonc_get(
+            &read(&opencode_config(scratch.home())),
+            &["compaction", "buffer"]
+        )
+        .unwrap(),
+        Some(json!(40_000)),
+        "the user's buffer stays"
     );
 }
 

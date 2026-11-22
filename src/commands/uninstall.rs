@@ -32,9 +32,7 @@ pub fn run(ctx: &Ctx) -> Result<Vec<String>> {
             remove_mcp_entries(ctx, host.as_ref(), &names, &mut lines)?;
             match host.info().kind {
                 HostKind::Claude => remove_claude(ctx, run, host.as_ref(), &config, &mut lines)?,
-                HostKind::Opencode => {
-                    remove_opencode(ctx, run, host.as_ref(), &config, &mut lines)?
-                }
+                HostKind::Opencode => remove_opencode(ctx, run, host.as_ref(), &mut lines)?,
             }
         }
         remove_bin_copies(ctx, run, &mut lines)?;
@@ -138,22 +136,10 @@ fn remove_claude(
     Ok(())
 }
 
-/// The OpenCode agents and routing block the pack wrote, its compaction buffer when a threshold was set, and the
-/// sandbox policy file it wrote.
-fn remove_opencode(
-    ctx: &Ctx,
-    run: &RunId,
-    host: &dyn Host,
-    config: &KitConfig,
-    lines: &mut Vec<String>,
-) -> Result<()> {
+/// The OpenCode agents and routing block the pack wrote, and the sandbox policy file it wrote.
+fn remove_opencode(ctx: &Ctx, run: &RunId, host: &dyn Host, lines: &mut Vec<String>) -> Result<()> {
     opencode::unset_roles(ctx, run, host)?;
-    if config.compact_at.is_some() {
-        let path = host.config_file(ctx);
-        let old = read_or_empty(&path)?;
-        let new = jsonc_remove(&old, &["compaction", "buffer"])?;
-        write_changed(ctx, run, &path, &old, &new)?;
-    }
+    // No compaction buffer is removed: relaxkit writes none on OpenCode (K114), so one present is the user's.
     // Only a regular file is removed: a link is left alone, since undo does not restore links it never journaled.
     let policy = sandbox_opencode::sandbox_config_path(ctx);
     if policy.symlink_metadata().is_ok_and(|meta| meta.is_file()) {
