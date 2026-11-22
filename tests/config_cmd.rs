@@ -19,7 +19,7 @@ use relaxkit::platform::KitDirs;
 use relaxkit::presets::Preset;
 use relaxkit::roles::{ModelSpec, Role, RoleSetting, Tier};
 use relaxkit::state::lockfile::{LockedTool, Lockfile};
-use relaxkit::state::{journal, record_backup, safe_write, undo};
+use relaxkit::state::{group_of, journal, record_backup, safe_write, undo};
 use serde_json::{Value, json};
 use support::{Scratch, tree};
 
@@ -932,6 +932,86 @@ fn uninstall_never_removes_a_symlinked_claude_md() {
     let meta = fs::symlink_metadata(claude_md(scratch.home()))
         .expect("the owner's link survives uninstall");
     assert!(meta.file_type().is_symlink(), "uninstall kept the link");
+}
+
+/// relaxkit's lock file, under the scratch config directory.
+fn lock_file(home: &Path) -> PathBuf {
+    home.join(".config/relaxkit/lock.toml")
+}
+
+/// The run that journaled the lock's backup: the uninstall that removed the lock.
+fn uninstall_run_id(home: &Path) -> String {
+    let records = journal::read(&KitDirs::rooted(home)).unwrap();
+    let record = records
+        .iter()
+        .rev()
+        .find(|record| record.file == lock_file(home) && record.backup.is_some())
+        .expect("uninstall journaled the lock before removing it");
+    group_of(record).as_str().to_string()
+}
+
+#[test]
+fn uninstall_removes_the_lock_and_status_then_shows_no_tools() {
+    // Task 9: the lock is read for the leftover lines, then removed, so status has no tool to show afterwards.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    assert!(lock_file(scratch.home()).exists(), "setup writes the lock");
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+
+    assert!(
+        !lock_file(scratch.home()).exists(),
+        "uninstall removes the lock"
+    );
+    let output = scratch
+        .relaxkit()
+        .arg("status")
+        .output()
+        .expect("status runs");
+    assert!(output.status.success(), "status exits 0");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(!stdout.contains("not found"), "{stdout}");
+    assert!(stdout.contains("nothing is locked yet"), "{stdout}");
+}
+
+#[test]
+fn undo_of_the_uninstall_restores_the_lock_byte_for_byte() {
+    // Task 9: the lock removal is journaled like every other uninstall change, so undo brings it back unchanged.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    let lock_before = fs::read(lock_file(scratch.home())).unwrap();
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+    assert!(!lock_file(scratch.home()).exists());
+
+    let run = uninstall_run_id(scratch.home());
+    scratch
+        .relaxkit()
+        .args(["undo", "--run", &run])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(lock_file(scratch.home())).unwrap(),
+        lock_before,
+        "undo restores the lock byte for byte"
+    );
+}
+
+#[test]
+fn a_dry_run_uninstall_keeps_the_lock() {
+    // Task 9: a dry run reports the lock removal and removes nothing.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    let before = fs::read(lock_file(scratch.home())).unwrap();
+
+    scratch
+        .relaxkit()
+        .args(["uninstall", "--dry-run"])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read(lock_file(scratch.home())).unwrap(), before);
 }
 
 /// The home tree without the run lock: taking the lock creates `run.lock`, which is not a configuration write.

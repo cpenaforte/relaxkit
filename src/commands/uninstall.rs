@@ -39,9 +39,13 @@ pub fn run(ctx: &Ctx) -> Result<Vec<String>> {
             }
         }
         remove_bin_copies(ctx, run, &mut lines)?;
+        // `leftovers` reads the lock to name every tool, so the lock is removed only after it has been read.
+        let mut left = Vec::new();
+        leftovers(ctx, &mut left)?;
+        remove_lock(ctx, run, &mut lines)?;
         lines.push(String::new());
         lines.push(heading("Left in place", ctx.out.palette()));
-        leftovers(ctx, &mut lines)?;
+        lines.extend(left);
         Ok(lines)
     };
     if ctx.dry_run {
@@ -347,6 +351,25 @@ fn remove_bin_copies_except(
     Ok(())
 }
 
+/// Removes relaxkit's lock file. It is journaled before it goes, so `relaxkit undo` restores it. A dry run only reports
+/// the removal, and an absent lock has nothing to remove.
+fn remove_lock(ctx: &Ctx, run: &RunId, lines: &mut Vec<String>) -> Result<()> {
+    let path = ctx.dirs.config.join("lock.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+    record_backup(ctx, run, &path)?;
+    if !ctx.dry_run {
+        fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
+    }
+    lines.push(removal(
+        ctx,
+        &format!("removed relaxkit's lock file {}", path.display()),
+        &format!("would remove relaxkit's lock file {}", path.display()),
+    ));
+    Ok(())
+}
+
 /// A removal this run made, or in a dry run the removal it would make, since a dry run removes nothing.
 fn removal(ctx: &Ctx, done: &str, planned: &str) -> String {
     let palette = ctx.out.palette();
@@ -357,8 +380,8 @@ fn removal(ctx: &Ctx, done: &str, planned: &str) -> String {
     }
 }
 
-/// What stays: relaxkit's own binary, its config, lock and journal, the Node link, the pack's plugins, and any
-/// `DISABLE_TELEMETRY` the owner opted into.
+/// What stays: relaxkit's own binary, its config and journal, the Node link, the pack's plugins, and any
+/// `DISABLE_TELEMETRY` the owner opted into. The lock is read here for the tool lines and removed after this list.
 fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
     let palette = ctx.out.palette();
     if let Ok(exe) = std::env::current_exe() {
@@ -375,7 +398,7 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
         palette,
         Mark::Skip,
         &format!(
-            "relaxkit's config, lock and journal under {} and {}: kept so `relaxkit undo` still works",
+            "relaxkit's config and journal under {} and {}: kept so `relaxkit undo` still works; the lock is removed, and undo restores it",
             ctx.dirs.config.display(),
             ctx.dirs.data.display()
         ),
