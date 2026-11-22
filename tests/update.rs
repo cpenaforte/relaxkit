@@ -19,7 +19,7 @@ use relaxkit::net::FakeNet;
 use relaxkit::platform::{Arch, KitDirs, Os, current_arch, current_os};
 use relaxkit::runtime::nvm::NvmSearch;
 use relaxkit::state::lockfile::{LockedTool, Lockfile};
-use relaxkit::state::{RunId, journal};
+use relaxkit::state::{RunId, journal, undo};
 use support::{Scratch, tree};
 
 type Answer = Arc<dyn Fn(&Cmd) -> Output + Send + Sync>;
@@ -133,6 +133,8 @@ struct Fixture {
     net: FakeNet,
     search: NvmSearch,
     hosts: Vec<Box<dyn Host>>,
+    /// The run every command of this fixture writes under, so a test can undo it.
+    run: RunId,
 }
 
 const NODE_OLD: &str = "v24.13.0";
@@ -180,6 +182,7 @@ impl Fixture {
             net: FakeNet::new(),
             search,
             hosts: vec![Box::new(claude)],
+            run: RunId::new(),
         }
     }
 
@@ -196,7 +199,7 @@ impl Fixture {
             dry_run: false,
             project: None,
             allow_sudo: false,
-            run: RunId::new(),
+            run: self.run.clone(),
         }
     }
 
@@ -1158,6 +1161,89 @@ impl Registry {
             }),
         );
     }
+}
+
+/// A fixture whose only host is OpenCode, with a locked opencode-sandbox 0.7.0. The candidate 0.7.1 declares the
+/// runtime `runtime` in its registry metadata, and the runtime's published versions are `published`.
+fn sandbox_fixture(runtime: &str, published: &[&str], self_test: &'static str) -> Fixture {
+    let mut fx = Fixture::new();
+    let config = fx.root().join(".config/opencode/opencode.jsonc");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "{\"plugins\": [\"opencode-sandbox@0.7.0\"]}\n").unwrap();
+    fx.hosts = vec![Box::new(OpencodeHost::new(
+        HostInfo {
+            kind: HostKind::Opencode,
+            binary: PathBuf::from("/usr/local/bin/opencode"),
+            version: "2.2.6".to_string(),
+        },
+        fx.root().join(".config/opencode"),
+    ))];
+    fx.lock(&[(
+        "opencode-sandbox",
+        "0.7.0",
+        "opencode-plugin",
+        &["opencode"],
+    )]);
+    fx.serve(
+        "https://registry.npmjs.org/opencode-sandbox/latest",
+        r#"{"version":"0.7.1"}"#,
+    );
+    fx.serve(
+        "https://registry.npmjs.org/opencode-sandbox",
+        &format!(
+            r#"{{"dist-tags":{{"latest":"0.7.1"}},"versions":{{"0.7.1":{{"dependencies":{{"@anthropic-ai/sandbox-runtime":"{runtime}"}}}}}}}}"#
+        ),
+    );
+    let versions: Vec<String> = published.iter().map(|v| format!("\"{v}\":{{}}")).collect();
+    fx.serve(
+        "https://registry.npmjs.org/@anthropic-ai%2fsandbox-runtime",
+        &format!(r#"{{"versions":{{{}}}}}"#, versions.join(",")),
+    );
+    let npx = fx.npx();
+    fx.shell.on(
+        &format!("{npx} --yes @anthropic-ai/sandbox-runtime@{runtime}"),
+        Output::ok(self_test),
+    );
+    fx.shell.on("opencode plugin remove", Output::ok(""));
+    fx.shell.on("opencode plugin add", Output::ok(""));
+    fx.shell.on("opencode --version", Output::ok("2.2.6\n"));
+    fx
+}
+
+#[test]
+fn undo_keeps_an_existing_sandbox_config_when_the_plugin_does_not_move() {
+    let fx = sandbox_fixture("^0.0.76", &["0.0.76"], "status=0\n");
+    let config = fx.root().join(".config/opencode/sandbox.json");
+    fs::write(&config, "{\"mode\": \"advisory\"}\n").unwrap();
+
+    let report = fx.run(false, Some("opencode-sandbox")).unwrap();
+    assert_eq!(report.failed, vec!["opencode-sandbox".to_string()]);
+    undo(&fx.ctx(), Some(&fx.run)).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        "{\"mode\": \"advisory\"}\n",
+        "undo changed a sandbox config the update did not touch"
+    );
+}
+
+#[test]
+fn undo_does_not_delete_a_sandbox_config_the_update_never_created() {
+    let fx = sandbox_fixture("^0.0.76", &["0.0.76"], "status=0\n");
+    let config = fx.root().join(".config/opencode/sandbox.json");
+    assert!(!config.exists());
+
+    let report = fx.run(false, Some("opencode-sandbox")).unwrap();
+    assert_eq!(report.failed, vec!["opencode-sandbox".to_string()]);
+    // The user writes their own config after the update and before undo.
+    fs::write(&config, "{\"mode\": \"enforce\"}\n").unwrap();
+    undo(&fx.ctx(), Some(&fx.run)).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        "{\"mode\": \"enforce\"}\n",
+        "undo deleted a file the update never created"
+    );
 }
 
 /// The text a binary run printed on stdout.

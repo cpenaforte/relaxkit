@@ -776,8 +776,10 @@ fn back_up_first(
         {
             continue;
         }
-        // An absent file is journaled only where this run may create it: the pack rtk copy and the sandbox policy.
-        let may_create = file == rtk && rtk_needed || file == sandbox_config_path(ctx);
+        // An absent file is journaled only where this run writes it without `safe_write`: the pack rtk copy. The
+        // sandbox policy and host configs are journaled by `safe_write` just before a write, so a file the update never
+        // writes is never recorded as created (undo would otherwise delete a file the user made later).
+        let may_create = file == rtk && rtk_needed;
         if !file.exists() && !may_create {
             continue;
         }
