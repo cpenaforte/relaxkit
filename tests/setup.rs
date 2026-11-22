@@ -513,6 +513,33 @@ fn an_unparsable_claude_config_is_left_alone_and_fails_the_run() {
 }
 
 #[test]
+fn a_listed_plugin_whose_cli_is_missing_gets_its_cli_installed_and_no_plugin_install() {
+    // R3-4: a listed unpinned plugin (caveman) whose CLI probe fails gets its non-plugin install steps again, which
+    // install the CLI. `claude plugin install` is never called, so the plugin's version does not move.
+    let scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    scratch.without("caveman");
+    scratch.clear_calls();
+
+    // The CLI stub does not come back from the npm stub, so the rerun may still exit non-zero; only the calls matter.
+    let _ = scratch.relaxkit().arg("setup").output().unwrap();
+
+    let calls = scratch.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.contains("install -g @caveman-ai/cli@")),
+        "the caveman CLI must be installed again: {calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.starts_with("claude plugin install")),
+        "no plugin install may run for a listed plugin: {calls:?}"
+    );
+}
+
+#[test]
 fn a_repair_never_moves_a_listed_unpinned_plugin() {
     // R2-3: a repair for an unpinned plugin that is already listed reruns its configuration only. It never calls
     // `claude plugin install`, which would move the version it can see.

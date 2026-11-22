@@ -166,6 +166,15 @@ impl<'a> Engine<'a> {
         self.probed_binary(recipe, kind)
     }
 
+    /// Whether the recipe declares a probe for this host and that probe does not pass: its binary is missing or reports
+    /// no version. A recipe with no probe for the host is never treated as missing.
+    fn cli_missing(&self, recipe: &Recipe, kind: HostKind) -> Result<bool> {
+        if !recipe.probe.contains_key(&kind) {
+            return Ok(false);
+        }
+        Ok(self.probed_binary(recipe, kind)?.is_none())
+    }
+
     /// The probe's first word, when that binary is on the PATH: its name and the path it resolves to. A copy relaxkit
     /// installed in its bin directory counts too, because the engine's commands search that directory. Such a copy
     /// is probed by its full path, since the bare name is not on the PATH.
@@ -267,7 +276,7 @@ impl<'a> Engine<'a> {
         kind: HostKind,
         host: &dyn Host,
     ) -> Result<(String, Route)> {
-        let vars = self.run_steps(recipe, host)?;
+        let vars = self.run_steps(recipe, host, true)?;
         // A binary or npm tool records the version its binary reports after the steps ran, and that binary's route.
         // Only when nothing is reported does it fall back to the pin or the plugin rule.
         match self.binary_after_steps(recipe, kind)? {
@@ -300,6 +309,12 @@ impl<'a> Engine<'a> {
             _ => None,
         };
         if let Some((version, route)) = listed {
+            // A listed plugin whose CLI probe fails gets its non-plugin steps again, which install the CLI (ruling R3-4).
+            if self.cli_missing(recipe, kind)? {
+                self.run_steps(recipe, host.as_ref(), false)?;
+                self.record(recipe, &[(kind, version.clone(), route)])?;
+                return Ok(Outcome::Installed { version });
+            }
             self.run_config_steps(recipe, host.as_ref())?;
             self.record(recipe, &[(kind, version.clone(), route.clone())])?;
             return Ok(Outcome::Adopted { version, route });
@@ -423,7 +438,9 @@ impl<'a> Engine<'a> {
         Ok(vars)
     }
 
-    fn run_steps(&self, recipe: &Recipe, host: &dyn Host) -> Result<Vars> {
+    /// Runs the install steps in order. `with_plugins` false skips every plugin step: a repair of a listed plugin
+    /// re-runs its CLI and its other steps, and never moves the plugin (ruling R3-4).
+    fn run_steps(&self, recipe: &Recipe, host: &dyn Host, with_plugins: bool) -> Result<Vars> {
         let kind = host.info().kind;
         let steps: &[Step] = recipe.install.get(&kind).map(Vec::as_slice).unwrap_or(&[]);
         if recipe.id == "rtk" {
@@ -442,8 +459,10 @@ impl<'a> Engine<'a> {
                 }
                 Step::Mcp { name, argv } => self.add_mcp(recipe, host, name, argv, &vars)?,
                 Step::Plugin { spec } => {
-                    let spec = expand_one(recipe, spec, &vars)?;
-                    host.plugin_install(self.ctx, &spec)?;
+                    if with_plugins {
+                        let spec = expand_one(recipe, spec, &vars)?;
+                        host.plugin_install(self.ctx, &spec)?;
+                    }
                 }
                 Step::Handler { name } => {
                     let run = handler(name).ok_or_else(|| {
