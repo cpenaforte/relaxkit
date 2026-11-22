@@ -151,10 +151,7 @@ fn formula_render_refuses_a_missing_checksum() {
 
 #[test]
 fn release_workflow_is_yaml_and_publishes_only_after_signing() {
-    if !has_ruby() {
-        eprintln!("ruby is not installed: the release.yml YAML check is skipped");
-        return;
-    }
+    assert!(has_ruby(), "ruby is required for the release.yml check");
     let path = repo_root().join(".github/workflows/release.yml");
     // Psych (Ruby's YAML) reads the bare key `on` as the boolean true, so the trigger may come back under "true".
     let out = Command::new("ruby")
