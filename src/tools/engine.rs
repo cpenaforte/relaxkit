@@ -287,6 +287,17 @@ impl<'a> Engine<'a> {
         };
         let steps = recipe.install.get(&kind).cloned().unwrap_or_default();
         self.preflight_steps(recipe, kind, &steps)?;
+        // An unpinned plugin that is already listed keeps the version it has: only its configuration runs again, and
+        // `claude plugin install` is never called, because it would move the version (ruling R2-3).
+        let listed = match plugin_spec(recipe, kind) {
+            Some(spec) if !spec.contains("{version}") => self.detect(recipe, host.as_ref())?,
+            _ => None,
+        };
+        if let Some((version, route)) = listed {
+            self.run_config_steps(recipe, host.as_ref())?;
+            self.record(recipe, &[(kind, version.clone(), route.clone())])?;
+            return Ok(Outcome::Adopted { version, route });
+        }
         // rtk is always the latest release (owner's exception, ruling R2-2), so its repair installs that release even
         // when rtk is already on the PATH, and the release tag is what the lock records.
         let latest = if recipe.id == "rtk" {

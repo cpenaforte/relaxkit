@@ -332,21 +332,45 @@ fn verify_step(
             repairs.push(repair);
         }
     }
+    // The locked versions as they were before the repairs, for the repair lines (a repair rewrites the lock).
+    let locked_before = Lockfile::load(ctx)?;
+    let locked_version = |id: &str| {
+        locked_before
+            .as_ref()
+            .and_then(|lock| lock.tools.get(id))
+            .map(|tool| tool.version.clone())
+            .unwrap_or_else(|| "unlocked".to_string())
+    };
     for repair in &repairs {
         match repair {
             Repair::Reinstall(id, kind) => {
                 let Some(recipe) = engine.recipes.iter().find(|recipe| &recipe.id == id) else {
                     continue;
                 };
+                let locked = locked_version(id);
                 match engine.reinstall(recipe, *kind) {
+                    Ok(Outcome::Installed { version }) if id == "rtk" => report.say(
+                        ctx,
+                        "verify",
+                        format!("repaired {id} on {kind}: installed the latest release {version}"),
+                    ),
                     Ok(Outcome::Installed { version }) => report.say(
                         ctx,
                         "verify",
+                        format!("repaired {id} on {kind}: installed {version}, locked at {locked}"),
+                    ),
+                    Ok(Outcome::Adopted { version, .. }) => report.say(
+                        ctx,
+                        "verify",
                         format!(
-                            "repaired {id} on {kind}: reinstalled {version} and configured it again"
+                            "repaired {id} on {kind}: {version} is already installed, so only its configuration ran again (locked at {locked})"
                         ),
                     ),
-                    Ok(_) => {}
+                    Ok(Outcome::Skipped { reason }) => report.say(
+                        ctx,
+                        "verify",
+                        format!("could not repair {id} on {kind}: {reason}"),
+                    ),
                     Err(err) => report.say(
                         ctx,
                         "verify",

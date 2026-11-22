@@ -490,3 +490,29 @@ fn setup_readds_a_missing_mcp_entry_through_the_host_step() {
     let state = fs::read_to_string(scratch.home().join(".claude.json")).unwrap();
     assert!(state.contains("\"serena\""), "{state}");
 }
+
+#[test]
+fn a_repair_never_moves_a_listed_unpinned_plugin() {
+    // R2-3: a repair for an unpinned plugin that is already listed reruns its configuration only. It never calls
+    // `claude plugin install`, which would move the version it can see.
+    let mut scratch = Scratch::claude_only();
+    scratch.relaxkit().arg("setup").assert().success();
+    scratch.clear_calls();
+    // The first `claude plugin list` of the rerun is claude-md-management's probe, which is the one that fails.
+    scratch.fail_once("claude plugin list");
+
+    let output = scratch.relaxkit().arg("setup").assert().success();
+
+    let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    assert!(
+        text.contains("repaired claude-md-management on claude"),
+        "{text}"
+    );
+    let calls = scratch.calls();
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.starts_with("claude plugin install")),
+        "{calls:?}"
+    );
+}
