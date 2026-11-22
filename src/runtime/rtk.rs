@@ -109,7 +109,7 @@ fn install_latest(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<()> {
 }
 
 /// A release tag made of letters, digits and `.`, `-`, `_`, `+` only, so it cannot change the download path.
-fn tag_is_plain(tag: &str) -> bool {
+pub(crate) fn tag_is_plain(tag: &str) -> bool {
     !tag.is_empty()
         && tag
             .chars()

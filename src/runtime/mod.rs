@@ -1,5 +1,6 @@
 //! Runtimes relaxkit installs for itself. Task 10 adds nvm and Node; Task 11 adds uv, gh and Chromium.
 
+pub mod caveman;
 pub mod chromium;
 pub mod gh;
 pub mod nvm;

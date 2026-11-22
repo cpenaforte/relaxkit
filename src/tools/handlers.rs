@@ -12,6 +12,7 @@ use crate::config_apply::claude::{apply_rtk_hook, link_pack_rtk};
 use crate::exec::{Cmd, Output};
 use crate::host::{Host, HostKind};
 use crate::recipe::{Recipe, Step, Vars, VersionSource};
+use crate::runtime::caveman as caveman_rt;
 use crate::runtime::chromium;
 use crate::runtime::utf8;
 use crate::tools::detect::plugin_name;
@@ -72,15 +73,23 @@ fn caveman_cli(
     engine.run_checked(host, &cmd)
 }
 
-/// Copies caveman's OpenCode files and writes the V2 `plugins` entry (K31). It never runs `caveman --only opencode`,
-/// which writes the V1 key. The source location is not confirmed yet, so this stops with a named error.
+/// Fetches caveman's repository at its latest tag (owner decision, spec section 11), copies its OpenCode files, and
+/// writes the V2 `plugins` entry. It never runs caveman's `install.js`, which writes the V1 key. A dry run fetches nothing.
 fn caveman_opencode(
     engine: &Engine<'_>,
     _recipe: &Recipe,
     host: &dyn Host,
     _vars: &mut Vars,
 ) -> Result<()> {
-    let source = caveman::opencode_source_root(engine.ctx)?;
+    if engine.ctx.dry_run {
+        engine
+            .ctx
+            .out
+            .info("would copy caveman's OpenCode files from its latest tag");
+        return Ok(());
+    }
+    let source = caveman_rt::fetch_latest_source(engine.ctx, engine.run)
+        .context("caveman_opencode: cannot fetch caveman's latest tag")?;
     caveman::install_opencode_files(engine.ctx, engine.run, host, &source)
 }
 
