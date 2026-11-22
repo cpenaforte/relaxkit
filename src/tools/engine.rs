@@ -134,6 +134,13 @@ impl<'a> Engine<'a> {
                 recipe.id
             );
         }
+        // Every installed host is checked before the first host runs a step, so an unsupported handler on one host
+        // stops the install on all of them.
+        for &kind in &recipe.hosts {
+            if self.hosts.iter().any(|host| host.info().kind == kind) {
+                self.preflight(recipe, kind)?;
+            }
+        }
         let mut outcomes = Vec::new();
         let mut rows: Vec<(HostKind, String, Route)> = Vec::new();
         for &kind in &recipe.hosts {
@@ -410,7 +417,7 @@ mod tests {
     use crate::host::claude::ClaudeHost;
     use crate::host::opencode::OpencodeHost;
     use crate::net::FakeNet;
-    use crate::recipe::{load_all, parse_recipe};
+    use crate::recipe::parse_recipe;
     use crate::runtime::nvm::npx_bin;
     use crate::runtime::testing::{Recorder, ctx_with};
     use crate::state::lockfile::{LockedTool, Lockfile};
@@ -540,15 +547,11 @@ exec = ["caveman", "telemetry", "off"]
     #[test]
     fn existing_install_is_adopted_not_reinstalled() {
         let root = tempfile::tempdir().unwrap();
-        let rtk = load_all()
-            .unwrap()
-            .into_iter()
-            .find(|r| r.id == "rtk")
-            .unwrap();
+        let recipe = fixture(EXEC_FIXTURE);
         let runner = Recorder::new(
             FakeRunner::new()
-                .with_program("rtk", Path::new("/opt/homebrew/bin/rtk"))
-                .reply("rtk --version", Output::ok("rtk 1.2.1\n")),
+                .with_program("fixture-pkg", Path::new("/opt/homebrew/bin/fixture-pkg"))
+                .reply("fixture-pkg --version", Output::ok("fixture-pkg 1.2.3\n")),
         );
         let ctx = ctx_with(root.path(), &runner, FakeNet::new());
         let hosts = vec![claude(root.path(), "2.1.330")];
@@ -556,21 +559,21 @@ exec = ["caveman", "telemetry", "off"]
         let recipes = vec![];
         let eng = engine(&ctx, &hosts, &recipes, &node);
 
-        let outcomes = eng.install(&rtk).unwrap();
+        let outcomes = eng.install(&recipe).unwrap();
 
         assert_eq!(
             outcomes[0],
             (
                 HostKind::Claude,
                 Outcome::Adopted {
-                    version: "1.2.1".to_string(),
+                    version: "1.2.3".to_string(),
                     route: Route::Brew
                 }
             )
         );
-        assert_eq!(runner.lines(), vec!["rtk --version".to_string()]);
+        assert_eq!(runner.lines(), vec!["fixture-pkg --version".to_string()]);
         let lock = Lockfile::load(&ctx).unwrap().unwrap();
-        assert_eq!(lock.tools["rtk"].route, "brew");
+        assert_eq!(lock.tools["fixture"].route, "brew");
     }
 
     #[test]
@@ -685,6 +688,51 @@ exec = ["caveman", "telemetry", "off"]
             .position(|a| a == "--env")
             .expect("an --env flag");
         assert_eq!(argv[flag + 1], expected, "{argv:?}");
+    }
+
+    #[test]
+    fn an_unsupported_handler_on_one_host_runs_nothing_on_either_host() {
+        let root = tempfile::tempdir().unwrap();
+        let text = r#"
+id = "fixture"
+title = "Fixture"
+kind = "npm"
+hosts = ["claude", "opencode"]
+needs_login = false
+telemetry_default_off = true
+
+[version]
+npm = "fixture-pkg"
+pin = "1.2.3"
+
+[minimum_host]
+claude = "2.1.330"
+opencode = "2.2.6"
+
+[probe.claude]
+argv = ["fixture-pkg", "--help"]
+
+[probe.opencode]
+argv = ["fixture-pkg", "--help"]
+
+[[install.claude]]
+exec = ["fixture-pkg", "install"]
+
+[[install.opencode]]
+handler = "rtk_claude_hook"
+"#;
+        let recipe = fixture(text);
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let hosts = vec![claude(root.path(), "2.1.330"), opencode(root.path())];
+        let node = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node);
+
+        let err = eng.install(&recipe).unwrap_err();
+
+        assert!(format!("{err:#}").contains("rtk_claude_hook"), "{err:#}");
+        assert!(runner.lines().is_empty(), "{:?}", runner.lines());
     }
 
     #[test]
