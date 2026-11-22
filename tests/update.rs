@@ -1152,6 +1152,57 @@ fn rtk_is_not_touched_while_a_host_is_below_its_minimum() {
 }
 
 #[test]
+fn a_claude_update_in_the_real_listing_shape_succeeds_and_moves_the_lock() {
+    // `claude plugin list` prints the version on the line under the name (verified 2026-11-22). The update must read it
+    // and succeed: no rollback, the lock moves to the version the listing now shows.
+    let fx = Fixture::new();
+    let version = Arc::new(Mutex::new("7.0.2-22f0b463e7a5".to_string()));
+    let listed = version.clone();
+    fx.shell
+        .on("claude plugin marketplace update", Output::ok(""));
+    fx.shell.answer(
+        "claude plugin list",
+        Arc::new(move |_| {
+            Output::ok(&format!(
+                "Installed plugins:\n\n  \u{276f} superpowers@anthropic-plugin-directory\n    Version: {}\n    Scope: user\n    Status: \u{2714} enabled\n",
+                listed.lock().unwrap()
+            ))
+        }),
+    );
+    fx.shell
+        .on("claude plugin update superpowers@", Output::ok(""));
+    let moved = version.clone();
+    fx.shell.effect(
+        "claude plugin update superpowers@",
+        Arc::new(move |_| *moved.lock().unwrap() = "7.0.3-9a1c2d3e4f50".to_string()),
+    );
+    fx.lock(&[(
+        "superpowers",
+        "7.0.2-22f0b463e7a5",
+        "claude-plugin:anthropic-plugin-directory",
+        &["claude"],
+    )]);
+    fx.serve(
+        "https://api.github.com/repos/obra/superpowers/releases/latest",
+        r#"{"tag_name":"v7.0.3"}"#,
+    );
+
+    let report = fx.run(false, Some("superpowers")).unwrap();
+
+    assert!(
+        matches!(row(&report, "superpowers").result, RowResult::Updated),
+        "{:?}",
+        row(&report, "superpowers")
+    );
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert!(report.restart.contains(&HostKind::Claude), "{report:?}");
+    assert_eq!(
+        fx.read_lock().tools["superpowers"].version,
+        "7.0.3-9a1c2d3e4f50"
+    );
+}
+
+#[test]
 fn report_ends_with_the_restart_list() {
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);

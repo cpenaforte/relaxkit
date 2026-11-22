@@ -49,25 +49,39 @@ pub fn claude_paths(home: &Path, config_dir: Option<&OsStr>) -> (PathBuf, PathBu
     }
 }
 
-/// Parses `claude plugin list`: one line per plugin, `name@marketplace` followed by `Version: x`.
-/// Lines without an `@` (the header, a "no plugins" notice) are skipped.
+/// Parses `claude plugin list`. A plugin's name line is `name@marketplace`, optionally followed on the same line by
+/// `Version: x`. The real listing puts `Version: x` on the line under the name, so a version is also read from the
+/// block lines after a name line, up to the next name line. Lines without an `@` (the header, a "no plugins" notice,
+/// the other fields of a block) are skipped.
 pub fn parse_plugin_list(text: &str) -> Vec<InstalledPlugin> {
-    text.lines()
-        .filter_map(|line| {
-            let body = line.trim().trim_start_matches('\u{276f}').trim();
-            let spec = body.split_whitespace().next()?;
-            let (name, marketplace) = spec.split_once('@')?;
-            let version = body
-                .split_once("Version:")
-                .and_then(|(_, rest)| rest.split_whitespace().next())
-                .map(String::from);
-            Some(InstalledPlugin {
+    let mut plugins: Vec<InstalledPlugin> = Vec::new();
+    for line in text.lines() {
+        let body = line.trim().trim_start_matches('\u{276f}').trim();
+        let name_line = body
+            .split_whitespace()
+            .next()
+            .and_then(|spec| spec.split_once('@'));
+        if let Some((name, marketplace)) = name_line {
+            plugins.push(InstalledPlugin {
                 name: name.to_string(),
                 marketplace: Some(marketplace.to_string()),
-                version,
-            })
-        })
-        .collect()
+                version: version_in(body),
+            });
+        } else if let Some(plugin) = plugins.last_mut()
+            && plugin.version.is_none()
+        {
+            // A `Version:` line belongs to the plugin whose name line came before it.
+            plugin.version = version_in(body);
+        }
+    }
+    plugins
+}
+
+/// The text after `Version:` on a line, up to the next whitespace.
+fn version_in(body: &str) -> Option<String> {
+    body.split_once("Version:")
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .map(String::from)
 }
 
 impl Host for ClaudeHost {
@@ -167,6 +181,36 @@ mod tests {
     use super::*;
     use crate::exec::{FakeRunner, Output};
     use crate::host::HostKind;
+
+    #[test]
+    fn a_version_on_the_line_under_the_name_is_read() {
+        // The real `claude plugin list` shape: the version is on its own line under the name line (verified 2026-11-22).
+        let text = "Installed plugins:\n\n  \u{276f} superpowers@anthropic-plugin-directory\n    Version: 7.0.2-22f0b463e7a5\n    Scope: user\n    Status: \u{2714} enabled\n";
+        let plugins = parse_plugin_list(text);
+        assert_eq!(plugins.len(), 1, "{plugins:?}");
+        assert_eq!(plugins[0].name, "superpowers");
+        assert_eq!(
+            plugins[0].marketplace.as_deref(),
+            Some("anthropic-plugin-directory")
+        );
+        assert_eq!(plugins[0].version.as_deref(), Some("7.0.2-22f0b463e7a5"));
+    }
+
+    #[test]
+    fn a_version_on_the_name_line_is_still_read() {
+        let plugins = parse_plugin_list("superpowers@anthropic-plugin-directory  Version: 7.0.2\n");
+        assert_eq!(plugins[0].version.as_deref(), Some("7.0.2"));
+    }
+
+    #[test]
+    fn a_version_is_read_from_its_own_plugin_block_only() {
+        // The second block has no Version line, so it must not borrow the first block's version.
+        let text = "superpowers@one\n    Version: 7.0.2\nsuperpowers@two\n    Scope: user\n";
+        let plugins = parse_plugin_list(text);
+        assert_eq!(plugins.len(), 2);
+        assert_eq!(plugins[0].version.as_deref(), Some("7.0.2"));
+        assert_eq!(plugins[1].version, None);
+    }
     use crate::host::testing::Writing;
     use crate::net::FakeNet;
 
