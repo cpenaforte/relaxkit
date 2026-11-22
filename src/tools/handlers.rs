@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
-use crate::config_apply::claude::apply_rtk_hook;
+use crate::config_apply::claude::{apply_rtk_hook, link_pack_rtk};
 use crate::exec::{Cmd, Output};
 use crate::host::{Host, HostKind};
 use crate::recipe::{Recipe, Step, Vars, VersionSource};
@@ -206,6 +206,8 @@ fn rtk_claude_hook(
             host.info().kind
         );
     }
+    // The hook names the pack's rtk path, so that path must resolve first. This covers an adopted rtk and an install.
+    link_pack_rtk(engine.ctx)?;
     apply_rtk_hook(engine.ctx, engine.run, host)
 }
 

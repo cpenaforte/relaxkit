@@ -106,6 +106,47 @@ pub fn apply_roles(ctx: &Ctx, run: &RunId, host: &dyn Host, config: &KitConfig) 
     write_if_changed(ctx, run, &path, &old, &text)
 }
 
+/// Makes the pack's rtk path resolve for the hook. An adopted rtk lives elsewhere on the PATH, so a symbolic link
+/// at `dirs.bin/rtk` points at that entry as found on the PATH, not canonicalized, so an upgrade is followed. A copy
+/// already there, or a link pointing elsewhere, is left alone and reported. A dry run changes nothing.
+pub fn link_pack_rtk(ctx: &Ctx) -> Result<()> {
+    let Some(found) = ctx.runner.which("rtk") else {
+        return Ok(());
+    };
+    let link = ctx.dirs.bin.join("rtk");
+    match link.symlink_metadata() {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            let target = fs::read_link(&link)
+                .with_context(|| format!("cannot read the link {}", link.display()))?;
+            if target != found {
+                ctx.out.warn(&format!(
+                    "{} points at {}, not at the rtk on the PATH ({}); left as it is",
+                    link.display(),
+                    target.display(),
+                    found.display()
+                ));
+            }
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if ctx.dry_run {
+                ctx.out.info(&format!(
+                    "would link {} to {}",
+                    link.display(),
+                    found.display()
+                ));
+                return Ok(());
+            }
+            fs::create_dir_all(&ctx.dirs.bin)
+                .with_context(|| format!("cannot create {}", ctx.dirs.bin.display()))?;
+            std::os::unix::fs::symlink(&found, &link)
+                .with_context(|| format!("cannot link {} to {}", link.display(), found.display()))
+        }
+        Err(err) => Err(err).with_context(|| format!("cannot inspect {}", link.display())),
+    }
+}
+
 /// Writes rtk's Claude Code hook (spike A C6): a `PreToolUse` command for the `Bash` tool that runs the pack's rtk
 /// copy by its absolute, quoted path (spec 4, item 5: hooks point at a fixed path in relaxkit's directory).
 /// `rtk init -g` does not write it non-interactively. Other hooks are kept, and a second run changes nothing.
@@ -427,6 +468,106 @@ mod tests {
         );
         assert!(!command.starts_with("rtk"), "{command}");
         assert!(command.ends_with(" hook claude"), "{command}");
+    }
+
+    fn write_file(path: &Path, text: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    fn pack_rtk(root: &Path) -> PathBuf {
+        root.join(".local/share/relaxkit/bin/rtk")
+    }
+
+    #[test]
+    fn pack_link_points_at_the_path_rtk_when_no_pack_copy_exists() {
+        let root = tempfile::tempdir().unwrap();
+        let found = root.path().join("homebrew/bin/rtk");
+        write_file(&found, "#!/bin/sh\n");
+        let ctx = Ctx::for_test(
+            root.path(),
+            FakeRunner::new().with_program("rtk", &found),
+            FakeNet::new(),
+        );
+
+        link_pack_rtk(&ctx).unwrap();
+
+        let link = pack_rtk(root.path());
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&link).unwrap(), found, "not canonicalized");
+        assert!(fs::metadata(&link).is_ok(), "the link must resolve");
+    }
+
+    #[test]
+    fn pack_link_is_not_created_on_a_dry_run() {
+        let root = tempfile::tempdir().unwrap();
+        let found = root.path().join("homebrew/bin/rtk");
+        write_file(&found, "#!/bin/sh\n");
+        let mut ctx = Ctx::for_test(
+            root.path(),
+            FakeRunner::new().with_program("rtk", &found),
+            FakeNet::new(),
+        );
+        ctx.dry_run = true;
+
+        link_pack_rtk(&ctx).unwrap();
+
+        assert!(pack_rtk(root.path()).symlink_metadata().is_err());
+    }
+
+    #[test]
+    fn pack_link_pointing_elsewhere_is_left_and_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let found = root.path().join("homebrew/bin/rtk");
+        let other = root.path().join("other/rtk");
+        write_file(&found, "#!/bin/sh\n");
+        write_file(&other, "#!/bin/sh\n");
+        let link = pack_rtk(root.path());
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+        let ctx = Ctx::for_test(
+            root.path(),
+            FakeRunner::new().with_program("rtk", &found),
+            FakeNet::new(),
+        );
+
+        link_pack_rtk(&ctx).unwrap();
+
+        assert_eq!(fs::read_link(&link).unwrap(), other);
+        assert!(
+            ctx.out.lines().iter().any(|line| line.contains("points")),
+            "{:?}",
+            ctx.out.lines()
+        );
+    }
+
+    #[test]
+    fn pack_link_is_not_made_over_an_existing_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let found = root.path().join("homebrew/bin/rtk");
+        write_file(&found, "#!/bin/sh\n");
+        let copy = pack_rtk(root.path());
+        write_file(&copy, "copy\n");
+        let ctx = Ctx::for_test(
+            root.path(),
+            FakeRunner::new().with_program("rtk", &found),
+            FakeNet::new(),
+        );
+
+        link_pack_rtk(&ctx).unwrap();
+
+        assert_eq!(fs::read_to_string(&copy).unwrap(), "copy\n");
+        assert!(!copy.symlink_metadata().unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn no_pack_link_without_rtk_on_the_path() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+
+        link_pack_rtk(&ctx).unwrap();
+
+        assert!(pack_rtk(root.path()).symlink_metadata().is_err());
     }
 
     #[test]

@@ -357,7 +357,12 @@ fn rtk_on_claude_runs_init_then_writes_the_hook_then_telemetry_off() {
 #[test]
 fn adopted_rtk_on_claude_still_gets_the_hook() {
     let rig = prepared();
-    rig.rec.with_program("rtk", "/usr/local/bin/rtk");
+    // Adopted: rtk lives on the PATH and the pack holds no copy, so the pack's link must make the hook target exist.
+    let bin_rtk = KitDirs::rooted(rig.root.path()).bin.join("rtk");
+    std::fs::remove_file(&bin_rtk).unwrap();
+    let found = rig.root.path().join("homebrew/bin/rtk");
+    write_executable(&found);
+    rig.rec.with_program("rtk", found.to_str().unwrap());
     rig.rec.reply("rtk --version", Output::ok("rtk 1.2.1\n"));
     let (result, calls) = install(&rig, "rtk", HostKind::Claude);
     assert!(result.is_ok(), "{result:?}");
@@ -375,6 +380,12 @@ fn adopted_rtk_on_claude_still_gets_the_hook() {
         pack_rtk_hook_command(&rig),
         "{settings}"
     );
+    assert_eq!(std::fs::read_link(&bin_rtk).unwrap(), found);
+    assert!(
+        std::fs::metadata(&bin_rtk).is_ok(),
+        "the hook target must exist"
+    );
+    assert_eq!(hook_command(&rig), pack_rtk_hook_command(&rig));
 }
 
 #[test]
