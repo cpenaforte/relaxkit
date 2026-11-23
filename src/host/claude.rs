@@ -10,6 +10,7 @@ use super::{
 };
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
+use crate::state::journal::{self, MarketplaceRecord};
 
 pub struct ClaudeHost {
     info: HostInfo,
@@ -158,7 +159,11 @@ impl Host for ClaudeHost {
         let cmd = Cmd::new("claude")
             .args(&["plugin", "marketplace", "add"])
             .arg(source);
-        run_edit(ctx, &self.edited_files(), &cmd)
+        run_edit(ctx, &self.edited_files(), &cmd)?;
+        if !ctx.dry_run {
+            record_added_marketplace(ctx, source)?;
+        }
+        Ok(())
     }
 
     fn marketplace_update(&self, ctx: &Ctx) -> Result<()> {
@@ -171,6 +176,42 @@ impl Host for ClaudeHost {
         files.push(self.instructions_file(ctx));
         files
     }
+}
+
+/// Journals the marketplace `source` was added as, under the name Claude lists it by, so undo can name it. A source that
+/// the listing does not show under a name is not journaled, and a listing that fails journals nothing.
+fn record_added_marketplace(ctx: &Ctx, source: &str) -> Result<()> {
+    let listing = match ctx
+        .runner
+        .run(&Cmd::new("claude").args(&["plugin", "marketplace", "list"]))
+    {
+        Ok(out) if out.code == 0 => out.stdout,
+        _ => return Ok(()),
+    };
+    let Some(name) = marketplace_name(&listing, source) else {
+        return Ok(());
+    };
+    let record = MarketplaceRecord {
+        run: ctx.run.clone(),
+        name,
+        group: ctx.group.clone(),
+    };
+    journal::append_marketplace(&ctx.dirs, &record)
+}
+
+/// The name `claude plugin marketplace list` shows for a marketplace, found by the source the listing prints on the
+/// line under it. `❯ caveman` followed by `Source: GitHub (JuliusBrussee/caveman)` names `caveman` for that source.
+fn marketplace_name(listing: &str, source: &str) -> Option<String> {
+    let mut name = None;
+    for line in listing.lines() {
+        let trimmed = line.trim();
+        if let Some(listed) = trimmed.strip_prefix("❯ ") {
+            name = Some(listed.trim().to_string());
+        } else if trimmed.starts_with("Source:") && trimmed.contains(source) {
+            return name;
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -309,10 +350,30 @@ mod tests {
             fake.calls(),
             vec![
                 "claude plugin marketplace add JuliusBrussee/caveman",
+                "claude plugin marketplace list",
                 "claude plugin install caveman@caveman",
                 "claude plugin update caveman@caveman",
             ]
         );
+    }
+
+    #[test]
+    fn a_marketplace_add_journals_the_name_claude_lists_it_under() {
+        let root = tempfile::tempdir().unwrap();
+        let listing = "Configured marketplaces:\n\n  \u{276f} caveman\n    Source: GitHub (JuliusBrussee/caveman)\n";
+        let fake = FakeRunner::new()
+            .reply("claude plugin marketplace list", Output::ok(listing))
+            .reply("claude plugin marketplace add", Output::ok(""));
+        let c = ctx(root.path(), &fake);
+
+        host(root.path())
+            .marketplace_add(&c, "JuliusBrussee/caveman")
+            .unwrap();
+
+        let records = crate::state::journal::read_marketplaces(&c.dirs).unwrap();
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!(records[0].name, "caveman");
+        assert_eq!(records[0].run, c.run);
     }
 
     #[test]
@@ -423,5 +484,19 @@ mod tests {
             fs::read_to_string(&state).unwrap().contains("\"old\""),
             "the old serena entry was lost"
         );
+    }
+
+    #[test]
+    fn a_marketplace_is_named_by_its_source_in_the_listing() {
+        let listing = "Configured marketplaces:\n\n  \u{276f} anthropic-plugin-directory\n    Source: Built in (Anthropic Directory)\n\n  \u{276f} caveman\n    Source: GitHub (JuliusBrussee/caveman)\n\n  \u{276f} relaxkit\n    Source: GitHub (cpenaforte/relaxkit)\n";
+        assert_eq!(
+            marketplace_name(listing, "JuliusBrussee/caveman").as_deref(),
+            Some("caveman")
+        );
+        assert_eq!(
+            marketplace_name(listing, "cpenaforte/relaxkit").as_deref(),
+            Some("relaxkit")
+        );
+        assert_eq!(marketplace_name(listing, "example/absent"), None);
     }
 }

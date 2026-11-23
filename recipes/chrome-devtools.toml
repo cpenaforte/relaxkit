@@ -9,7 +9,6 @@ requires = ["playwright"]
 
 [version]
 npm = "chrome-devtools-mcp"
-pin = "1.13.0"
 
 [env]
 CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS = "1"

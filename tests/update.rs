@@ -309,16 +309,30 @@ fn check_reports_installed_and_newest_and_changes_nothing() {
         "https://api.github.com/repos/obra/superpowers/releases/latest",
         r#"{"tag_name":"v7.0.2"}"#,
     );
+    // The check reads the Claude host's listing: superpowers is installed at the version the lock records.
+    fx.shell.on(
+        "claude plugin list",
+        Output::ok(
+            "Installed plugins:\n\n  \u{276f} superpowers@anthropic-plugin-directory\n    Version: 7.0.2-22f0b463e7a5\n    Scope: user\n    Status: \u{2714} enabled\n",
+        ),
+    );
     // No runner answer and no served registry for rtk: its row is "newest unknown", not a failure of the run (K70).
     let before = tree(fx.root());
 
     let report = fx.run(true, None).unwrap();
 
-    assert!(
-        fx.shell.cmds().is_empty(),
-        "a check ran {:?}",
-        fx.shell.lines()
-    );
+    // A check reads each host's plugin list or version, as status does, and runs nothing that changes it.
+    let changing: Vec<String> = fx
+        .shell
+        .lines()
+        .into_iter()
+        .filter(|line| {
+            !["list", "--version", "status"]
+                .iter()
+                .any(|word| line.contains(word))
+        })
+        .collect();
+    assert!(changing.is_empty(), "a check ran {changing:?}");
     assert_eq!(tree(fx.root()), before, "a check changed a file");
     let playwright = row(&report, "playwright");
     assert_eq!(playwright.installed.as_deref(), Some("0.0.86"));
@@ -508,6 +522,45 @@ fn each_tool_updates_by_its_own_route() {
     assert_eq!(lock.tools["ccusage"].version, "20.0.52");
     assert_eq!(lock.tools["playwright"].route, "npm");
     assert_eq!(lock.tools["serena"].route, "uv");
+}
+
+#[test]
+fn a_host_behind_the_locked_version_is_not_called_current() {
+    // The lock says caveman 4.2.0 on OpenCode, but the CLI relaxkit installed there is 4.1.0. The check must read what
+    // is installed (as status does), so the row is available, not current.
+    let mut fx = Fixture::new();
+    let config = fx.root().join(".config/opencode/opencode.jsonc");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "{\"plugins\": [\"./plugins/caveman\"]}\n").unwrap();
+    let cli = fx
+        .root()
+        .join(".local/share/relaxkit/node/lib/node_modules/@caveman-ai/cli");
+    fs::create_dir_all(&cli).unwrap();
+    fs::write(
+        cli.join("package.json"),
+        "{\"name\": \"@caveman-ai/cli\", \"version\": \"4.1.0\"}",
+    )
+    .unwrap();
+    fx.hosts = vec![Box::new(OpencodeHost::new(
+        HostInfo {
+            kind: HostKind::Opencode,
+            binary: PathBuf::from("/usr/local/bin/opencode"),
+            version: "2.2.6".to_string(),
+        },
+        fx.root().join(".config/opencode"),
+    ))];
+    fx.lock(&[("caveman", "4.2.0", "npm", &["opencode"])]);
+    fx.serve(
+        "https://registry.npmjs.org/@caveman-ai%2fcli/latest",
+        r#"{"version":"4.2.0"}"#,
+    );
+
+    let report = fx.run(true, Some("caveman")).unwrap();
+
+    let caveman = row(&report, "caveman");
+    assert_eq!(caveman.installed.as_deref(), Some("4.1.0"));
+    assert_eq!(caveman.newest.as_deref(), Some("4.2.0"));
+    assert_eq!(caveman.result, RowResult::Available);
 }
 
 #[test]
@@ -770,8 +823,8 @@ fn undo_puts_back_the_pack_rtk_link_an_update_removed() {
 
 #[test]
 fn repair_re_adds_the_mcp_entry_at_the_locked_version_not_the_pin() {
-    // The recipe pins Playwright 0.0.86, but the lock records 0.0.87 on this host. A repair puts back what the lock
-    // says (K67, OWNER-3), and the lock itself is not rewritten by a repair.
+    // The lock records Playwright 0.0.87 on this host. A repair puts back what the lock says (K67, OWNER-3), not the
+    // newest release, and the lock itself is not rewritten by a repair.
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.87", "npm", &["claude"])]);
     let before = fx.read_lock();
@@ -779,11 +832,7 @@ fn repair_re_adds_the_mcp_entry_at_the_locked_version_not_the_pin() {
     fx.shell.on("claude mcp add", Output::ok(""));
     let recipes = relaxkit::recipe::load_all().unwrap();
     let playwright = recipes.iter().find(|r| r.id == "playwright").unwrap();
-    assert_eq!(
-        playwright.pin.as_deref(),
-        Some("0.0.86"),
-        "the fixture expects the 0.0.86 pin"
-    );
+    assert_eq!(playwright.pin, None, "a recipe file names no pin");
     let ctx = fx.ctx();
     let node = relaxkit::runtime::nvm::current_node(&ctx).unwrap();
     let engine = Engine {
@@ -807,7 +856,7 @@ fn repair_re_adds_the_mcp_entry_at_the_locked_version_not_the_pin() {
 }
 
 #[test]
-fn a_repair_of_an_unversioned_cli_installs_the_recipe_pin_not_the_placeholder() {
+fn a_repair_of_an_unversioned_cli_installs_the_newest_release_not_the_placeholder() {
     // The lock records caveman as unversioned and its CLI is missing, so the repair installs the CLI. It must use the
     // recipe's pin (4.1.0), never the placeholder word `unversioned` (K ruling T8-4, F4-4).
     let fx = Fixture::new();
@@ -821,6 +870,11 @@ fn a_repair_of_an_unversioned_cli_installs_the_recipe_pin_not_the_placeholder() 
     fx.shell.on(
         &format!("{npm} install -g @caveman-ai/cli@4.1.0"),
         Output::ok(""),
+    );
+    // Nothing exact is locked for the CLI, so the repair takes the newest release from the registry.
+    fx.serve(
+        "https://registry.npmjs.org/@caveman-ai%2fcli/latest",
+        r#"{"version":"4.1.0"}"#,
     );
     let recipes = relaxkit::recipe::load_all().unwrap();
     let caveman = recipes.iter().find(|r| r.id == "caveman").unwrap();
@@ -843,7 +897,7 @@ fn a_repair_of_an_unversioned_cli_installs_the_recipe_pin_not_the_placeholder() 
     );
     assert!(
         lines.iter().any(|l| l.contains("@caveman-ai/cli@4.1.0")),
-        "the CLI was not installed at the recipe pin: {lines:?}"
+        "the CLI was not installed at the newest release: {lines:?}"
     );
 }
 

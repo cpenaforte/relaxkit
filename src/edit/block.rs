@@ -1,34 +1,42 @@
 //! Marked text blocks. Only the lines between a relaxkit begin and end marker are ever changed.
 
-/// Inserts a block at the end of `text`, or replaces the body of the existing block `id`.
+/// Inserts a block at the end of `text`, or replaces the body of the existing block `id`. A text with no final newline
+/// stays that way: the block starts on a new line and ends without a newline, so removing it restores the text.
 pub fn block_upsert(text: &str, id: &str, body: &str) -> String {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
-    let block = render_block(id, body);
     match find_block(&lines, id) {
-        Some((start, stop)) => format!(
-            "{}{}{}",
-            lines[..start].concat(),
-            block,
-            lines[stop + 1..].concat()
-        ),
-        None => {
-            let mut out = text.to_string();
-            if !out.is_empty() && !out.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push_str(&block);
-            out
+        Some((start, stop)) => {
+            let block = render_block(id, body, ends_bare(&lines, stop));
+            format!(
+                "{}{}{}",
+                lines[..start].concat(),
+                block,
+                lines[stop + 1..].concat()
+            )
         }
+        None if text.is_empty() => render_block(id, body, false),
+        None if text.ends_with('\n') => format!("{text}{}", render_block(id, body, false)),
+        None => format!("{text}\n{}", render_block(id, body, true)),
     }
 }
 
-/// Removes the block `id`, including both markers. Text outside it is untouched.
+/// Removes the block `id`, including both markers. Text outside it is untouched, and so is the line break that
+/// `block_upsert` added before a block set on text without a final newline.
 pub fn block_remove(text: &str, id: &str) -> String {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
-    match find_block(&lines, id) {
-        Some((start, stop)) => format!("{}{}", lines[..start].concat(), lines[stop + 1..].concat()),
-        None => text.to_string(),
+    let Some((start, stop)) = find_block(&lines, id) else {
+        return text.to_string();
+    };
+    let mut before = lines[..start].concat();
+    if ends_bare(&lines, stop) && before.ends_with('\n') {
+        before.pop();
     }
+    format!("{}{}", before, lines[stop + 1..].concat())
+}
+
+/// Whether the block's end marker is the last line of the text and has no line break after it.
+fn ends_bare(lines: &[&str], stop: usize) -> bool {
+    stop + 1 == lines.len() && !lines[stop].ends_with('\n')
 }
 
 /// The body of block `id` without its trailing newline, or `None` when there is no block.
@@ -67,15 +75,17 @@ fn find_block(lines: &[&str], id: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// A full block, markers included, ending in a newline.
-fn render_block(id: &str, body: &str) -> String {
+/// A full block, markers included. It ends in a newline unless `bare` asks for none.
+fn render_block(id: &str, body: &str, bare: bool) -> String {
     let mut out = format!("{}\n", begin_marker(id));
     for line in body.lines() {
         out.push_str(line);
         out.push('\n');
     }
     out.push_str(&end_marker(id));
-    out.push('\n');
+    if !bare {
+        out.push('\n');
+    }
     out
 }
 
@@ -130,6 +140,22 @@ mod tests {
         let with_block = block_upsert(original, "core", "body");
         assert_eq!(block_remove(&with_block, "core"), original);
         assert_eq!(block_remove(original, "core"), original);
+    }
+
+    #[test]
+    fn a_block_set_on_text_without_a_final_newline_is_removed_exactly() {
+        let original = "# owner notes";
+        let with_block = block_upsert(original, "core", "body");
+        assert_eq!(block_remove(&with_block, "core"), original);
+    }
+
+    #[test]
+    fn replacing_the_body_keeps_a_block_without_a_final_newline() {
+        let original = "# owner notes";
+        let once = block_upsert(original, "core", "one");
+        let replaced = block_upsert(&once, "core", "two");
+        assert_eq!(block_get(&replaced, "core"), Some("two".to_string()));
+        assert_eq!(block_remove(&replaced, "core"), original);
     }
 
     #[test]

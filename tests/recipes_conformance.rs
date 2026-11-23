@@ -100,13 +100,42 @@ struct Rig {
     ctx: Ctx,
 }
 
+/// The registry's answers for the newest release of each tool that an install looks up.
+fn newest_releases() -> FakeNet {
+    FakeNet::new()
+        .with(
+            "https://api.github.com/repos/obra/superpowers/releases/latest",
+            r#"{"tag_name":"v7.0.2"}"#,
+        )
+        .with(
+            "https://registry.npmjs.org/@caveman-ai%2fcli/latest",
+            r#"{"version":"4.1.0"}"#,
+        )
+        .with(
+            "https://registry.npmjs.org/@playwright%2fmcp/latest",
+            r#"{"version":"0.0.86"}"#,
+        )
+        .with(
+            "https://registry.npmjs.org/chrome-devtools-mcp/latest",
+            r#"{"version":"1.13.0"}"#,
+        )
+        .with(
+            "https://registry.npmjs.org/ccusage/latest",
+            r#"{"version":"20.0.51"}"#,
+        )
+        .with(
+            "https://pypi.org/pypi/serena-agent/json",
+            r#"{"info":{"version":"2.1.0"}}"#,
+        )
+}
+
 fn rig() -> Rig {
     let root = tempfile::tempdir().unwrap();
     let rec = Recording::default();
     let ctx = Ctx {
         dirs: KitDirs::rooted(root.path()),
         runner: Box::new(rec.clone()),
-        net: Box::new(FakeNet::new()),
+        net: Box::new(newest_releases()),
         out: Reporter::capture(),
         dry_run: false,
         project: None,
@@ -448,6 +477,7 @@ fn caveman_on_claude_adds_the_marketplace_then_installs_the_cli_and_turns_teleme
                 "add",
                 "JuliusBrussee/caveman",
             ]),
+            tokens(&["claude", "plugin", "marketplace", "list"]),
             tokens(&["claude", "plugin", "install", "caveman@caveman"]),
             vec![
                 npm(&rig),

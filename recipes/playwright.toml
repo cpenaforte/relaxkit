@@ -9,7 +9,6 @@ telemetry_default_off = true
 
 [version]
 npm = "@playwright/mcp"
-pin = "0.0.86"
 
 [minimum_host]
 claude = "2.1.330"

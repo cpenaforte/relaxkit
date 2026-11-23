@@ -888,6 +888,21 @@ fn uninstall_keeps_a_claude_md_the_owner_wrote_byte_for_byte() {
 }
 
 #[test]
+fn uninstall_keeps_an_owner_claude_md_without_a_final_newline_byte_for_byte() {
+    // The owner's file has no final newline. Setup adds its block on a new line, and uninstall must leave the bytes
+    // exactly as the owner wrote them, with no newline added.
+    let scratch = Scratch::claude_only();
+    let owner = "# my notes\n\nkeep this line";
+    fs::create_dir_all(claude_md(scratch.home()).parent().unwrap()).unwrap();
+    fs::write(claude_md(scratch.home()), owner).unwrap();
+    scratch.relaxkit().arg("setup").assert().success();
+
+    scratch.relaxkit().arg("uninstall").assert().success();
+
+    assert_eq!(read(&claude_md(scratch.home())), owner);
+}
+
+#[test]
 fn a_second_uninstall_after_the_claude_md_is_gone_succeeds() {
     // Task 8: the file is already gone, so there is nothing to back up or remove.
     let scratch = Scratch::claude_only();
@@ -1316,7 +1331,7 @@ fn usage_passes_arguments_to_the_pinned_ccusage() {
 }
 
 #[test]
-fn usage_without_a_lock_uses_the_recipe_pin() {
+fn usage_without_a_lock_says_to_run_setup_and_runs_nothing() {
     let scratch = Scratch::new();
     link_node(&scratch);
 
@@ -1324,12 +1339,13 @@ fn usage_without_a_lock_uses_the_recipe_pin() {
         .relaxkit()
         .args(["usage", "daily"])
         .assert()
-        .success();
+        .failure()
+        .stderr(predicates::str::contains("not locked"));
 
     let calls = scratch.calls();
     assert!(
-        calls.iter().any(|c| c.contains("ccusage@20.0.51 daily")),
-        "{calls:?}"
+        !calls.iter().any(|c| c.contains("ccusage")),
+        "an unlocked ccusage ran: {calls:?}"
     );
 }
 

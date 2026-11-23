@@ -357,9 +357,26 @@ fn plan<'r>(
                     plan.note = Some(format!("{err:#}"));
                 }
                 Ok(newest) => {
-                    plan.needs = present
-                        .iter()
-                        .any(|kind| !at_newest(*kind, entry.version_for(kind.as_str()), &newest));
+                    let mut behind = false;
+                    let mut reported = Vec::new();
+                    for kind in &present {
+                        let Some(host) = hosts.iter().find(|host| host.info().kind == *kind) else {
+                            continue;
+                        };
+                        match host_behind(engine, recipe, host.as_ref(), entry, &newest) {
+                            Ok((text, is_behind)) => {
+                                behind |= is_behind;
+                                reported.push((*kind, text));
+                            }
+                            Err(err) => {
+                                plan.skip = Some(RowResult::NewestUnknown);
+                                plan.note = Some(format!("{err:#}"));
+                                return plan;
+                            }
+                        }
+                    }
+                    plan.installed = Some(reported_text(&reported));
+                    plan.needs = behind;
                     plan.newest = Some(newest);
                     if !plan.needs {
                         plan.skip = Some(RowResult::Current);
@@ -369,6 +386,47 @@ fn plan<'r>(
         }
     }
     plan
+}
+
+/// Whether one present host is behind the newest release, with the version it reports. The host's own read decides,
+/// the same read `status` makes, so a host with an older install is never called current because the lock says so.
+/// A host that reports no version is judged by its lock entry, since nothing else can be read for it.
+fn host_behind(
+    engine: &Engine<'_>,
+    recipe: &Recipe,
+    host: &dyn Host,
+    entry: &LockedTool,
+    newest: &str,
+) -> Result<(String, bool)> {
+    let kind = host.info().kind;
+    match engine.detect(recipe, host)? {
+        Some((version, _)) => {
+            let behind = !at_newest(kind, &version, newest);
+            Ok((version, behind))
+        }
+        None => {
+            let locked = entry.version_for(kind.as_str()).to_string();
+            let behind = !at_newest(kind, &locked, newest);
+            Ok((locked, behind))
+        }
+    }
+}
+
+/// The installed text for the report: one version when every host reports the same, otherwise each host's own.
+fn reported_text(reported: &[(HostKind, String)]) -> String {
+    let first = reported
+        .first()
+        .map(|(_, text)| text.clone())
+        .unwrap_or_default();
+    if reported.iter().all(|(_, text)| *text == first) {
+        first
+    } else {
+        reported
+            .iter()
+            .map(|(kind, text)| format!("{kind} {text}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 /// Whether a locked version is the newest release. A Claude Code listing version carries a build suffix after its

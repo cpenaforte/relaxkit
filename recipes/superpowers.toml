@@ -11,7 +11,6 @@ telemetry_default_off = true
 
 [version]
 github = "obra/superpowers"
-pin = "7.0.2"
 
 [env]
 SUPERPOWERS_DISABLE_TELEMETRY = "1"

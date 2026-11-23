@@ -200,11 +200,11 @@ argv = ["fixture", "--version"]
         }
     }
 
+    /// The fixture at the release it would install, as install and update set it.
     fn pinned_fixture() -> Recipe {
-        parse_recipe(&format!(
-            "{FIXTURE}\n[version]\nnpm = \"fixture-pkg\"\npin = \"9.9.9\"\n"
-        ))
-        .unwrap()
+        let recipe =
+            parse_recipe(&format!("{FIXTURE}\n[version]\nnpm = \"fixture-pkg\"\n")).unwrap();
+        crate::tools::update::pinned(&recipe, "9.9.9")
     }
 
     #[test]
@@ -245,7 +245,7 @@ argv = ["fixture", "--version"]
     #[test]
     fn version_placeholder_expands_to_the_pin_and_plugin_specs_follow_it() {
         let recipe = by_id("superpowers");
-        assert_eq!(recipe.pin.as_deref(), Some("7.0.2"));
+        assert_eq!(recipe.pin, None, "a recipe file sets no pin");
         let spec = recipe
             .install
             .get(&HostKind::Opencode)
@@ -256,6 +256,8 @@ argv = ["fixture", "--version"]
                 _ => None,
             })
             .unwrap();
+        assert!(recipe.expand(std::slice::from_ref(&spec), &vars()).is_err());
+        let recipe = crate::tools::update::pinned(&recipe, "7.0.2");
         let out = recipe.expand(&[spec], &vars()).unwrap();
         assert_eq!(
             out,
@@ -264,39 +266,40 @@ argv = ["fixture", "--version"]
     }
 
     #[test]
-    fn pin_is_required_with_a_source_and_rejected_without_one() {
-        let no_pin = format!("{FIXTURE}\n[version]\nnpm = \"x\"\n");
-        let err = parse_recipe(&no_pin).unwrap_err().to_string();
-        assert!(err.contains("pin"), "error was: {err}");
+    fn a_recipe_names_a_source_and_never_a_pin() {
+        let source = parse_recipe(&format!("{FIXTURE}\n[version]\nnpm = \"x\"\n")).unwrap();
+        assert_eq!(source.pin, None);
+        assert!(matches!(source.version, VersionSource::Npm { .. }));
 
         let pin_only = format!("{FIXTURE}\n[version]\npin = \"1.0.0\"\n");
         let err = parse_recipe(&pin_only).unwrap_err().to_string();
         assert!(err.contains("pin"), "error was: {err}");
 
-        let not_semver = format!("{FIXTURE}\n[version]\nnpm = \"x\"\npin = \"latest\"\n");
-        assert!(parse_recipe(&not_semver).is_err());
+        let pinned_source = format!("{FIXTURE}\n[version]\nnpm = \"x\"\npin = \"1.0.0\"\n");
+        let err = parse_recipe(&pinned_source).unwrap_err().to_string();
+        assert!(err.contains("pin"), "error was: {err}");
     }
 
     #[test]
-    fn every_recipe_pin_matches_the_table() {
-        let table: [(&str, Option<&str>); 9] = [
-            ("superpowers", Some("7.0.2")),
-            ("rtk", Some("1.2.1")),
-            ("caveman", Some("4.1.0")),
-            ("playwright", Some("0.0.86")),
-            ("chrome-devtools", Some("1.13.0")),
-            ("serena", Some("2.1.0")),
-            ("ccusage", Some("20.0.51")),
-            ("claude-md-management", None),
-            ("frontend-design", None),
+    fn no_recipe_pins_a_version_and_each_names_its_source() {
+        let table: [(&str, bool); 9] = [
+            ("superpowers", true),
+            ("rtk", true),
+            ("caveman", true),
+            ("playwright", true),
+            ("chrome-devtools", true),
+            ("serena", true),
+            ("ccusage", true),
+            ("claude-md-management", false),
+            ("frontend-design", false),
         ];
-        for (id, pin) in table {
+        for (id, has_source) in table {
             let recipe = by_id(id);
-            assert_eq!(recipe.pin.as_deref(), pin, "pin of {id}");
+            assert_eq!(recipe.pin, None, "a recipe file sets no pin: {id}");
             assert_eq!(
                 recipe.version != VersionSource::None,
-                pin.is_some(),
-                "source and pin disagree for {id}"
+                has_source,
+                "version source of {id}"
             );
         }
     }
