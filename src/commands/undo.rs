@@ -1,7 +1,7 @@
 //! `relaxkit undo [--run <group>]` (spec 6, ruling K104). Reverts the newest run group, or the named one: the files and
 //! link targets it journaled, and the lock as it was before the group (the lock is journaled before it changes, so its
-//! journal record holds that state). Host-registry state is not restored; the report says so and names the Claude
-//! plugin versions that moved (K86).
+//! journal record holds that state). Host-registry state is not restored; the report says so, names the Claude
+//! plugin versions that moved (K86), and names each Claude marketplace the group added with its removal command.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -73,7 +73,26 @@ pub fn run(ctx: &Ctx, group: Option<&str>) -> Result<Vec<String>> {
     for line in moved {
         lines.push(outcome(palette, Mark::Warn, &line));
     }
+    let marketplaces = journal::read_marketplaces(&ctx.dirs)?;
+    for line in marketplace_lines(&marketplaces, &target) {
+        lines.push(outcome(palette, Mark::Warn, &line));
+    }
     Ok(lines)
+}
+
+/// The report lines for the marketplaces a group added. Each stays registered, so the line names it and the command
+/// that removes it.
+fn marketplace_lines(records: &[journal::MarketplaceRecord], target: &RunId) -> Vec<String> {
+    records
+        .iter()
+        .filter(|record| record.group() == target)
+        .map(|record| {
+            format!(
+                "Claude marketplace {} was added by this run and stays registered; remove it with `claude plugin marketplace remove {}`",
+                record.name, record.name
+            )
+        })
+        .collect()
 }
 
 /// The lock snapshot a run took before it changed anything, when it has one.
@@ -158,6 +177,34 @@ mod tests {
         assert!(superpowers.contains("6.4.0"), "{superpowers}");
         let rtk = named.iter().find(|line| line.contains("rtk")).unwrap();
         assert!(rtk.contains("installed by this run"), "{rtk}");
+    }
+
+    #[test]
+    fn the_marketplaces_a_group_added_are_named_with_their_removal_command() {
+        let group = RunId::new();
+        let other = RunId::new();
+        let records = vec![
+            journal::MarketplaceRecord {
+                run: group.clone(),
+                name: "caveman".into(),
+                group: None,
+            },
+            journal::MarketplaceRecord {
+                run: other.clone(),
+                name: "neon".into(),
+                group: None,
+            },
+        ];
+
+        let lines = marketplace_lines(&records, &group);
+
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("caveman"), "{}", lines[0]);
+        assert!(
+            lines[0].contains("claude plugin marketplace remove caveman"),
+            "{}",
+            lines[0]
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! The install engine. For each tool and host it checks the host's version, detects an existing install (adopt,
-//! do not reinstall), runs the recipe's install steps at the pinned version, and records the result in the lock.
+//! do not reinstall), runs the recipe's install steps at the newest release of its source, and records the result in the lock.
 //! Install steps run in order and stop at the first failure. A tool whose steps fail is not locked.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,6 +23,36 @@ use crate::tools::detect::{Route, install_route, plugin_name, plugin_spec, uses_
 /// The version recorded for a tool that has no version source (a plugin that the host versions itself). Such a
 /// tool is not written to the lock, because the lock stores only exact versions.
 pub const UNVERSIONED: &str = "unversioned";
+
+/// The newest release of a recipe as the environment declares it, for the test harness, whose network is closed.
+/// `RELAXKIT_LATEST_OVERRIDE` holds `id=version` pairs separated by commas; a recipe listed there resolves without a
+/// registry lookup. No user sets it.
+fn declared_latest(id: &str) -> Option<String> {
+    let text = std::env::var("RELAXKIT_LATEST_OVERRIDE").ok()?;
+    text.split(',').find_map(|pair| {
+        let (name, version) = pair.split_once('=')?;
+        (name.trim() == id).then(|| version.trim().to_string())
+    })
+}
+
+/// The version of the npm package a recipe installs into relaxkit's node tree, read from the package's own
+/// `package.json`. `None` when the recipe has no npm source or the package is not installed there.
+fn npm_pack_version(ctx: &Ctx, recipe: &Recipe) -> Option<String> {
+    let VersionSource::Npm { package } = &recipe.version else {
+        return None;
+    };
+    let manifest = ctx
+        .dirs
+        .data
+        .join("node")
+        .join("lib")
+        .join("node_modules")
+        .join(package)
+        .join("package.json");
+    let text = std::fs::read_to_string(manifest).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    value.get("version")?.as_str().map(str::to_owned)
+}
 
 /// A named code path a recipe may run with a `handler` step. It receives the host and the variables that later
 /// steps expand with, so it can hand a value (a marketplace, a Chromium path) to them.
@@ -96,6 +126,10 @@ pub struct Engine<'a> {
 impl<'a> Engine<'a> {
     /// The newest release of the tool, from its version source, as a bare exact version.
     pub fn latest_version(&self, recipe: &Recipe) -> Result<String> {
+        if let Some(declared) = declared_latest(&recipe.id) {
+            check_version(&declared).with_context(|| format!("recipe `{}`", recipe.id))?;
+            return Ok(declared);
+        }
         let net: &dyn Net = self.ctx.net.as_ref();
         let raw = match &recipe.version {
             VersionSource::Github { repo } => github_latest_tag(net, repo)?,
@@ -106,6 +140,17 @@ impl<'a> Engine<'a> {
         let bare = raw.strip_prefix('v').unwrap_or(&raw).to_string();
         check_version(&bare).with_context(|| format!("recipe `{}`", recipe.id))?;
         Ok(bare)
+    }
+
+    /// The recipe with its pin set to the newest release of its version source. A recipe that names no source has no
+    /// release to take, so it is returned unchanged.
+    pub fn with_newest(&self, recipe: &Recipe) -> Result<Recipe> {
+        // rtk is always the latest release and its install looks that release up itself (ruling R2-2).
+        if recipe.id == "rtk" || matches!(recipe.version, VersionSource::None) {
+            return Ok(recipe.clone());
+        }
+        let newest = self.latest_version(recipe)?;
+        Ok(crate::tools::update::pinned(recipe, &newest))
     }
 
     /// An existing install of the tool on one host, with its version and route. `None` means install it.
@@ -150,11 +195,11 @@ impl<'a> Engine<'a> {
             else {
                 return Ok(None);
             };
-            // A pinned npm or binary tool keeps its pin when the config reports no version. Only a plugin spec with no
-            // pin of its own is left unversioned.
+            // A local plugin's config carries no version, so an npm tool reports the version its package has in
+            // relaxkit's node tree. That is what is installed, not what the recipe asked for.
             let version = found
                 .version
-                .or_else(|| recipe.pin.clone())
+                .or_else(|| npm_pack_version(self.ctx, recipe))
                 .unwrap_or_else(|| UNVERSIONED.to_string());
             let route = match recipe.kind {
                 Kind::Npm => Route::Npm,
@@ -243,6 +288,18 @@ impl<'a> Engine<'a> {
                 self.preflight_steps(recipe, *kind, &steps)?;
             }
         }
+        // A host that installs takes the newest release of the source, so the recipe is pinned to it before any host
+        // runs. Nothing is looked up when every host adopts or skips, so a re-run with the lock in place needs no network.
+        let newest;
+        let recipe = if planned
+            .iter()
+            .any(|(_, entry)| matches!(entry, Some((_, Plan::Install))))
+        {
+            newest = self.with_newest(recipe)?;
+            &newest
+        } else {
+            recipe
+        };
         let mut outcomes = Vec::new();
         let mut rows: Vec<(HostKind, String, Route)> = Vec::new();
         for (kind, entry) in planned {
@@ -549,15 +606,16 @@ impl<'a> Engine<'a> {
         if recipe.id == "rtk" {
             return Ok(recipe.clone());
         }
-        let Some(lock) = Lockfile::load(self.ctx)? else {
-            return Ok(recipe.clone());
-        };
-        match lock.tools.get(&recipe.id) {
-            // An unversioned entry has no version to install, so the recipe's own pin stands (F4-4).
-            Some(entry) if entry.version_for(kind.as_str()) != UNVERSIONED => Ok(
-                crate::tools::update::pinned(recipe, entry.version_for(kind.as_str())),
-            ),
-            _ => Ok(recipe.clone()),
+        let lock = Lockfile::load(self.ctx)?;
+        let locked = lock
+            .as_ref()
+            .and_then(|lock| lock.tools.get(&recipe.id))
+            .map(|entry| entry.version_for(kind.as_str()))
+            .filter(|version| *version != UNVERSIONED);
+        match locked {
+            Some(version) => Ok(crate::tools::update::pinned(recipe, version)),
+            // Nothing exact is locked for this host (F4-4), so the repair takes the newest release, as install does.
+            None => self.with_newest(recipe),
         }
     }
 
@@ -817,6 +875,39 @@ mod tests {
     use crate::host::claude::ClaudeHost;
     use crate::host::opencode::OpencodeHost;
     use crate::net::FakeNet;
+
+    /// The registry's answers for the newest release of each fixture and recipe these tests install.
+    fn registry_newest() -> FakeNet {
+        FakeNet::new()
+            .with(
+                "https://api.github.com/repos/obra/superpowers/releases/latest",
+                r#"{"tag_name":"v7.0.2"}"#,
+            )
+            .with(
+                "https://registry.npmjs.org/@playwright%2fmcp/latest",
+                r#"{"version":"0.0.86"}"#,
+            )
+            .with(
+                "https://registry.npmjs.org/fixture-pkg/latest",
+                r#"{"version":"1.2.3"}"#,
+            )
+            .with(
+                "https://registry.npmjs.org/@caveman-ai%2fcli/latest",
+                r#"{"version":"4.1.0"}"#,
+            )
+            .with(
+                "https://registry.npmjs.org/chrome-devtools-mcp/latest",
+                r#"{"version":"1.13.0"}"#,
+            )
+            .with(
+                "https://registry.npmjs.org/ccusage/latest",
+                r#"{"version":"20.0.51"}"#,
+            )
+            .with(
+                "https://pypi.org/pypi/serena-agent/json",
+                r#"{"info":{"version":"0.0.86"}}"#,
+            )
+    }
     use crate::recipe::{load_all, parse_recipe};
     use crate::runtime::nvm::npx_bin;
     use crate::runtime::testing::{Recorder, ctx_with};
@@ -832,7 +923,6 @@ telemetry_default_off = true
 
 [version]
 npm = "@playwright/mcp"
-pin = "0.0.86"
 
 [minimum_host]
 claude = "2.1.330"
@@ -855,7 +945,6 @@ telemetry_default_off = true
 
 [version]
 github = "obra/superpowers"
-pin = "7.0.2"
 
 [minimum_host]
 claude = "2.1.330"
@@ -879,7 +968,6 @@ telemetry_default_off = true
 
 [version]
 github = "obra/superpowers"
-pin = "7.0.2"
 
 [minimum_host]
 claude = "2.1.330"
@@ -910,7 +998,6 @@ telemetry_default_off = true
 
 [version]
 npm = "fixture-pkg"
-pin = "1.2.3"
 
 [minimum_host]
 claude = "2.1.330"
@@ -1003,7 +1090,7 @@ exec = ["caveman", "telemetry", "off"]
                 .reply("rtk init -g", Output::ok(""))
                 .reply("rtk telemetry disable", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1054,7 +1141,7 @@ exec = ["caveman", "telemetry", "off"]
                 .reply("rtk telemetry disable", Output::ok(""))
                 .reply("caveman telemetry off", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![opencode(root.path())];
         let node = node(root.path());
         let recipes = vec![];
@@ -1092,7 +1179,7 @@ exec = ["caveman", "telemetry", "off"]
                 .reply("rtk telemetry disable", Output::ok(""))
                 .reply("caveman telemetry off", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![opencode(root.path())];
         let node = node(root.path());
         let recipes = vec![];
@@ -1126,7 +1213,7 @@ exec = ["caveman", "telemetry", "off"]
                 .reply("rtk init -g --opencode", Output::ok(""))
                 .reply("rtk telemetry disable", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![opencode(root.path())];
         let node_install = node(root.path());
         let recipes = vec![];
@@ -1159,7 +1246,35 @@ exec = ["caveman", "telemetry", "off"]
     }
 
     #[test]
-    fn a_pinned_npm_or_binary_tool_on_opencode_locks_its_pin_when_the_config_reports_no_version() {
+    fn an_npm_tool_on_opencode_reports_the_version_its_package_has_in_the_node_tree() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join(".config/opencode/opencode.jsonc");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "{\"plugins\": [\"fixture\"]}\n").unwrap();
+        let package = root
+            .path()
+            .join(".local/share/relaxkit/node/lib/node_modules/fixture-pkg");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            "{\"name\": \"fixture-pkg\", \"version\": \"1.2.3\"}",
+        )
+        .unwrap();
+        let recipe = fixture(&opencode_fixture_text());
+        let runner = Recorder::new(FakeRunner::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
+        let hosts = vec![opencode(root.path())];
+        let node_install = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node_install);
+
+        let detected = eng.detect(&recipe, hosts[0].as_ref()).unwrap();
+
+        assert_eq!(detected, Some(("1.2.3".to_string(), Route::Npm)));
+    }
+
+    #[test]
+    fn an_opencode_tool_whose_config_reports_no_version_is_adopted_as_unversioned() {
         for (kind, route) in [("npm", Route::Npm), ("binary", Route::Script)] {
             let root = tempfile::tempdir().unwrap();
             let config = root.path().join(".config/opencode/opencode.jsonc");
@@ -1174,7 +1289,7 @@ exec = ["caveman", "telemetry", "off"]
                     .reply("rtk telemetry disable", Output::ok(""))
                     .reply("caveman telemetry off", Output::ok("")),
             );
-            let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+            let ctx = ctx_with(root.path(), &runner, registry_newest());
             let hosts = vec![opencode(root.path())];
             let node_install = node(root.path());
             let recipes = vec![];
@@ -1182,18 +1297,23 @@ exec = ["caveman", "telemetry", "off"]
 
             let outcomes = eng.install(&recipe).unwrap();
 
+            // Nothing in the config or the node tree says which release is installed, so no version is claimed.
             assert!(
                 outcomes.contains(&(
                     HostKind::Opencode,
                     Outcome::Adopted {
-                        version: "1.2.3".to_string(),
+                        version: UNVERSIONED.to_string(),
                         route: route.clone()
                     }
                 )),
                 "{kind}: {outcomes:?}"
             );
-            let lock = Lockfile::load(&ctx).unwrap().unwrap();
-            assert_eq!(lock.tools["fixture"].version, "1.2.3", "{kind}");
+            // An unversioned tool is not written to the lock, because the lock stores only exact versions.
+            let lock = Lockfile::load(&ctx).unwrap();
+            assert!(
+                lock.is_none_or(|lock| !lock.tools.contains_key("fixture")),
+                "{kind}: an unversioned tool was locked"
+            );
         }
     }
 
@@ -1215,7 +1335,7 @@ exec = ["caveman", "telemetry", "off"]
                 .reply("rtk init -g --opencode", Output::ok(""))
                 .reply("rtk telemetry disable", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![opencode(root.path())];
         let node_install = node(root.path());
         let recipes = vec![];
@@ -1252,7 +1372,7 @@ exec = ["caveman", "telemetry", "off"]
                 "❯ superpowers@anthropic-plugin-directory   Scope: user   Status: ✔ enabled\n",
             ),
         ));
-        let ctx = ctx_with(node_root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(node_root.path(), &runner, registry_newest());
         let hosts = vec![claude(node_root.path(), "2.1.330")];
         let node_install = node(node_root.path());
         let recipes = vec![];
@@ -1275,7 +1395,7 @@ exec = ["caveman", "telemetry", "off"]
         std::fs::create_dir_all(config.parent().unwrap()).unwrap();
         std::fs::write(&config, "{\"plugins\": [\"superpowers\"]}\n").unwrap();
         let runner = Recorder::new(FakeRunner::new());
-        let ctx = ctx_with(oc_root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(oc_root.path(), &runner, registry_newest());
         let hosts = vec![opencode(oc_root.path())];
         let node_install = node(oc_root.path());
         let eng = engine(&ctx, &hosts, &recipes, &node_install);
@@ -1299,7 +1419,7 @@ exec = ["caveman", "telemetry", "off"]
         let listing = "❯ superpowers@anthropic-plugin-directory   Version: 7.0.2-22f0b463e7a5   Scope: user   Status: ✔ enabled\n";
         let runner =
             Recorder::new(FakeRunner::new().reply("claude plugin list", Output::ok(listing)));
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1318,6 +1438,40 @@ exec = ["caveman", "telemetry", "off"]
     }
 
     #[test]
+    fn an_install_takes_the_newest_release_the_registry_reports_not_a_pin() {
+        // The registry's newest Playwright is 0.0.99, and the recipe names no version. The install must use 0.0.99 and
+        // lock it.
+        let root = tempfile::tempdir().unwrap();
+        let recipe = fixture(MCP_FIXTURE);
+        let runner = Recorder::new(
+            FakeRunner::new()
+                .reply("claude mcp remove", Output::ok(""))
+                .reply("claude mcp add", Output::ok("")),
+        );
+        let net = FakeNet::new().with(
+            "https://registry.npmjs.org/@playwright%2fmcp/latest",
+            r#"{"version":"0.0.99"}"#,
+        );
+        let ctx = ctx_with(root.path(), &runner, net);
+        let hosts = vec![claude(root.path(), "2.1.330")];
+        let node = node(root.path());
+        let recipes = vec![];
+        let eng = engine(&ctx, &hosts, &recipes, &node);
+
+        eng.install(&recipe).unwrap();
+
+        let add: Vec<String> = runner
+            .lines()
+            .into_iter()
+            .filter(|line| line.starts_with("claude mcp add"))
+            .collect();
+        assert_eq!(add.len(), 1, "{:?}", runner.lines());
+        assert!(add[0].contains("@playwright/mcp@0.0.99"), "{}", add[0]);
+        let lock = Lockfile::load(&ctx).unwrap().unwrap();
+        assert_eq!(lock.tools["fixture"].version, "0.0.99");
+    }
+
+    #[test]
     fn mcp_entry_pins_the_exact_version() {
         let root = tempfile::tempdir().unwrap();
         let recipe = fixture(MCP_FIXTURE);
@@ -1326,7 +1480,7 @@ exec = ["caveman", "telemetry", "off"]
                 .reply("claude mcp remove", Output::ok(""))
                 .reply("claude mcp add", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1353,7 +1507,7 @@ exec = ["caveman", "telemetry", "off"]
                 .reply("claude mcp remove", Output::ok(""))
                 .reply("claude mcp add", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1383,7 +1537,7 @@ exec = ["caveman", "telemetry", "off"]
                 .reply("claude mcp remove", Output::ok(""))
                 .reply("claude mcp add", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1422,7 +1576,6 @@ telemetry_default_off = true
 
 [version]
 npm = "fixture-pkg"
-pin = "1.2.3"
 
 [minimum_host]
 claude = "2.1.330"
@@ -1458,7 +1611,6 @@ telemetry_default_off = true
 
 [version]
 npm = "fixture-pkg"
-pin = "1.2.3"
 
 [minimum_host]
 claude = "2.1.330"
@@ -1479,7 +1631,7 @@ handler = "caveman_opencode"
         let mut recipe = fixture(text);
         unregistered_handler(&mut recipe);
         let runner = Recorder::new(FakeRunner::new());
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330"), opencode(root.path())];
         let node = node(root.path());
         let recipes = vec![];
@@ -1497,7 +1649,7 @@ handler = "caveman_opencode"
         let text = EXEC_FIXTURE.replace("[version]", "workdir = \"data/serena\"\n\n[version]");
         let recipe = fixture(&text);
         let runner = Recorder::new(FakeRunner::new());
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1559,7 +1711,7 @@ handler = "caveman_opencode"
                 .reply("rtk telemetry disable", Output::ok(""))
                 .reply("caveman telemetry off", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1585,7 +1737,7 @@ handler = "caveman_opencode"
         let recipe = fixture(EXEC_FIXTURE);
         let runner =
             Recorder::new(FakeRunner::new().reply("fixture-pkg install", Output::fail(1, "boom")));
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let mut tools = BTreeMap::new();
         tools.insert(
             "other".to_string(),
@@ -1625,7 +1777,7 @@ handler = "caveman_opencode"
         let root = tempfile::tempdir().unwrap();
         let recipe = fixture(EXEC_FIXTURE);
         let runner = Recorder::new(FakeRunner::new());
-        let mut ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let mut ctx = ctx_with(root.path(), &runner, registry_newest());
         ctx.dry_run = true;
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
@@ -1648,7 +1800,7 @@ handler = "caveman_opencode"
                 .reply("rtk telemetry disable", Output::ok(""))
                 .reply("caveman telemetry off", Output::ok("")),
         );
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1676,7 +1828,7 @@ handler = "caveman_opencode"
         let mut recipe = fixture(&text);
         unregistered_handler(&mut recipe);
         let runner = Recorder::new(FakeRunner::new().reply("fixture-pkg install", Output::ok("")));
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1701,7 +1853,6 @@ telemetry_default_off = true
 
 [version]
 npm = "fixture-pkg"
-pin = "1.2.3"
 
 [minimum_host]
 opencode = "2.2.6"
@@ -1714,7 +1865,7 @@ handler = "rtk_claude_hook"
 "#;
         let recipe = fixture(text);
         let runner = Recorder::new(FakeRunner::new());
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![opencode(root.path())];
         let node = node(root.path());
         let recipes = vec![];
@@ -1735,7 +1886,7 @@ handler = "rtk_claude_hook"
         let text = EXEC_FIXTURE.replace("claude = \"2.1.330\"", "claude = \"2.2.0\"");
         let recipe = fixture(&text);
         let runner = Recorder::new(FakeRunner::new());
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![claude(root.path(), "2.1.330")];
         let node = node(root.path());
         let recipes = vec![];
@@ -1755,7 +1906,7 @@ handler = "rtk_claude_hook"
         let root = tempfile::tempdir().unwrap();
         let recipe = fixture(EXEC_FIXTURE);
         let runner = Recorder::new(FakeRunner::new());
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let hosts = vec![opencode(root.path())];
         let node = node(root.path());
         let recipes = vec![];
@@ -1775,7 +1926,7 @@ handler = "rtk_claude_hook"
     fn a_partial_run_keeps_the_hosts_already_locked() {
         let root = tempfile::tempdir().unwrap();
         let runner = Recorder::new(FakeRunner::new());
-        let ctx = ctx_with(root.path(), &runner, FakeNet::new());
+        let ctx = ctx_with(root.path(), &runner, registry_newest());
         let recipe = load_all()
             .unwrap()
             .into_iter()

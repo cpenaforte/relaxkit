@@ -79,8 +79,9 @@ pub struct Recipe {
     /// The loader cannot prove it. Always true in an accepted recipe.
     pub telemetry_default_off: bool,
     pub version: VersionSource,
-    /// The exact release relaxkit installs. Set exactly when `version` names a source.
-    /// `{version}` in argv and plugin specs expands to this and nothing else.
+    /// The exact release this run installs, updates or probes. A recipe file never sets it: install sets it to the
+    /// newest release of `version`, update to its target, and a probe to the locked version. `{version}` in argv and
+    /// plugin specs expands to this and nothing else.
     pub pin: Option<String>,
     /// Ids of other recipes that must be installed first.
     pub requires: Vec<String>,
@@ -220,6 +221,7 @@ struct RawVersion {
     github: Option<String>,
     npm: Option<String>,
     pypi: Option<String>,
+    /// Refused: a recipe names a source, and relaxkit installs that source's newest release.
     pin: Option<String>,
 }
 
@@ -258,9 +260,9 @@ impl RawRecipe {
             bail!("recipe `{id}` needs a non-empty id and title");
         }
         let hosts = parse_hosts(&id, &self.hosts)?;
-        let (version, pin) = match self.version {
-            Some(raw) => raw.into_parts(&id)?,
-            None => (VersionSource::None, None),
+        let version = match self.version {
+            Some(raw) => raw.into_source(&id)?,
+            None => VersionSource::None,
         };
         if let Some(workdir) = self
             .workdir
@@ -313,7 +315,7 @@ impl RawRecipe {
             needs_login: self.needs_login,
             telemetry_default_off: self.telemetry_default_off,
             version,
-            pin,
+            pin: None,
             requires: self.requires,
             env: self.env,
             workdir: self.workdir,
@@ -328,8 +330,14 @@ impl RawRecipe {
 }
 
 impl RawVersion {
-    /// A source and its pin come together: a source needs a semver pin, and a pin needs a source.
-    fn into_parts(self, id: &str) -> Result<(VersionSource, Option<String>)> {
+    /// A recipe names a version source and no pin. Install takes the newest release of the source, and the lock records
+    /// the release it installed, so no recipe can hold a tool back. A `pin` key is refused for that reason.
+    fn into_source(self, id: &str) -> Result<VersionSource> {
+        if self.pin.is_some() {
+            bail!(
+                "recipe `{id}` names a pin; recipes name no version, because relaxkit installs the newest release"
+            );
+        }
         let mut found = Vec::new();
         if let Some(repo) = self.github {
             found.push(VersionSource::Github { repo });
@@ -341,12 +349,7 @@ impl RawVersion {
             found.push(VersionSource::Pypi { package });
         }
         let source = match found.len() {
-            0 => {
-                if self.pin.is_some() {
-                    bail!("recipe `{id}` names a pin but no version source");
-                }
-                return Ok((VersionSource::None, None));
-            }
+            0 => return Ok(VersionSource::None),
             1 => found.remove(0),
             _ => bail!("recipe `{id}` names more than one version source"),
         };
@@ -360,12 +363,7 @@ impl RawVersion {
         if empty {
             bail!("recipe `{id}` has an empty version source");
         }
-        let pin = self
-            .pin
-            .ok_or_else(|| anyhow!("recipe `{id}` names a version source but no pin"))?;
-        Version::parse(&pin)
-            .with_context(|| format!("recipe `{id}` pins `{pin}`, which is not semver"))?;
-        Ok((source, Some(pin)))
+        Ok(source)
     }
 }
 
@@ -492,8 +490,11 @@ fn check_placeholders(recipe: &Recipe) -> Result<()> {
                         recipe.id
                     );
                 }
-                if name == "version" && recipe.pin.is_none() {
-                    bail!("recipe `{}` uses {{version}} but has no pin", recipe.id);
+                if name == "version" && matches!(recipe.version, VersionSource::None) {
+                    bail!(
+                        "recipe `{}` uses {{version}} but names no version source",
+                        recipe.id
+                    );
                 }
             }
         }

@@ -265,6 +265,12 @@ impl Scratch {
             )
             .env("RELAXKIT_STUB_LOG", &self.log)
             .env("RELAXKIT_STUB_STATE", &self.state)
+            // The newest release of each tool, declared because the network is closed. These are the versions the
+            // recipes carried before they stopped naming a pin, so the expectations below keep their meaning.
+            .env(
+                "RELAXKIT_LATEST_OVERRIDE",
+                "superpowers=7.0.2,caveman=4.1.0,playwright=0.0.86,chrome-devtools=1.13.0,serena=2.1.0,ccusage=20.0.51",
+            )
             .env("HTTPS_PROXY", CLOSED_PROXY)
             .env("HTTP_PROXY", CLOSED_PROXY)
             .env("https_proxy", CLOSED_PROXY)

@@ -135,6 +135,8 @@ fn usage_help_flag_after_the_tool_reaches_the_handler() {
         data.join("node"),
     )
     .unwrap();
+    // Usage runs only a locked ccusage, so the lock names it first.
+    support::write_lock_except(&scratch, None);
     for flag in ["--help", "-h"] {
         scratch.clear_calls();
         scratch
@@ -147,7 +149,7 @@ fn usage_help_flag_after_the_tool_reaches_the_handler() {
             scratch
                 .calls()
                 .iter()
-                .any(|call| call.contains(&format!("ccusage@20.0.51 cargo {flag}"))),
+                .any(|call| call.contains("ccusage@") && call.contains(&format!("cargo {flag}"))),
             "{flag} must reach ccusage: {:?}",
             scratch.calls()
         );

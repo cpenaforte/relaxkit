@@ -67,6 +67,7 @@ fn claude_adapter_install_argv() {
             "claude plugin list".to_string(),
             "claude plugin marketplace list".to_string(),
             format!("claude plugin marketplace add {}", brand::REPO),
+            "claude plugin marketplace list".to_string(),
             format!("claude plugin install {plugin}"),
         ]
     );

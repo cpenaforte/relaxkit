@@ -179,6 +179,76 @@ pub fn append(dirs: &KitDirs, record: &EditRecord) -> Result<()> {
     })
 }
 
+/// A Claude marketplace this run added, under the name Claude lists it by. The host registry is not restored by undo,
+/// so the record only lets undo name the marketplace and the command that removes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketplaceRecord {
+    pub run: RunId,
+    pub name: String,
+    /// The run group the add belongs to, as for `EditRecord`: absent means the record's own run is its group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<RunId>,
+}
+
+impl MarketplaceRecord {
+    /// The run group this marketplace was added in.
+    pub fn group(&self) -> &RunId {
+        self.group.as_ref().unwrap_or(&self.run)
+    }
+}
+
+fn marketplaces_path(dirs: &KitDirs) -> PathBuf {
+    dirs.data.join("marketplaces.jsonl")
+}
+
+/// Every marketplace record in order, oldest first. A missing file is empty.
+pub fn read_marketplaces(dirs: &KitDirs) -> Result<Vec<MarketplaceRecord>> {
+    let path = marketplaces_path(dirs);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("cannot read {}", path.display())),
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let torn_tail = !text.ends_with('\n');
+    let mut records = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str(line) {
+            Ok(record) => records.push(record),
+            Err(_) if torn_tail && index + 1 == lines.len() => break,
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "{}: line {} is not a marketplace record",
+                        path.display(),
+                        index + 1
+                    )
+                });
+            }
+        }
+    }
+    Ok(records)
+}
+
+/// Appends one marketplace record under the journal lock.
+pub fn append_marketplace(dirs: &KitDirs, record: &MarketplaceRecord) -> Result<()> {
+    with_journal_lock(dirs, || {
+        let path = marketplaces_path(dirs);
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("cannot open {}", path.display()))?;
+        let line = serde_json::to_string(record).context("cannot encode marketplace record")?;
+        writeln!(file, "{line}").with_context(|| format!("cannot append to {}", path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("cannot flush {}", path.display()))
+    })
+}
+
 /// Replaces the whole journal with `records`. The caller holds the journal lock.
 pub(super) fn rewrite_under_lock(dirs: &KitDirs, records: &[EditRecord]) -> Result<()> {
     let mut text = String::new();

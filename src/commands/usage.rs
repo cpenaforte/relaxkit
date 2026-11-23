@@ -6,7 +6,6 @@ use anyhow::{Context, Result, bail};
 
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
-use crate::recipe::load_all;
 use crate::runtime::nvm::npx_bin;
 use crate::state::lockfile::Lockfile;
 
@@ -43,16 +42,10 @@ pub fn run(ctx: &Ctx, args: &[String]) -> Result<i32> {
     Ok(ctx.runner.run(&cmd)?.code)
 }
 
-/// The version the lock names for ccusage, or the recipe's pin when the lock has none.
+/// The version the lock names for ccusage. A recipe names no version, so an unlocked ccusage has nothing to run at.
 fn pinned_version(ctx: &Ctx) -> Result<String> {
-    if let Some(tool) = Lockfile::load(ctx)?.and_then(|lock| lock.tools.get(TOOL).cloned()) {
-        return Ok(tool.version);
-    }
-    let recipe = load_all()?
-        .into_iter()
-        .find(|recipe| recipe.id == TOOL)
-        .with_context(|| format!("no recipe for {TOOL}"))?;
-    recipe
-        .pin
-        .with_context(|| format!("the {TOOL} recipe has no pin"))
+    Lockfile::load(ctx)?
+        .and_then(|lock| lock.tools.get(TOOL).cloned())
+        .map(|tool| tool.version)
+        .with_context(|| format!("{TOOL} is not locked; run `relaxkit setup` first"))
 }

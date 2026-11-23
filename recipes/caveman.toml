@@ -10,7 +10,6 @@ telemetry_default_off = true
 
 [version]
 npm = "@caveman-ai/cli"
-pin = "4.1.0"
 
 [minimum_host]
 claude = "2.1.330"

@@ -1,4 +1,4 @@
-# No install step: relaxkit runs ccusage through npx at the pinned version, and every invocation passes --offline,
+# No install step: relaxkit runs ccusage through npx at the newest release resolved at install, and every invocation passes --offline,
 # because the pricing fetch is the one network path (spike A A9 item 12).
 id = "ccusage"
 title = "ccusage"
@@ -9,7 +9,6 @@ telemetry_default_off = true
 
 [version]
 npm = "ccusage"
-pin = "20.0.51"
 
 [minimum_host]
 claude = "2.1.330"

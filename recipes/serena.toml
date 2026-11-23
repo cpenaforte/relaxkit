@@ -1,6 +1,6 @@
 # Serena runs with --project-from-cwd, so it may write .serena/ inside a repo. The owner accepts that (spec commit 4354020),
 # and the recipe sets no workdir.
-# The pin lives in [version]. Updates reinstall (spike A I6), so an update mirrors install and reruns
+# The version is the newest release of [version], resolved at install. Updates reinstall (spike A I6), so an update mirrors install and reruns
 # `serena init`, which must be safe to run again.
 # OpenCode is a terminal client, so its entry uses `--context ide` (spec section 5.1, ruling K9).
 id = "serena"
@@ -12,7 +12,6 @@ telemetry_default_off = true
 
 [version]
 pypi = "serena-agent"
-pin = "2.1.0"
 
 [env]
 SERENA_USAGE_REPORTING = "false"
