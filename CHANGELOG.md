@@ -11,7 +11,7 @@ All notable changes to relaxkit are recorded here. The format follows
 ### Changed
 
 - The sandbox self-test failure message now tells you to log in to Claude Code first. The probes run
-  Claude Code, which does not answer until it is logged in, and that is the usual cause on a new machine.
+  Claude Code, which does not answer until it is logged in.
 
 ### Fixed
 
@@ -25,8 +25,8 @@ All notable changes to relaxkit are recorded here. The format follows
 - Tool recipes name no version. An install takes the newest release the registry reports, and a repair
   with no lock entry does the same. Tools that are already present are recognized without a registry
   lookup, so that check needs no network.
-- Runtimes pinned by commit SHA (nvm v0.41.0, uv 0.13.9 and Node major 24) are the exception and stay
-  at those versions.
+- Runtimes pinned to a version (nvm v0.41.0, uv 0.13.9 and Node major 24) are the exception and stay at
+  those versions.
 - `relaxkit undo` names each Claude marketplace that a run added, with the command that removes it. It
   does not remove the marketplace itself.
 
@@ -36,7 +36,7 @@ All notable changes to relaxkit are recorded here. The format follows
   locked version is no longer shown as current.
 - An npm tool on OpenCode reports the version its package has in the node tree. When no version can be
   read, the tool is adopted as unversioned and is not written to the lock.
-- Removing a managed block from a file with no final newline leaves the rest of the file byte-exact.
+- Removing a managed block from a file with no final newline leaves the file byte-exact.
 
 ## [0.1.1] - 2026-11-23
 
@@ -59,14 +59,50 @@ All notable changes to relaxkit are recorded here. The format follows
   `lock.toml`. It leaves symlinks alone. Both files are backed up first, so `relaxkit undo` restores
   them. A dry run changes nothing, and after uninstall `status` reports no tools.
 - `doctor` and the setup verify step run the npx probes with the pack's own npx and fill in
-  `{version}`, instead of printing "not run here". Offline, a probe now fails where it used to warn.
+  `{version}`, instead of printing "not run here". When the pack's npx is missing, a probe now fails
+  instead of warning.
 
 ## [0.1.0] - 2026-11-22
 
 ### Added
 
+- `scripts/install.sh` installs the release binary for each of the four targets. It checks the archive's
+  SHA-256 before anything is installed, adds the `rlx` alias when that name is free, and runs
+  `relaxkit setup` unless `--no-setup` is given.
+- `relaxkit setup` runs the detect, prerequisites, install, configure, sandbox, login and verify steps in
+  order, and prints one line per step. A missing host stops it with a hint, and `--dry-run` prints the
+  plan and writes nothing.
+- Setup installs the pack's tools on each host. It detects each tool, adopts an existing install instead
+  of reinstalling it, and records each install in `lock.toml`. A failed step stops that tool and leaves
+  the lock unchanged.
+- `relaxkit status` shows the preset, the hosts, the installed tools against their locked versions, and
+  the sandbox state, and writes nothing. `relaxkit doctor` runs the health checks, prints them as JSON
+  with `--json`, and exits 1 when a check fails.
+- `relaxkit update` moves each tool along its own route. `--check` changes nothing, `--tools` covers the
+  tools, and a tool name updates that one tool. A tool is probed after it moves and returns to its locked
+  version when the probe fails. Node moves within major 24 only, and nvm and uv stay pinned.
+- `relaxkit update` also updates relaxkit itself. It checks the newest GitHub release, verifies the
+  checksums file with the embedded minisign key and the archive's SHA-256, then replaces the binary and
+  keeps the previous one as `relaxkit.prev`. A binary installed by Homebrew is updated with `brew upgrade`.
+- `relaxkit config` sets, unsets and shows the role pins, voice and compact threshold, with `--host` to
+  limit a role to one host and `--project` to write project files. `relaxkit preset` applies the tiers
+  and voice and keeps the pins. `relaxkit privacy` turns off the pack tools' telemetry.
+- `relaxkit undo` reverts the changes of one run, and `relaxkit uninstall` removes only what relaxkit
+  wrote and lists what stays in place. `relaxkit usage` runs the locked ccusage.
+- `relaxkit login github` runs the GitHub web login and sets git to use gh. It is skipped when
+  `gh auth status` already passes. Without a terminal it prints the command and exits 3. Claude Code
+  reaches gh outside its sandbox through an exclusion, so relaxkit writes no token.
+- Setup writes the Claude Code sandbox settings and runs the sandbox self-test. On Linux the sandbox
+  packages run with sudo only when `--allow-sudo` is given, and otherwise the command is printed.
+- The Claude Code plugin: the repository carries the marketplace file and the plugin manifest. Setup adds
+  the marketplace and installs the `relaxkit` plugin on each detected Claude Code host, unless it is
+  already listed. The plugin also ships slash-command files for Claude Code.
+- relaxkit ships its own OpenCode sandbox plugin, `relaxkit-opencode`, in place of the upstream one.
+  Setup installs it on each OpenCode host and stops if that fails, and `status` and `doctor` report its
+  health.
 - Every command prints its results with the same marks: `✓` done, `!` done with something to check,
-  `✗` failed, and `·` not done. A dry run prints only `·` plans, so no dry-run line claims a change.
+  `✗` failed, and `·` not done. In a dry run every line is a `·` plan, so no dry-run line claims a
+  change.
 - `doctor` lists failures and warnings by area, with the command for each. `doctor --all` also lists the
   checks that passed.
 - `setup` prints one line per step, `status` and `config show` print tables, `update` prints a table of
@@ -80,11 +116,8 @@ All notable changes to relaxkit are recorded here. The format follows
 - Release pipeline (`.github/workflows/release.yml`): a `v*` tag builds the release archives for each
   target, including the musl targets, writes a checksums file, signs it with minisign, and publishes the
   GitHub release only after signing.
-- Homebrew formula template (`packaging/homebrew/relaxkit.rb.tmpl`).
-
-### Fixed
-
-- The install script runs under dash on a machine with no terminal.
+- Each release attaches `relaxkit.rb`, the Homebrew formula, which installs `rlx` as a symlink to
+  `relaxkit`.
 
 [Unreleased]: https://github.com/cpenaforte/relaxkit/compare/v0.1.3...HEAD
 [0.1.3]: https://github.com/cpenaforte/relaxkit/compare/v0.1.2...v0.1.3
