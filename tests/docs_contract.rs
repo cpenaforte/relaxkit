@@ -355,3 +355,103 @@ fn public_docs_cite_no_private_artifacts() {
         );
     }
 }
+
+/// Splits a `## [x.y.z] - YYYY-MM-DD` heading into its version and date, or `None` when it has another shape.
+fn release_heading(line: &str) -> Option<((u64, u64, u64), &str)> {
+    let rest = line.strip_prefix("## [")?;
+    let (version, date) = rest.split_once("] - ")?;
+    let parts: Vec<u64> = version
+        .split('.')
+        .map(|part| part.parse().ok())
+        .collect::<Option<_>>()?;
+    let [major, minor, patch] = parts[..] else {
+        return None;
+    };
+    let date_ok = date.len() == 10
+        && date.char_indices().all(|(i, c)| match i {
+            4 | 7 => c == '-',
+            _ => c.is_ascii_digit(),
+        });
+    date_ok.then_some(((major, minor, patch), date))
+}
+
+#[test]
+fn changelog_follows_keep_a_changelog() {
+    let text = read("CHANGELOG.md");
+    let lines = unfenced_lines(&text);
+    assert_eq!(lines.first().copied(), Some("# Changelog"));
+
+    let headings: Vec<(usize, &str)> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("## "))
+        .map(|(at, line)| (at, *line))
+        .collect();
+    assert_eq!(
+        headings.first().map(|(_, line)| *line),
+        Some("## [Unreleased]"),
+        "CHANGELOG.md has no `## [Unreleased]` heading before its versions"
+    );
+    let (unreleased_at, _) = headings[0];
+    let unreleased_end = headings.get(1).map_or(lines.len(), |(at, _)| *at);
+    for line in &lines[unreleased_at + 1..unreleased_end] {
+        assert!(
+            line.trim().is_empty(),
+            "`## [Unreleased]` must stay empty, found `{line}`"
+        );
+    }
+
+    let mut versions = Vec::new();
+    for (_, line) in &headings[1..] {
+        let ((major, minor, patch), _) = release_heading(line)
+            .unwrap_or_else(|| panic!("`{line}` does not match `## [x.y.z] - YYYY-MM-DD`"));
+        versions.push((major, minor, patch));
+    }
+    assert!(!versions.is_empty(), "CHANGELOG.md has no release section");
+    for pair in versions.windows(2) {
+        assert!(pair[0] > pair[1], "release sections must descend: {pair:?}");
+    }
+    let (major, minor, patch) = versions[0];
+    assert_eq!(
+        format!("{major}.{minor}.{patch}"),
+        env!("CARGO_PKG_VERSION"),
+        "the first release section must be the crate version"
+    );
+
+    const SECTIONS: [&str; 6] = [
+        "Added",
+        "Changed",
+        "Deprecated",
+        "Removed",
+        "Fixed",
+        "Security",
+    ];
+    for line in &lines {
+        if let Some(section) = line.strip_prefix("### ") {
+            assert!(
+                SECTIONS.contains(&section.trim()),
+                "`### {section}` is not a Keep a Changelog section"
+            );
+        }
+        assert!(
+            !(line.starts_with("* ") && line.contains(" by @") && line.contains(" in https://")),
+            "`{line}` looks like a pasted release-notes entry"
+        );
+    }
+
+    let mut names: Vec<String> = vec!["Unreleased".to_string()];
+    names.extend(headings[1..].iter().map(|(_, line)| {
+        line.trim_start_matches("## [")
+            .split(']')
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    }));
+    for name in names {
+        let prefix = format!("[{name}]: https://github.com/cpenaforte/relaxkit/");
+        assert!(
+            lines.iter().any(|line| line.starts_with(&prefix)),
+            "CHANGELOG.md has no link reference for `{name}`"
+        );
+    }
+}
