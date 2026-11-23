@@ -16,7 +16,7 @@ use crate::edit::{block_get, jsonc_get};
 use crate::exec::Cmd;
 use crate::host::{Host, HostCheck, HostKind, check_minimum, detect_hosts};
 use crate::recipe::load_all;
-use crate::recipe::schema::Kind;
+use crate::recipe::schema::{Kind, Recipe};
 use crate::roles::{Role, resolve_claude, resolve_opencode};
 use crate::runtime::nvm::{NodeInstall, other_nodes};
 use crate::sandbox::health::{health_line, plugin_health};
@@ -39,6 +39,8 @@ pub enum ToolState {
     Unreadable,
     /// An MCP entry: status does not read it.
     McpNotRead,
+    /// An npm tool with no install step: npx runs it at its pin, so there is no installed copy to find.
+    RunsOnDemand,
     /// The host is not installed, so the tool is not read on it.
     HostMissing,
 }
@@ -53,9 +55,16 @@ impl ToolState {
             ToolState::NotFound => (Mark::Fail, "not found"),
             ToolState::Unreadable => (Mark::Fail, "unreadable"),
             ToolState::McpNotRead => (Mark::Skip, "MCP entry not read"),
+            ToolState::RunsOnDemand => (Mark::Skip, "runs through npx"),
             ToolState::HostMissing => (Mark::Skip, "host not installed"),
         }
     }
+}
+
+/// Whether a tool runs on demand on this host: an npm tool with no install step there. Its install step is what puts
+/// a copy on the host, so a tool with one (a plugin, an MCP entry, a command) is not on demand.
+fn runs_on_demand(recipe: &Recipe, kind: HostKind) -> bool {
+    recipe.kind == Kind::Npm && recipe.install.get(&kind).is_none_or(Vec::is_empty)
 }
 
 /// One locked tool on one host.
@@ -355,6 +364,15 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                         route,
                         state: ToolState::McpNotRead,
                     });
+                } else if runs_on_demand(recipe, kind) {
+                    tools.push(ToolRow {
+                        id: id.clone(),
+                        host: kind,
+                        installed: None,
+                        locked,
+                        route,
+                        state: ToolState::RunsOnDemand,
+                    });
                 } else {
                     let (installed, state) = match engine.detect(recipe, host.as_ref()) {
                         Ok(Some((version, _))) => {
@@ -644,5 +662,40 @@ mod tests {
 
         assert_eq!(mark, Mark::Fail);
         assert_eq!(text, "need attention: 1 not found, 1 drift");
+    }
+
+    #[test]
+    fn a_tool_that_runs_through_npx_is_not_counted_as_attention() {
+        let row = |state| ToolRow {
+            id: "ccusage".to_string(),
+            host: HostKind::Claude,
+            installed: None,
+            locked: "20.0.51".to_string(),
+            route: "npm".to_string(),
+            state,
+        };
+        let report = |tools| StatusReport {
+            hosts: vec![(HostKind::Claude, "2.1.330".to_string())],
+            tools,
+            ..StatusReport::default()
+        };
+
+        let with_on_demand = report(vec![row(ToolState::RunsOnDemand), row(ToolState::AsLocked)]);
+        let as_locked_only = report(vec![row(ToolState::AsLocked)]);
+
+        assert_eq!(with_on_demand.verdict(), as_locked_only.verdict());
+    }
+
+    #[test]
+    fn runs_on_demand_is_true_for_ccusage_only() {
+        let recipes = load_all().unwrap();
+        for kind in [HostKind::Claude, HostKind::Opencode] {
+            let on_demand: Vec<&str> = recipes
+                .iter()
+                .filter(|recipe| runs_on_demand(recipe, kind))
+                .map(|recipe| recipe.id.as_str())
+                .collect();
+            assert_eq!(on_demand, ["ccusage"], "{kind:?}");
+        }
     }
 }

@@ -533,21 +533,27 @@ fn doctor_fails_when_the_sandbox_selftest_cannot_fetch_its_runtime() {
 }
 
 #[test]
-fn doctor_warns_when_a_probe_is_not_run() {
-    // Playwright's probe starts with `{npx}`, which doctor does not run. Not running it is a warn, never an ok
-    // (ruling Important item 6).
+fn doctor_runs_the_playwright_probe_with_the_packs_npx() {
+    // Playwright's probe starts with `{npx}`, which doctor runs with the pack's npx, not with whichever npx the shell
+    // has. Its output is checked like any other probe.
     let root = tempfile::tempdir().unwrap();
     lock(root.path(), &[("playwright", "0.0.86", "npm", &["claude"])]);
+    let npx = npx_bin(&ctx(root.path(), FakeRunner::new(), FakeNet::new()));
+    write(&npx, "#!/bin/sh\n");
+    fs::set_permissions(&npx, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let runner = refusing_sandbox(root.path()).reply(
+        &format!("{} -y @playwright/mcp@0.0.86 --help", npx.display()),
+        Output::ok(""),
+    );
 
     let checks = doctor::checks_for(
-        &ctx(root.path(), refusing_sandbox(root.path()), FakeNet::new()),
+        &ctx(root.path(), runner, FakeNet::new()),
         &[claude(root.path())],
     )
     .unwrap();
 
     let probe = find(&checks, "tool.playwright.claude");
-    assert_eq!(probe.status, CheckStatus::Warn, "{probe:?}");
-    assert!(probe.message.contains("not run"), "{probe:?}");
+    assert_eq!(probe.status, CheckStatus::Ok, "{probe:?}");
 }
 
 #[test]
@@ -782,7 +788,7 @@ fn status_lists_installed_versus_locked_versions_and_flags_drift() {
 fn status_marks_each_role_advisory_or_enforced_per_host() {
     let root = tempfile::tempdir().unwrap();
     let runner = FakeRunner::new().reply(
-        "/usr/local/bin/opencode models",
+        "/usr/local/bin/opencode models --standalone",
         Output::ok(
             "anthropic/claude-haiku-5-5\nanthropic/claude-sonnet-5-5\nanthropic/claude-opus-5-5\n",
         ),

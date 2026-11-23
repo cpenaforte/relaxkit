@@ -89,12 +89,10 @@ case "$line" in
   "claude mcp add "*) mcp_forget "$5"; echo "$5" >> "$mcp_names"; mcp_write ;;
   "claude mcp remove "*) mcp_forget "$5"; mcp_write ;;
   "gh auth status") exit "${RELAXKIT_STUB_GH_AUTH:-0}" ;;
-  # `opencode models` lists the ids in $RELAXKIT_STUB_STATE/opencode-models (one `id [window]` per line). With no
-  # such file the listing cannot be read, and the stub fails, as an unreadable list does.
-  "opencode models")
+  # `opencode models --standalone` lists the ids in $RELAXKIT_STUB_STATE/opencode-models (one `id [window]` per line).
+  # With no such file the listing cannot be read, and the stub fails, as an unreadable list does.
+  "opencode models --standalone")
     if [ -f "$RELAXKIT_STUB_STATE/opencode-models" ]; then cut -d' ' -f1 "$RELAXKIT_STUB_STATE/opencode-models"; else exit 1; fi ;;
-  "opencode models --verbose")
-    if [ -f "$RELAXKIT_STUB_STATE/opencode-models" ]; then cat "$RELAXKIT_STUB_STATE/opencode-models"; else exit 1; fi ;;
 esac
 exit 0
 "#;

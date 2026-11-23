@@ -1,6 +1,6 @@
 {
   "name": "relaxkit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Sets up and manages a curated set of agent tools on Linux and macOS",
   "license": "MIT OR Apache-2.0"
 }

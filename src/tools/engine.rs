@@ -669,7 +669,7 @@ impl<'a> Engine<'a> {
         // The hosts already locked for this tool stay locked, each on its own version: a run on some hosts only moves
         // those hosts (ruling K56, and K73 for the per-host versions).
         let touched: Vec<String> = rows.iter().map(|(kind, _, _)| kind.to_string()).collect();
-        let next = match lock.tools.get(&recipe.id) {
+        let mut next = match lock.tools.get(&recipe.id) {
             Some(existing) => existing.moved(&touched, version, &route),
             None => LockedTool {
                 version: version.clone(),
@@ -683,6 +683,18 @@ impl<'a> Engine<'a> {
                 host_versions: BTreeMap::new(),
             },
         };
+        // The lock records each host's own version only when the hosts report different versions. A version that is not
+        // exact keeps the first row's version for its host.
+        if rows.iter().any(|(_, own, _)| own != version) {
+            for (host, own, _) in rows {
+                let at = if check_version(own).is_ok() {
+                    own
+                } else {
+                    version
+                };
+                next.host_versions.insert(host.to_string(), at.clone());
+            }
+        }
         lock.tools.insert(recipe.id.clone(), next);
         lock.save(self.ctx, self.run)
     }

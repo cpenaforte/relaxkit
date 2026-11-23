@@ -12,6 +12,7 @@ use crate::config_apply::{claude, opencode, voice};
 use crate::ctx::Ctx;
 use crate::exec::Cmd;
 use crate::github::{self, LoginOutcome};
+use crate::host::opencode::list_models;
 use crate::host::{Host, HostKind, detect_hosts};
 use crate::platform::{
     PrereqPlan, apparmor_profile_present, is_executable, plan_needs_apparmor_profile,
@@ -265,16 +266,7 @@ pub fn unapplied_tiers_note(own: &KitConfig, available: &[String]) -> Option<Str
 /// The OpenCode models the roles can map onto. A host that cannot list them yields none, so each agent inherits
 /// the host's default model.
 pub fn opencode_models(ctx: &Ctx, host: &dyn Host) -> Vec<String> {
-    let binary = host.info().binary.to_string_lossy().into_owned();
-    match ctx.runner.run(&Cmd::new(&binary).arg("models")) {
-        Ok(out) if out.code == 0 => out
-            .stdout
-            .lines()
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
+    list_models(ctx, host).unwrap_or_default()
 }
 
 /// The sandbox of each host (spec section 7). Claude Code always takes `gh` outside its sandbox (ruling K42).
@@ -376,6 +368,13 @@ fn login_step(ctx: &Ctx, run: &RunId, report: &mut SetupReport) -> Result<Option
     Ok(Some(outcome))
 }
 
+/// The version a repair line names as locked, for the host it repairs: `unlocked` when the tool has no lock entry.
+fn locked_version(lock: Option<&Lockfile>, id: &str, kind: HostKind) -> String {
+    lock.and_then(|lock| lock.tools.get(id))
+        .map(|tool| tool.version_for(kind.as_str()).to_string())
+        .unwrap_or_else(|| "unlocked".to_string())
+}
+
 /// The verify step runs `doctor` (ruling K50). A failing probe or MCP command is repaired by reinstalling its locked
 /// tool, and the checks run again (ruling OWNER-3). The checks print here, and a check that still fails makes setup
 /// exit 1. Returns whether any check failed.
@@ -398,13 +397,6 @@ fn verify_step(
     }
     // The locked versions as they were before the repairs, for the repair lines (a repair rewrites the lock).
     let locked_before = Lockfile::load(ctx)?;
-    let locked_version = |id: &str| {
-        locked_before
-            .as_ref()
-            .and_then(|lock| lock.tools.get(id))
-            .map(|tool| tool.version.clone())
-            .unwrap_or_else(|| "unlocked".to_string())
-    };
     let mut details: Vec<String> = Vec::new();
     for repair in &repairs {
         let (mark, text) = match repair {
@@ -412,7 +404,7 @@ fn verify_step(
                 let Some(recipe) = engine.recipes.iter().find(|recipe| &recipe.id == id) else {
                     continue;
                 };
-                let locked = locked_version(id);
+                let locked = locked_version(locked_before.as_ref(), id, *kind);
                 match engine.reinstall(recipe, *kind) {
                     Ok(Outcome::Installed { version }) if id == "rtk" => (
                         Mark::Ok,
@@ -614,12 +606,47 @@ fn detail_line(palette: Palette, mark: Mark, text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     use super::*;
     use crate::exec::{FakeRunner, Output};
     use crate::net::FakeNet;
     use crate::platform::{Os, prerequisite_plan};
+    use crate::state::lockfile::LockedTool;
+
+    #[test]
+    fn a_repair_names_the_locked_version_of_the_host_it_repairs() {
+        let tools = BTreeMap::from([(
+            "superpowers".to_string(),
+            LockedTool {
+                version: "7.0.2-22f0b463e7a5".to_string(),
+                route: "claude-plugin:anthropic-plugin-directory".to_string(),
+                hosts: vec!["claude".to_string(), "opencode".to_string()],
+                host_versions: BTreeMap::from([
+                    ("claude".to_string(), "7.0.2-22f0b463e7a5".to_string()),
+                    ("opencode".to_string(), "7.0.2".to_string()),
+                ]),
+            },
+        )]);
+        let lock = Lockfile {
+            relaxkit: "0.1.0".to_string(),
+            tools,
+        };
+
+        assert_eq!(
+            locked_version(Some(&lock), "superpowers", HostKind::Opencode),
+            "7.0.2"
+        );
+        assert_eq!(
+            locked_version(Some(&lock), "superpowers", HostKind::Claude),
+            "7.0.2-22f0b463e7a5"
+        );
+        assert_eq!(
+            locked_version(None, "superpowers", HostKind::Claude),
+            "unlocked"
+        );
+    }
 
     fn linux_plan() -> PrereqPlan {
         prerequisite_plan(Os::Linux, None)

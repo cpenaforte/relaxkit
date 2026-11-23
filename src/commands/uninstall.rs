@@ -39,9 +39,13 @@ pub fn run(ctx: &Ctx) -> Result<Vec<String>> {
             }
         }
         remove_bin_copies(ctx, run, &mut lines)?;
+        // `leftovers` reads the lock to name every tool, so the lock is removed only after it has been read.
+        let mut left = Vec::new();
+        leftovers(ctx, &mut left)?;
+        remove_lock(ctx, run, &mut lines)?;
         lines.push(String::new());
         lines.push(heading("Left in place", ctx.out.palette()));
-        leftovers(ctx, &mut lines)?;
+        lines.extend(left);
         Ok(lines)
     };
     if ctx.dry_run {
@@ -87,6 +91,7 @@ fn remove_mcp_entries(
 }
 
 /// The Claude Code keys the pack wrote, the roles block in CLAUDE.md, and the compaction threshold when one was set.
+/// CLAUDE.md itself goes when relaxkit created it and nothing else is left in it.
 fn remove_claude(
     ctx: &Ctx,
     run: &RunId,
@@ -115,7 +120,24 @@ fn remove_claude(
     let instructions = host.instructions_file(ctx);
     let old = read_or_empty(&instructions)?;
     let new = block_remove(&old, claude::ROLES_BLOCK);
-    write_changed(ctx, run, &instructions, &old, &new)?;
+    // relaxkit created the file and nothing else is in it: back it up, so undo restores it, then remove it. A file
+    // that is already gone has nothing to back up. A symlink is never removed: that would drop the owner's link.
+    let created_and_empty = instructions.exists()
+        && !instructions.is_symlink()
+        && new.trim().is_empty()
+        && matches!(
+            original_text(ctx, run, &instructions)?,
+            OriginalText::Created
+        );
+    if created_and_empty {
+        record_backup(ctx, run, &instructions)?;
+        if !ctx.dry_run {
+            fs::remove_file(&instructions)
+                .with_context(|| format!("cannot remove {}", instructions.display()))?;
+        }
+    } else {
+        write_changed(ctx, run, &instructions, &old, &new)?;
+    }
     if settings_done {
         lines.push(removal(
             ctx,
@@ -127,6 +149,19 @@ fn remove_claude(
             ctx.out.palette(),
             Mark::Warn,
             "left the Claude Code settings alone: no earlier run journaled them, so there is nothing to revert; removed its roles block",
+        ));
+    }
+    if created_and_empty {
+        lines.push(removal(
+            ctx,
+            &format!(
+                "removed {}, which relaxkit created and left empty",
+                instructions.display()
+            ),
+            &format!(
+                "would remove {}, which relaxkit created and left empty",
+                instructions.display()
+            ),
         ));
     }
     Ok(())
@@ -316,6 +351,50 @@ fn remove_bin_copies_except(
     Ok(())
 }
 
+/// Whether uninstall removes the lock: it exists and is not a link. A link is never removed, since that would delete
+/// the owner's file while undo restores only the bytes (as for CLAUDE.md, Task 8).
+fn lock_is_removed(ctx: &Ctx) -> bool {
+    let path = ctx.dirs.config.join("lock.toml");
+    path.exists() && !path.is_symlink()
+}
+
+/// Removes relaxkit's lock file. It is journaled before it goes, so `relaxkit undo` restores it. A dry run only reports
+/// the removal. A link or an absent lock is left alone.
+fn remove_lock(ctx: &Ctx, run: &RunId, lines: &mut Vec<String>) -> Result<()> {
+    if !lock_is_removed(ctx) {
+        return Ok(());
+    }
+    let path = ctx.dirs.config.join("lock.toml");
+    record_backup(ctx, run, &path)?;
+    if !ctx.dry_run {
+        fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
+    }
+    lines.push(removal(
+        ctx,
+        &format!(
+            "removed relaxkit's lock file {}, and undo restores it",
+            path.display()
+        ),
+        &format!("relaxkit's lock file {} would be removed", path.display()),
+    ));
+    Ok(())
+}
+
+/// What the config line says about the lock. The lock is named as removed only when uninstall removes it: a dry run
+/// says the removal is still to come, a link is said to be kept, and an absent lock is not mentioned.
+fn lock_note(ctx: &Ctx) -> &'static str {
+    let path = ctx.dirs.config.join("lock.toml");
+    if path.is_symlink() {
+        "; the lock is a symlink, so it is kept"
+    } else if !path.exists() {
+        ""
+    } else if ctx.dry_run {
+        "; the lock would be removed, and undo would restore it"
+    } else {
+        "; the lock is removed, and undo restores it"
+    }
+}
+
 /// A removal this run made, or in a dry run the removal it would make, since a dry run removes nothing.
 fn removal(ctx: &Ctx, done: &str, planned: &str) -> String {
     let palette = ctx.out.palette();
@@ -326,8 +405,8 @@ fn removal(ctx: &Ctx, done: &str, planned: &str) -> String {
     }
 }
 
-/// What stays: relaxkit's own binary, its config, lock and journal, the Node link, the pack's plugins, and any
-/// `DISABLE_TELEMETRY` the owner opted into.
+/// What stays: relaxkit's own binary, its config and journal, the Node link, the pack's plugins, and any
+/// `DISABLE_TELEMETRY` the owner opted into. The lock is read here for the tool lines and removed after this list.
 fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
     let palette = ctx.out.palette();
     if let Ok(exe) = std::env::current_exe() {
@@ -344,9 +423,10 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
         palette,
         Mark::Skip,
         &format!(
-            "relaxkit's config, lock and journal under {} and {}: kept so `relaxkit undo` still works",
+            "relaxkit's config and journal under {} and {}: kept so `relaxkit undo` still works{}",
             ctx.dirs.config.display(),
-            ctx.dirs.data.display()
+            ctx.dirs.data.display(),
+            lock_note(ctx)
         ),
     ));
     lines.push(detail(
@@ -359,15 +439,28 @@ fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
     ));
     if let Some(lock) = Lockfile::load(ctx)? {
         for (name, tool) in &lock.tools {
-            lines.push(detail(
-                palette,
-                Mark::Skip,
-                &format!(
-                    "plugin or tool {name} {} on {}: remove it with its host's own command",
-                    tool.version,
-                    tool.hosts.join(", ")
-                ),
-            ));
+            if tool.host_versions_differ() {
+                for host in &tool.hosts {
+                    lines.push(detail(
+                        palette,
+                        Mark::Skip,
+                        &format!(
+                            "plugin or tool {name} {} on {host}: remove it with its host's own command",
+                            tool.version_for(host)
+                        ),
+                    ));
+                }
+            } else {
+                lines.push(detail(
+                    palette,
+                    Mark::Skip,
+                    &format!(
+                        "plugin or tool {name} {} on {}: remove it with its host's own command",
+                        tool.installed_text(),
+                        tool.hosts.join(", ")
+                    ),
+                ));
+            }
         }
     }
     for host in detect_hosts(ctx) {
@@ -435,6 +528,7 @@ fn write_changed(ctx: &Ctx, run: &RunId, path: &Path, old: &str, new: &str) -> R
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -448,10 +542,51 @@ mod tests {
     use crate::net::FakeNet;
     use crate::platform::Os;
     use crate::sandbox::GhPath;
+    use crate::state::lockfile::LockedTool;
     use crate::state::safe_write;
 
     fn get(text: &str, path: &[&str]) -> Option<Value> {
         jsonc_get(text, path).unwrap()
+    }
+
+    #[test]
+    fn a_tool_whose_hosts_differ_is_listed_once_per_host_at_its_own_version() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+        let tools = BTreeMap::from([(
+            "superpowers".to_string(),
+            LockedTool {
+                version: "7.0.2-22f0b463e7a5".to_string(),
+                route: "claude-plugin:anthropic-plugin-directory".to_string(),
+                hosts: vec!["claude".to_string(), "opencode".to_string()],
+                host_versions: BTreeMap::from([
+                    ("claude".to_string(), "7.0.2-22f0b463e7a5".to_string()),
+                    ("opencode".to_string(), "7.0.2".to_string()),
+                ]),
+            },
+        )]);
+        let lock = Lockfile {
+            relaxkit: "0.1.0".to_string(),
+            tools,
+        };
+        lock.save(&ctx, &RunId::new()).unwrap();
+
+        let mut lines = Vec::new();
+        leftovers(&ctx, &mut lines).unwrap();
+
+        let text = lines.join("\n");
+        assert!(
+            text.contains(
+                "plugin or tool superpowers 7.0.2-22f0b463e7a5 on claude: remove it with its host's own command"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "plugin or tool superpowers 7.0.2 on opencode: remove it with its host's own command"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

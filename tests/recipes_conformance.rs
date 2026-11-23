@@ -148,9 +148,14 @@ type Installed = anyhow::Result<Vec<(HostKind, Outcome)>>;
 
 /// Runs `install` for one recipe on one host. Returns the result and every command that was asked for.
 fn install(rig: &Rig, id: &str, kind: HostKind) -> (Installed, Vec<Vec<String>>) {
+    install_on(rig, id, &[kind])
+}
+
+/// Runs `install` for one recipe with one host per kind, in one run. Returns the result and every command asked for.
+fn install_on(rig: &Rig, id: &str, kinds: &[HostKind]) -> (Installed, Vec<Vec<String>>) {
     let recipes = load_all().unwrap();
     let recipe = recipes.iter().find(|r| r.id == id).expect("recipe exists");
-    let hosts = vec![host(rig, kind)];
+    let hosts: Vec<Box<dyn Host>> = kinds.iter().map(|&kind| host(rig, kind)).collect();
     let node = NodeInstall {
         version: "v24.22.3".to_string(),
         root: rig
@@ -725,6 +730,34 @@ fn ccusage_has_no_host_registration_and_the_lock_records_the_pin() {
 }
 
 #[test]
+fn ccusage_on_both_hosts_in_one_run_keeps_the_lock_text_unchanged() {
+    let rig = prepared();
+    let (result, calls) = install_on(&rig, "ccusage", &[HostKind::Claude, HostKind::Opencode]);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(calls.is_empty(), "{calls:?}");
+    let lock = Lockfile::load(&rig.ctx).unwrap().unwrap();
+    assert_eq!(lock.tools["ccusage"].version, "20.0.51");
+    // Both hosts report the same version, so the lock keeps no per-host table (R-D).
+    assert!(lock.tools["ccusage"].host_versions.is_empty(), "{lock:?}");
+}
+
+#[test]
+fn hosts_that_report_different_versions_keep_their_own_in_the_lock() {
+    let rig = prepared();
+    rig.rec.reply(
+        "claude plugin list",
+        Output::ok("    ❯ superpowers@anthropic-plugin-directory  Version: 7.0.2-22f0b463e7a5  Scope: user  Status: ✔ enabled\n"),
+    );
+    let (result, _) = install_on(&rig, "superpowers", &[HostKind::Claude, HostKind::Opencode]);
+    assert!(result.is_ok(), "{result:?}");
+    let lock = Lockfile::load(&rig.ctx).unwrap().unwrap();
+    let superpowers = &lock.tools["superpowers"];
+    assert_eq!(superpowers.version, "7.0.2-22f0b463e7a5");
+    assert_eq!(superpowers.version_for("claude"), "7.0.2-22f0b463e7a5");
+    assert_eq!(superpowers.version_for("opencode"), "7.0.2");
+}
+
+#[test]
 fn claude_md_management_resolves_its_marketplace_from_the_catalog() {
     let rig = prepared();
     write_catalog(
@@ -784,6 +817,121 @@ fn an_unlisted_plugin_fails_closed_and_installs_nothing() {
     let err = format!("{:#}", result.unwrap_err());
     assert!(
         err.contains("no Claude marketplace lists `frontend-design`"),
+        "{err}"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.contains(&"install".to_string())),
+        "{calls:?}"
+    );
+    let add = tokens(&[
+        "claude",
+        "plugin",
+        "marketplace",
+        "add",
+        "anthropics/claude-plugins-official",
+    ]);
+    assert_eq!(
+        calls.iter().filter(|call| **call == add).count(),
+        1,
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_plugin_only_the_official_marketplace_lists_is_installed_after_adding_it() {
+    let rig = prepared();
+    rig.rec.reply(
+        "claude plugin marketplace list",
+        Output::ok("❯ anthropic-plugin-directory   Source: Built in (Anthropic Directory)\n"),
+    );
+    write_catalog(&rig, "claude-plugins-official", &["claude-md-management"]);
+    let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
+    assert!(result.is_ok(), "{result:?}");
+    let add = calls
+        .iter()
+        .position(|call| {
+            *call
+                == tokens(&[
+                    "claude",
+                    "plugin",
+                    "marketplace",
+                    "add",
+                    "anthropics/claude-plugins-official",
+                ])
+        })
+        .expect("the official marketplace is added");
+    let install = calls
+        .iter()
+        .position(|call| {
+            *call
+                == tokens(&[
+                    "claude",
+                    "plugin",
+                    "install",
+                    "claude-md-management@claude-plugins-official",
+                ])
+        })
+        .expect("the plugin is installed from the official marketplace");
+    assert!(add < install, "{calls:?}");
+}
+
+#[test]
+fn the_official_marketplace_is_not_added_when_it_is_already_listed() {
+    let rig = prepared();
+    rig.rec.reply(
+        "claude plugin marketplace list",
+        Output::ok(
+            "❯ anthropic-plugin-directory   Source: Built in (Anthropic Directory)\n\
+             ❯ claude-plugins-official   Source: GitHub (anthropics/claude-plugins-official)\n",
+        ),
+    );
+    write_catalog(&rig, "claude-plugins-official", &["claude-md-management"]);
+    let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        calls.iter().all(|call| !call.contains(&"add".to_string())),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_dry_run_on_a_fresh_claude_plans_the_official_marketplace_and_does_not_fail() {
+    let mut rig = prepared();
+    rig.ctx.dry_run = true;
+    rig.rec.reply(
+        "claude plugin marketplace list",
+        Output::ok("❯ anthropic-plugin-directory   Source: Built in (Anthropic Directory)\n"),
+    );
+    let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        calls.iter().all(
+            |call| !call.contains(&"add".to_string()) && !call.contains(&"install".to_string())
+        ),
+        "{calls:?}"
+    );
+    let planned = "claude plugin marketplace add anthropics/claude-plugins-official";
+    let lines = rig.ctx.out.lines();
+    assert!(lines.iter().any(|line| line.contains(planned)), "{lines:?}");
+}
+
+#[test]
+fn a_failed_add_of_the_official_marketplace_names_the_marketplace() {
+    let rig = prepared();
+    rig.rec.reply(
+        "claude plugin marketplace list",
+        Output::ok("❯ anthropic-plugin-directory   Source: Built in (Anthropic Directory)\n"),
+    );
+    rig.rec.reply(
+        "claude plugin marketplace add",
+        Output::fail(1, "network unreachable"),
+    );
+    let (result, calls) = install(&rig, "claude-md-management", HostKind::Claude);
+    let err = format!("{:#}", result.unwrap_err());
+    assert!(
+        err.contains("cannot add the `claude-plugins-official` marketplace"),
         "{err}"
     );
     assert!(

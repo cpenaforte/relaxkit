@@ -21,6 +21,13 @@ use crate::tools::engine::{Engine, HandlerFn};
 /// marketplace is added only when no marketplace of that name is listed yet.
 const KNOWN_MARKETPLACE_SOURCES: [(&str, &str); 1] = [("caveman", "JuliusBrussee/caveman")];
 
+/// The marketplace the Claude plugins of the pack come from, with its source. Claude Code does not list it on a
+/// machine that never added it, so `resolve_marketplace` adds it when no listed marketplace has the plugin.
+const OFFICIAL_MARKETPLACE: (&str, &str) = (
+    "claude-plugins-official",
+    "anthropics/claude-plugins-official",
+);
+
 /// The handler registry. A name maps to its code, and anything else is `None`.
 pub fn lookup(name: &str) -> Option<HandlerFn> {
     match name {
@@ -107,8 +114,9 @@ fn serena_init(
 /// Resolves the marketplace a Claude plugin comes from, and adds a known marketplace that is missing.
 ///
 /// A plugin spec that names `{marketplace}` is resolved in this order: the marketplace the plugin is already
-/// installed from; then the first listed marketplace whose catalog lists the plugin. A catalog is read from disk.
-/// If none lists it, the install fails and nothing is installed.
+/// installed from; then the first listed marketplace whose catalog lists the plugin; then the official marketplace,
+/// which is added and tried last. A catalog is read from disk. If none lists it, the install fails and nothing is
+/// installed.
 fn claude_marketplace(
     engine: &Engine<'_>,
     recipe: &Recipe,
@@ -162,9 +170,18 @@ fn resolve_marketplace(engine: &Engine<'_>, host: &dyn Host, plugin: &str) -> Re
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| anyhow!("the Claude config directory is not known"))?;
-    for marketplace in listed_marketplaces(engine, host)? {
-        if catalog_lists(&config_dir, &marketplace, plugin)? {
-            return Ok(marketplace);
+    let listed = listed_marketplaces(engine, host)?;
+    for marketplace in &listed {
+        if catalog_lists(&config_dir, marketplace, plugin)? {
+            return Ok(marketplace.clone());
+        }
+    }
+    let (official, source) = OFFICIAL_MARKETPLACE;
+    if !listed.iter().any(|name| name == official) {
+        host.marketplace_add(engine.ctx, source)
+            .with_context(|| format!("cannot add the `{official}` marketplace"))?;
+        if engine.ctx.dry_run || catalog_lists(&config_dir, official, plugin)? {
+            return Ok(official.to_string());
         }
     }
     bail!(

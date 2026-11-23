@@ -12,7 +12,7 @@ use crate::config::{KitConfig, effective, parse_compact};
 use crate::config_apply::{claude, opencode, voice};
 use crate::ctx::Ctx;
 use crate::edit::jsonc_remove;
-use crate::exec::Cmd;
+use crate::host::opencode::list_models;
 use crate::host::{Host, HostInfo, HostKind, InstalledPlugin, detect_hosts};
 use crate::presets::Voice;
 use crate::roles::{ModelSpec, Role, RoleSetting, resolve_claude, resolve_opencode};
@@ -228,7 +228,7 @@ pub(crate) fn refuse_tier_without_list(
         return Ok(());
     }
     bail!(
-        "OpenCode's model list could not be read, so a tier cannot be applied to OpenCode now: pin an exact model (provider/model) or retry when `opencode models` works"
+        "OpenCode's model list could not be read, so a tier cannot be applied to OpenCode now: pin an exact model (provider/model) or retry when `opencode models --standalone` works"
     )
 }
 
@@ -433,7 +433,7 @@ fn remove_host_role(config: &mut KitConfig, host: HostKind, role: Role) {
 
 // ---- validation ------------------------------------------------------------------------------------------------
 
-/// Checks an exact pin (spec 6.1, rule 4). OpenCode's model must be in `opencode models`; an unknown name is rejected
+/// Checks an exact pin (spec 6.1, rule 4). OpenCode's model must be in `opencode models --standalone`; an unknown name is rejected
 /// with the closest matches, and an unreadable list accepts the pin with a warning. Claude Code takes aliases and
 /// `claude-*` ids, and warns on anything else. Without an OpenCode host there is no list, so nothing is checked there.
 fn check_pin(
@@ -456,11 +456,11 @@ fn check_pin(
                 let id = format!("{}/{}", spec.provider, spec.model);
                 match listing(ctx, host.as_ref()) {
                     None => ctx.out.warn(&format!(
-                        "could not read `opencode models`, so `{value}` is accepted without a check"
+                        "could not read `opencode models --standalone`, so `{value}` is accepted without a check"
                     )),
                     Some(ids) if ids.contains(&id) => {}
                     Some(ids) => bail!(
-                        "`{value}` is not a model OpenCode lists. Closest matches: {}. `opencode models` prints the full list",
+                        "`{value}` is not a model OpenCode lists. Closest matches: {}. `opencode models --standalone` prints the full list",
                         closest(&id, &ids).join(", ")
                     ),
                 }
@@ -511,20 +511,9 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
 
 // ---- host access -----------------------------------------------------------------------------------------------
 
-/// The OpenCode model ids from `opencode models`, or `None` when the list cannot be read or is empty.
+/// The OpenCode model ids, or `None` when the list cannot be read or is empty.
 fn listing(ctx: &Ctx, host: &dyn Host) -> Option<Vec<String>> {
-    let binary = host.info().binary.to_string_lossy().into_owned();
-    let out = ctx.runner.run(&Cmd::new(&binary).arg("models")).ok()?;
-    if out.code != 0 {
-        return None;
-    }
-    let ids: Vec<String> = out
-        .stdout
-        .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .map(str::to_string)
-        .collect();
-    (!ids.is_empty()).then_some(ids)
+    list_models(ctx, host)
 }
 
 /// The hosts this command acts on. With `--project` they are wrapped so their files are the project's.
