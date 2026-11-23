@@ -338,8 +338,8 @@ fn shown_argv(argv: &[String], version: &str) -> String {
         .join(" ")
 }
 
-/// Each locked tool's probe, for each installed host it is locked on. A probe whose program is set at install time
-/// (`{npx}`) is not run here.
+/// Each locked tool's probe, for each installed host it is locked on. An `{npx}` probe runs with the pack's npx, the
+/// one the MCP checks use. Any other placeholder program is set at install time, so it is not run here.
 fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Result<()> {
     let Some(lock) = Lockfile::load(ctx)? else {
         return Ok(());
@@ -363,7 +363,14 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             let Some((program, args)) = probe.argv.split_first() else {
                 continue;
             };
-            let shown = shown_argv(&probe.argv, tool.version_for(host_name));
+            let version = tool.version_for(host_name);
+            let shown = shown_argv(&probe.argv, version);
+            // `shown` keeps the bare `npx` a person would type. The probe runs the pack's npx at the same locked version.
+            let npx = npx_bin(ctx).to_string_lossy().into_owned();
+            let program = match program.as_str() {
+                "{npx}" => npx.as_str(),
+                other => other,
+            };
             if program.starts_with('{') {
                 // Not run is never an ok: the probe is unverified until someone runs it (ruling Important item 6).
                 checks.push(Check::warn(
@@ -383,7 +390,9 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             };
             let cmd = args
                 .iter()
-                .fold(Cmd::new(&path.to_string_lossy()), |cmd, arg| cmd.arg(arg))
+                .fold(Cmd::new(&path.to_string_lossy()), |cmd, arg| {
+                    cmd.arg(&arg.replace("{version}", version))
+                })
                 .env("PATH", &probe_path(ctx));
             let expected = expected_text(recipe, kind, probe);
             checks.push(match ctx.runner.run(&cmd) {
@@ -773,10 +782,10 @@ pub fn to_json(checks: &[Check]) -> Value {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::exec::FakeRunner;
+    use crate::exec::{FakeRunner, Output};
     use crate::host::HostInfo;
     use crate::host::claude::ClaudeHost;
     use crate::host::opencode::OpencodeHost;
@@ -830,19 +839,20 @@ mod tests {
         let mut checks = Vec::new();
         tool_probe_checks(&ctx, &hosts, &mut checks).unwrap();
 
-        let fix = |id: &str| {
+        // No pack npx here: each probe cannot run, and its message shows the command at the locked version.
+        let message = |id: &str| {
             checks
                 .iter()
                 .find(|check| check.id == id)
-                .and_then(|check| check.fix.clone())
+                .map(|check| check.message.clone())
                 .unwrap_or_default()
         };
         assert!(
-            fix("tool.ccusage.claude").contains("ccusage@20.0.51"),
+            message("tool.ccusage.claude").contains("ccusage@20.0.51"),
             "{checks:?}"
         );
         assert!(
-            fix("tool.ccusage.opencode").contains("ccusage@20.0.52"),
+            message("tool.ccusage.opencode").contains("ccusage@20.0.52"),
             "{checks:?}"
         );
     }
@@ -855,6 +865,93 @@ mod tests {
             shown_argv(&argv, "20.0.51"),
             "npx -y ccusage@20.0.51 --offline --help"
         );
+    }
+
+    /// A file that runs, standing in for a binary on disk.
+    fn make_executable(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+    }
+
+    /// Locks ccusage 20.0.51 on Claude under `root`, and returns Claude's host.
+    fn ccusage_on_claude(root: &Path) -> Vec<Box<dyn Host>> {
+        let tools = BTreeMap::from([(
+            "ccusage".to_string(),
+            LockedTool {
+                version: "20.0.51".to_string(),
+                route: "npm".to_string(),
+                hosts: vec!["claude".to_string()],
+                host_versions: BTreeMap::from([("claude".to_string(), "20.0.51".to_string())]),
+            },
+        )]);
+        let lock = Lockfile {
+            relaxkit: "0.1.0".to_string(),
+            tools,
+        };
+        lock.save(
+            &Ctx::for_test(root, FakeRunner::new(), FakeNet::new()),
+            &RunId::new(),
+        )
+        .unwrap();
+        vec![Box::new(ClaudeHost::new(
+            HostInfo {
+                kind: HostKind::Claude,
+                binary: PathBuf::from("/usr/local/bin/claude"),
+                version: "2.1.330".to_string(),
+            },
+            root.join(".claude"),
+            root.join(".claude.json"),
+        ))]
+    }
+
+    #[test]
+    fn an_npx_probe_runs_with_the_packs_npx() {
+        let root = tempfile::tempdir().unwrap();
+        let hosts = ccusage_on_claude(root.path());
+        let npx = npx_bin(&Ctx::for_test(
+            root.path(),
+            FakeRunner::new(),
+            FakeNet::new(),
+        ));
+        make_executable(&npx);
+        let runner = FakeRunner::new().reply(
+            &format!("{} -y ccusage@20.0.51 --offline --help", npx.display()),
+            Output::ok("ccusage 20.0.51\n"),
+        );
+        let ctx = Ctx::for_test(root.path(), runner, FakeNet::new());
+
+        let mut checks = Vec::new();
+        tool_probe_checks(&ctx, &hosts, &mut checks).unwrap();
+
+        let probe = checks
+            .iter()
+            .find(|check| check.id == "tool.ccusage.claude")
+            .unwrap();
+        assert_eq!(probe.status, CheckStatus::Ok, "{checks:?}");
+        assert!(
+            checks.iter().all(|check| check.status != CheckStatus::Warn),
+            "{checks:?}"
+        );
+    }
+
+    #[test]
+    fn an_npx_probe_fails_when_the_pack_has_no_npx() {
+        // Setup installs the pack's node with its npx. Without that npx the probe cannot run, whatever npx the shell has.
+        let root = tempfile::tempdir().unwrap();
+        let hosts = ccusage_on_claude(root.path());
+        let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
+
+        let mut checks = Vec::new();
+        tool_probe_checks(&ctx, &hosts, &mut checks).unwrap();
+
+        let probe = checks
+            .iter()
+            .find(|check| check.id == "tool.ccusage.claude")
+            .unwrap();
+        assert_eq!(probe.status, CheckStatus::Fail, "{checks:?}");
+        assert!(probe.message.contains("cannot run"), "{checks:?}");
     }
 
     fn check(id: &str, status: CheckStatus, message: &str, fix: Option<&str>) -> Check {
