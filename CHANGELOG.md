@@ -25,8 +25,8 @@ All notable changes to relaxkit are recorded here. The format follows
 - Tool recipes name no version. An install takes the newest release the registry reports, and a repair
   with no lock entry does the same. Tools that are already present are recognized without a registry
   lookup, so that check needs no network.
-- Runtimes pinned to a version (nvm v0.41.0, uv 0.13.9 and Node major 24) are the exception and stay at
-  those versions.
+- nvm v0.41.0 and uv 0.13.9 stay at those versions. Node stays on major 24 and moves to its newest 24.x
+  release.
 - `relaxkit undo` names each Claude marketplace that a run added, with the command that removes it. It
   does not remove the marketplace itself.
 
@@ -75,6 +75,15 @@ All notable changes to relaxkit are recorded here. The format follows
 - Setup installs the pack's tools on each host. It detects each tool, adopts an existing install instead
   of reinstalling it, and records each install in `lock.toml`. A failed step stops that tool and leaves
   the lock unchanged.
+- On a fresh machine, `relaxkit setup` applies the balanced preset with the caveman voice, turns off
+  Superpowers telemetry, and sets no compact threshold. An existing config file is kept.
+- When it runs again, `relaxkit setup` repairs a failing probe or MCP command. It reinstalls the locked
+  tool and checks again. A repair that still fails leaves the check failed, with its fix line, and setup
+  exits 1.
+- `relaxkit doctor` checks that each locked MCP entry is in the host's config. A missing entry is a failed
+  check, and setup re-adds it.
+- `relaxkit doctor` checks that each locked MCP command resolves on the MCP PATH, without starting the
+  server. A missing command is a failed check with a fix line.
 - `relaxkit status` shows the preset, the hosts, the installed tools against their locked versions, and
   the sandbox state, and writes nothing. `relaxkit doctor` runs the health checks, prints them as JSON
   with `--json`, and exits 1 when a check fails.
