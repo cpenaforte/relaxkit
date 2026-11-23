@@ -243,6 +243,10 @@ fn opencode_checks(ctx: &Ctx, host: &dyn Host, checks: &mut Vec<Check>) -> Resul
 
 /// The sandbox self-test for one host (spec 7). A probe that is not refused fails the check. Nothing is run in a
 /// dry run.
+/// What a failed self-test asks for. The probes run Claude Code, which refuses to answer until it is logged in, and a
+/// new machine is usually not logged in yet, so the fix names that first.
+const SELFTEST_FIX: &str = "if Claude Code is not logged in, run `claude` and then `/login`; then run `relaxkit setup` again. Until every probe passes, the sandbox is not enforcing";
+
 fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>) -> Result<()> {
     let kind = host.info().kind.product_name();
     if ctx.dry_run {
@@ -275,11 +279,7 @@ fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>)
         } else {
             format!("{kind}: the sandbox did not refuse: {}", failed.join("; "))
         };
-        checks.push(Check::fail(
-            id,
-            message,
-            "run `relaxkit setup` again; until every probe passes, the sandbox is not enforcing",
-        ));
+        checks.push(Check::fail(id, message, SELFTEST_FIX));
     }
     Ok(())
 }
@@ -787,6 +787,13 @@ mod tests {
     use super::*;
     use crate::exec::{FakeRunner, Output};
     use crate::host::HostInfo;
+
+    #[test]
+    fn the_selftest_fix_names_the_claude_code_login_a_new_machine_is_missing() {
+        // A probe runs Claude Code, which refuses to answer until it is logged in; the fix must say so.
+        assert!(SELFTEST_FIX.contains("/login"), "{SELFTEST_FIX}");
+        assert!(SELFTEST_FIX.contains("relaxkit setup"), "{SELFTEST_FIX}");
+    }
     use crate::host::claude::ClaudeHost;
     use crate::host::opencode::OpencodeHost;
     use crate::net::FakeNet;

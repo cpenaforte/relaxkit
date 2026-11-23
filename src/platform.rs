@@ -84,13 +84,20 @@ pub fn playwright_cache_dir(home: &Path) -> Result<PathBuf> {
 /// Paths of the Chromium executable inside one `chromium-<revision>` directory, for this OS and architecture.
 /// The first one that exists is used.
 pub fn chromium_candidates() -> Result<Vec<&'static str>> {
-    Ok(match current_os()? {
-        Os::MacOs => vec![
+    Ok(chromium_candidates_for(current_os()?, current_arch()?))
+}
+
+/// The same paths for a given OS and CPU. Playwright unpacks Linux x86_64 to `chrome-linux64` and Linux arm64 to
+/// `chrome-linux-arm64`; `chrome-linux` is the layout of older Playwright releases.
+pub fn chromium_candidates_for(os: Os, arch: Arch) -> Vec<&'static str> {
+    match (os, arch) {
+        (Os::MacOs, _) => vec![
             "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
             "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
         ],
-        Os::Linux => vec!["chrome-linux64/chrome", "chrome-linux/chrome"],
-    })
+        (Os::Linux, Arch::X86_64) => vec!["chrome-linux64/chrome", "chrome-linux/chrome"],
+        (Os::Linux, Arch::Aarch64) => vec!["chrome-linux-arm64/chrome", "chrome-linux/chrome"],
+    }
 }
 
 /// True when `path` is a regular file with at least one execute bit set.
@@ -231,6 +238,21 @@ mod tests {
         assert_eq!(current_arch().unwrap(), Arch::Aarch64);
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         assert!(current_arch().is_err());
+    }
+
+    #[test]
+    fn linux_chromium_is_found_in_the_layout_playwright_writes_for_each_cpu() {
+        // Playwright unpacks Linux x86_64 to `chrome-linux64` and Linux arm64 to `chrome-linux-arm64`.
+        assert_eq!(
+            chromium_candidates_for(Os::Linux, Arch::X86_64)[0],
+            "chrome-linux64/chrome"
+        );
+        assert!(
+            chromium_candidates_for(Os::Linux, Arch::Aarch64)
+                .contains(&"chrome-linux-arm64/chrome"),
+            "{:?}",
+            chromium_candidates_for(Os::Linux, Arch::Aarch64)
+        );
     }
 
     #[test]
