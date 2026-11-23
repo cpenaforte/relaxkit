@@ -10,7 +10,7 @@
     {
       "name": "relaxkit",
       "source": "./adapters/claude-plugin",
-      "description": "Sets up and manages a curated set of agent tools on Linux and macOS"
+      "description": "A curated pack of agent tools for Claude Code and OpenCode: install, configure, update and diagnose from one CLI."
     }
   ]
 }

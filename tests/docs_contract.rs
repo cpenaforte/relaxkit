@@ -16,7 +16,6 @@ fn readme() -> String {
 }
 
 /// The product description, used by later checks against the CLI, the manifests and the README.
-#[allow(dead_code)] // first read by the description checks added in a later task
 const DESCRIPTION: &str = "A curated pack of agent tools for Claude Code and OpenCode: install, configure, update and diagnose from one CLI.";
 
 /// Public files that still cite private working files. Each must keep citing one of the phrases the cite test
@@ -235,6 +234,14 @@ fn readme_documents_model_pinning_from_the_cli() {
         readme.contains("--project"),
         "README.md does not document --project"
     );
+}
+
+#[test]
+fn the_product_has_one_description() {
+    assert_eq!(env!("CARGO_PKG_DESCRIPTION"), DESCRIPTION);
+    assert_eq!(Cli::command().get_about().unwrap().to_string(), DESCRIPTION);
+    assert!(read(".claude-plugin/marketplace.json").contains(DESCRIPTION));
+    assert!(read("adapters/claude-plugin/.claude-plugin/plugin.json").contains(DESCRIPTION));
 }
 
 #[test]

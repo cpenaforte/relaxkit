@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crate::brand;
 
 #[derive(Debug, Parser)]
-#[command(name = brand::BIN, bin_name = brand::BIN, version, about = "Set up and manage a curated set of agent tools")]
+#[command(name = brand::BIN, bin_name = brand::BIN, version, about = env!("CARGO_PKG_DESCRIPTION"))]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
