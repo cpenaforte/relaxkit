@@ -108,8 +108,14 @@ pub fn installed_chromium(ctx: &Ctx) -> Result<PathBuf> {
     chromium_binary_in(&root)
 }
 
-/// The Chromium executable in the newest `chromium-<revision>` directory under `root`.
+/// The Chromium executable in the newest `chromium-<revision>` directory under `root`, for this OS and CPU.
 pub fn chromium_binary_in(root: &Path) -> Result<PathBuf> {
+    find_chromium(root, &platform::chromium_candidates()?)
+}
+
+/// The Chromium executable in the newest `chromium-<revision>` directory under `root`, at the first of `candidates`
+/// that exists inside that directory.
+fn find_chromium(root: &Path, candidates: &[&str]) -> Result<PathBuf> {
     let mut newest: Option<(u64, PathBuf)> = None;
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
@@ -132,7 +138,7 @@ pub fn chromium_binary_in(root: &Path) -> Result<PathBuf> {
             root.display()
         )
     })?;
-    for relative in platform::chromium_candidates()? {
+    for relative in candidates {
         let candidate = dir.join(relative);
         if platform::is_executable(&candidate) {
             return Ok(candidate);
@@ -147,7 +153,29 @@ pub fn chromium_binary_in(root: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod location_tests {
     use super::*;
-    use crate::platform::chromium_candidates;
+    use crate::platform::{Arch, Os, chromium_candidates, chromium_candidates_for};
+
+    #[test]
+    fn an_arm64_linux_install_is_found_with_the_arm64_layout() {
+        // The layout Playwright 0.0.86 writes on Linux arm64, which relaxkit did not look for before.
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("chromium-1255");
+        let binary = dir.join("chrome-linux-arm64").join("chrome");
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::write(&binary, "chrome").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let found = find_chromium(
+            root.path(),
+            &chromium_candidates_for(Os::Linux, Arch::Aarch64),
+        )
+        .unwrap();
+
+        assert_eq!(found, binary);
+    }
 
     #[test]
     fn the_newest_revision_wins_and_its_binary_is_found() {

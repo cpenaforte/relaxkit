@@ -23,7 +23,9 @@ pub const STUBS: [&str; 13] = [
 #[cfg(target_os = "macos")]
 const CHROMIUM_BINARY: &str =
     "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const CHROMIUM_BINARY: &str = "chrome-linux-arm64/chrome";
+#[cfg(all(target_os = "linux", not(target_arch = "aarch64")))]
 const CHROMIUM_BINARY: &str = "chrome-linux64/chrome";
 
 /// The Node version the fake nvm reports.
