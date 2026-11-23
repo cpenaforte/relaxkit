@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crate::brand;
 
 #[derive(Debug, Parser)]
-#[command(name = brand::BIN, bin_name = brand::BIN, version, about = env!("CARGO_PKG_DESCRIPTION"))]
+#[command(name = brand::BIN, bin_name = brand::BIN, version, about = env!("CARGO_PKG_DESCRIPTION"), after_help = root_after_help())]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -24,6 +24,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Install prerequisites, the pack, config, sandbox and the GitHub login
+    #[command(after_help = "Examples:\n  relaxkit setup --dry-run\n  relaxkit setup --allow-sudo")]
     Setup {
         /// Run the sandbox's sudo plan (Linux packages). Without it, setup prints the command instead
         #[arg(long)]
@@ -38,6 +39,9 @@ pub enum Command {
         all: bool,
     },
     /// Update relaxkit itself, then each tool, and update the lockfile
+    #[command(
+        after_help = "Examples:\n  relaxkit update --check\n  relaxkit update --self\n  relaxkit update rtk"
+    )]
     Update {
         /// Update only relaxkit itself
         #[arg(long = "self", conflicts_with_all = ["tools_only", "tool"])]
@@ -52,7 +56,10 @@ pub enum Command {
         tool: Option<String>,
     },
     /// Show, set or unset roles, tiers and other preferences
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "Examples:\n  relaxkit config show\n  relaxkit config set implementer cheap\n  relaxkit config set planner anthropic/claude-sonnet-5-5#high\n  relaxkit config unset planner"
+    )]
     Config(ConfigCmd),
     /// Apply a preset
     Preset {
@@ -111,6 +118,14 @@ pub enum ConfigCmd {
         /// Role to show
         key: Option<String>,
     },
+}
+
+/// Root help: the examples, then the link to the documentation.
+fn root_after_help() -> String {
+    format!(
+        "Examples:\n  relaxkit setup --dry-run\n  relaxkit status\n  relaxkit config set implementer cheap\n  relaxkit doctor --all\n  relaxkit undo\nDocumentation: https://github.com/{}/tree/main/docs",
+        brand::REPO
+    )
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

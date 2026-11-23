@@ -155,3 +155,77 @@ fn usage_help_flag_after_the_tool_reaches_the_handler() {
         );
     }
 }
+
+/// Each example line under the `Examples:` block of a help text, without the indent.
+fn help_example_lines(help: &str) -> Vec<String> {
+    let mut in_examples = false;
+    let mut examples = Vec::new();
+    for line in help.lines() {
+        if line == "Examples:" {
+            in_examples = true;
+        } else if in_examples && line.starts_with("  relaxkit ") {
+            examples.push(line.trim_start().to_string());
+        } else if in_examples && line.trim().is_empty() {
+            in_examples = false;
+        }
+    }
+    examples
+}
+
+fn help_text(args: &[&str]) -> String {
+    let output = Command::cargo_bin("relaxkit")
+        .unwrap()
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{args:?} --help failed");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn root_help_has_examples_and_the_docs_link() {
+    let help = help_text(&["--help"]);
+    assert!(
+        help.contains("Examples:"),
+        "root help has no examples:\n{help}"
+    );
+    let link = format!(
+        "https://github.com/{}/tree/main/docs",
+        relaxkit::brand::REPO
+    );
+    let last = help.lines().rfind(|line| !line.trim().is_empty()).unwrap();
+    assert_eq!(last, format!("Documentation: {link}"));
+}
+
+#[test]
+fn setup_config_and_update_help_have_examples() {
+    for cmd in ["setup", "config", "update"] {
+        let help = help_text(&[cmd, "--help"]);
+        assert!(
+            help.contains("Examples:"),
+            "{cmd} help has no examples:\n{help}"
+        );
+    }
+}
+
+#[test]
+fn help_examples_parse() {
+    use clap::Parser;
+    use relaxkit::cli::Cli;
+
+    for args in [
+        &["--help"][..],
+        &["setup", "--help"],
+        &["config", "--help"],
+        &["update", "--help"],
+    ] {
+        let help = help_text(args);
+        let examples = help_example_lines(&help);
+        assert!(!examples.is_empty(), "{args:?} help has no example lines");
+        for example in examples {
+            let words = example.split_whitespace();
+            Cli::try_parse_from(words)
+                .unwrap_or_else(|err| panic!("{args:?} example `{example}` does not parse: {err}"));
+        }
+    }
+}
