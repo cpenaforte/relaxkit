@@ -194,7 +194,7 @@ mod tests {
             .iter()
             .find(|(name, _)| name == "user-agent")
             .map(|(_, value)| value.as_str());
-        assert_eq!(user_agent, Some("relaxkit/0.1.0"), "request:\n{request}");
+        assert_eq!(user_agent, Some("relaxkit/0.1.1"), "request:\n{request}");
         let allowed = ["host", "user-agent", "accept", "accept-encoding"];
         for (name, _) in &headers {
             assert!(
