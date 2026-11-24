@@ -1138,7 +1138,6 @@ fn release_checklist_files_agree_on_the_version() {
         "Cargo.lock",
         "adapters/claude-plugin/.claude-plugin/plugin.json",
         "adapters/opencode-plugin/package.json",
-        "adapters/opencode-plugin/package-lock.json",
     ] {
         assert!(
             releasing.contains(file),

@@ -1,4 +1,4 @@
-//! The sandbox self-test. It drives the pinned sandbox runtime through the Node link and checks
+//! The sandbox self-test. It drives the sandbox runtime through the Node link and checks
 //! three things the sandbox must do: refuse a write outside the project, refuse a direct connection that skips the
 //! proxy, and refuse a host that is not on the allowlist. Nothing here runs unless the caller asks for it.
 
@@ -18,9 +18,11 @@ use crate::runtime::utf8;
 
 /// The sandbox runtime package the self-test drives.
 pub const RUNTIME_PACKAGE: &str = "@anthropic-ai/sandbox-runtime";
-/// The runtime version the self-test drives: the one the OpenCode plugin bundles (`adapters/opencode-plugin/package.json`,
-/// checked by a drift test).
-pub const RUNTIME_PIN: &str = "0.0.83";
+/// The runtime versions the self-test drives: the OpenCode plugin's range (`adapters/opencode-plugin/package.json`,
+/// checked by a drift test). npx resolves the newest version in the range, as npm does when the plugin is installed.
+pub const RUNTIME_RANGE: &str = ">=0.0.83 <1.0.0";
+/// The lowest runtime version the plugin's code was tested against: the lower bound of `RUNTIME_RANGE`.
+pub const RUNTIME_MIN: &str = "0.0.83";
 
 /// The probe names, in the order `selftest` runs them.
 pub const PROBES: [&str; 3] = [
@@ -40,13 +42,13 @@ pub struct ProbeResult {
     pub detail: String,
 }
 
-/// Runs the three probes through the pinned runtime and reports each one. A probe that cannot run is a failure.
+/// Runs the three probes through the runtime range and reports each one. A probe that cannot run is a failure.
 pub fn selftest(ctx: &Ctx, host: &dyn Host) -> Vec<ProbeResult> {
-    selftest_with(ctx, host, RUNTIME_PIN)
+    selftest_with(ctx, host, RUNTIME_RANGE)
 }
 
-/// Runs the three probes through runtime `runtime` (an exact version). An update passes the runtime the candidate
-/// plugin declares, so the candidate is proven with the runtime it will run on.
+/// Runs the three probes through runtime `runtime` (a version or a range, as npx reads it). An update passes the
+/// runtime the candidate plugin declares, so the candidate is proven with the runtime it will run on.
 pub fn selftest_with(ctx: &Ctx, host: &dyn Host, runtime: &str) -> Vec<ProbeResult> {
     let kind = host.info().kind;
     if ctx.dry_run {
@@ -94,13 +96,13 @@ pub fn selftest_with(ctx: &Ctx, host: &dyn Host, runtime: &str) -> Vec<ProbeResu
         .collect()
 }
 
-/// The command for probe `index`: the pinned runtime through the Node link, with the self-test's settings, run from
+/// The command for probe `index`: the runtime range through the Node link, with the self-test's settings, run from
 /// the self-test project directory. The probe's own shell script follows `sh -c`.
 pub fn probe_command(ctx: &Ctx, index: usize) -> Result<Cmd> {
-    probe_command_with(ctx, index, RUNTIME_PIN)
+    probe_command_with(ctx, index, RUNTIME_RANGE)
 }
 
-/// `probe_command` through runtime `runtime`.
+/// `probe_command` through runtime `runtime` (a version or a range).
 pub fn probe_command_with(ctx: &Ctx, index: usize, runtime: &str) -> Result<Cmd> {
     let npx = utf8(&npx_bin(ctx))?.to_string();
     let package = format!("{RUNTIME_PACKAGE}@{runtime}");

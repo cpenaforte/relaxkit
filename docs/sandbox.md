@@ -46,7 +46,7 @@ With `--allow-sudo`, the one sudo run installs both packages with `apt-get`. On 
 
 The sandbox was checked live against OpenCode 2.2.6 on 2026-11-22. That statement is quoted from the 0.1.3 README and was not re-run; the [verification record](verification.md) lists it with the other checks.
 
-The plugin is a fork of `opencode-sandbox` 0.7.0, which is MIT licensed, built on `@anthropic-ai/sandbox-runtime` 0.0.83. Its settings are fixed:
+The plugin is a fork of `opencode-sandbox` 0.7.0, which is MIT licensed, built on `@anthropic-ai/sandbox-runtime`, in the range `>=0.0.83 <1.0.0`; `doctor` reports the version the plugin installed. Its settings are fixed:
 
 - It runs in enforce mode. When the sandbox cannot wrap a command, the command is blocked with the message `Sandbox unavailable in enforce mode; command blocked`.
 - A project file cannot change the settings, and no `OPENCODE_SANDBOX_*` or `OPENCODE_DISABLE_SANDBOX` variable does. The settings are built in code, from the locations of the OpenCode config directory and the temporary directory.

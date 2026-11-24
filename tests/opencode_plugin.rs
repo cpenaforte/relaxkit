@@ -79,10 +79,28 @@ fn plugin_package_matches_the_crate() {
     let package = package_json();
     assert_eq!(package["name"], "relaxkit-opencode", "{package}");
     assert_eq!(package["version"], env!("CARGO_PKG_VERSION"), "{package}");
+    // The plugin takes the newest runtime in a range, so its dependency must be the crate's range.
     assert_eq!(
         package["dependencies"]["@anthropic-ai/sandbox-runtime"],
-        relaxkit::sandbox::selftest::RUNTIME_PIN,
+        relaxkit::sandbox::selftest::RUNTIME_RANGE,
         "{package}"
+    );
+    // The lowest runtime the plugin was tested against must lie inside that range.
+    // npm separates comparators with spaces, where the semver crate wants commas.
+    let range =
+        semver::VersionReq::parse(&relaxkit::sandbox::selftest::RUNTIME_RANGE.replace(' ', ", "))
+            .unwrap();
+    let min = semver::Version::parse(relaxkit::sandbox::selftest::RUNTIME_MIN).unwrap();
+    assert!(
+        range.matches(&min),
+        "RUNTIME_MIN {min} is outside RUNTIME_RANGE {range}"
+    );
+    // A lock file would pin the runtime at install time, so the plugin has none.
+    assert!(
+        !Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("adapters/opencode-plugin/package-lock.json")
+            .exists(),
+        "the OpenCode plugin must not ship a package-lock.json"
     );
 }
 

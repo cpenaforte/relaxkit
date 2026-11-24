@@ -1,13 +1,17 @@
-//! The health of relaxkit's OpenCode sandbox plugin. The plugin pins one sandbox runtime exactly.
-//! `status` shows how far that pin lags behind npm and how old relaxkit's newest release is. `doctor` warns only when no
-//! release has come out for 120 days: a runtime lag alone never warns. Every read fails soft: an unreachable registry or
-//! GitHub shows as unknown and never stops setup.
+//! The health of relaxkit's OpenCode sandbox plugin. The plugin takes the newest sandbox runtime in a range, so the
+//! runtime it runs is the one OpenCode installed, read from disk.
+//! `status` shows how far that installed runtime lags behind npm and how old relaxkit's newest release is. `doctor` warns
+//! only when no release has come out for 120 days: a runtime lag alone never warns. Every read fails soft: an unreachable
+//! registry or GitHub shows as unknown and never stops setup.
+
+use std::fs;
+use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 use semver::Version;
 use serde_json::Value;
 
-use super::selftest::{RUNTIME_PACKAGE, RUNTIME_PIN};
+use super::selftest::RUNTIME_PACKAGE;
 use crate::ctx::Ctx;
 use crate::net::Net;
 use crate::selfupdate::RELEASE_REPO;
@@ -15,13 +19,13 @@ use crate::selfupdate::RELEASE_REPO;
 /// Days without a relaxkit release before `doctor` warns.
 pub const STALE_AFTER_DAYS: u32 = 120;
 
-/// The bundled runtime against the newest runtime npm publishes.
+/// The installed runtime against the newest runtime npm publishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeLag {
-    pub bundled: String,
+    pub installed: String,
     pub newest: String,
     pub newest_released_days: u32,
-    /// Published runtime versions newer than `bundled`.
+    /// Published runtime versions newer than `installed`.
     pub lag: u32,
 }
 
@@ -32,15 +36,58 @@ pub struct PluginHealth {
     pub release_age_days: Result<u32>,
 }
 
-/// The plugin's health now, read through `ctx.net`.
+/// The plugin's health now, read through `ctx.net`. The installed runtime is read from the home directory's OpenCode
+/// cache. Without an install there, the runtime is not compared with anything.
 pub fn plugin_health(ctx: &Ctx) -> PluginHealth {
-    health_at(ctx.net.as_ref(), RUNTIME_PIN, now_seconds())
+    let now = now_seconds();
+    match installed_runtime(&ctx.dirs.home) {
+        Some(installed) => health_at(ctx.net.as_ref(), &installed, now),
+        None => PluginHealth {
+            runtime: Err(anyhow!("the plugin is not installed through OpenCode")),
+            release_age_days: release_age_days(ctx.net.as_ref(), now),
+        },
+    }
 }
 
-/// `plugin_health` for a bundled runtime version and a clock, so tests can fix both.
-pub fn health_at(net: &dyn Net, bundled: &str, now: i64) -> PluginHealth {
+/// The sandbox runtime version the plugin's newest OpenCode install holds. OpenCode installs a git plugin with npm
+/// under `<home>/.cache/opencode/npm/git-relaxkit-<hash>/<timestamp>/`, so the newest install is the all-digit child
+/// with the largest number over every `git-relaxkit-*` directory. `None` when that install or its runtime is missing.
+pub fn installed_runtime(home: &Path) -> Option<String> {
+    let newest = fs::read_dir(home.join(".cache").join("opencode").join("npm"))
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("git-relaxkit-")
+        })
+        .flat_map(|entry| fs::read_dir(entry.path()).into_iter().flatten())
+        .filter_map(Result::ok)
+        .filter_map(|child| {
+            let name = child.file_name().into_string().ok()?;
+            if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            Some((name.parse::<u128>().ok()?, child.path()))
+        })
+        .max_by_key(|(stamp, _)| *stamp)?
+        .1;
+    let text = fs::read_to_string(
+        newest
+            .join("node_modules")
+            .join(RUNTIME_PACKAGE)
+            .join("package.json"),
+    )
+    .ok()?;
+    let package: Value = serde_json::from_str(&text).ok()?;
+    package["version"].as_str().map(str::to_string)
+}
+
+/// `plugin_health` for an installed runtime version and a clock, so tests can fix both.
+pub fn health_at(net: &dyn Net, installed: &str, now: i64) -> PluginHealth {
     PluginHealth {
-        runtime: runtime_lag(net, bundled, now),
+        runtime: runtime_lag(net, installed, now),
         release_age_days: release_age_days(net, now),
     }
 }
@@ -54,10 +101,12 @@ pub fn is_stale(health: &PluginHealth) -> bool {
 /// The health as one line for `status` and `doctor`.
 pub fn health_line(health: &PluginHealth) -> String {
     let runtime = match &health.runtime {
-        Ok(lag) if lag.lag == 0 => format!("sandbox-runtime {} bundled, up to date", lag.bundled),
+        Ok(lag) if lag.lag == 0 => {
+            format!("sandbox-runtime {} installed, up to date", lag.installed)
+        }
         Ok(lag) => format!(
-            "sandbox-runtime {} bundled, {} release{} behind (npm's newest is {}, released {} days ago)",
-            lag.bundled,
+            "sandbox-runtime {} installed, {} release{} behind (npm's newest is {}, released {} days ago)",
+            lag.installed,
             lag.lag,
             if lag.lag == 1 { "" } else { "s" },
             lag.newest,
@@ -72,10 +121,10 @@ pub fn health_line(health: &PluginHealth) -> String {
     format!("{runtime}; {release}")
 }
 
-fn runtime_lag(net: &dyn Net, bundled: &str, now: i64) -> Result<RuntimeLag> {
+fn runtime_lag(net: &dyn Net, installed: &str, now: i64) -> Result<RuntimeLag> {
     let runtime = npm_document(net, RUNTIME_PACKAGE)?;
-    let pinned = Version::parse(bundled)
-        .with_context(|| format!("the bundled runtime {bundled} is not a version"))?;
+    let installed_version = Version::parse(installed)
+        .with_context(|| format!("the installed runtime {installed} is not a version"))?;
     let mut published: Vec<Version> = runtime["versions"]
         .as_object()
         .ok_or_else(|| anyhow!("{RUNTIME_PACKAGE} lists no versions"))?
@@ -94,13 +143,13 @@ fn runtime_lag(net: &dyn Net, bundled: &str, now: i64) -> Result<RuntimeLag> {
         parse_utc(text)
     };
     Ok(RuntimeLag {
-        bundled: bundled.to_string(),
+        installed: installed.to_string(),
         newest: newest.to_string(),
         newest_released_days: age_days(released_at(newest)?, now),
         lag: u32::try_from(
             published
                 .iter()
-                .filter(|version| **version > pinned)
+                .filter(|version| **version > installed_version)
                 .count(),
         )
         .unwrap_or(u32::MAX),
@@ -169,7 +218,10 @@ fn age_days(released_at: i64, now: i64) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
+    use crate::exec::FakeRunner;
     use crate::net::FakeNet;
 
     /// 2026-11-22T12:00:00Z.
@@ -219,7 +271,7 @@ mod tests {
         assert_eq!(lag.lag, 0);
         assert_eq!(lag.newest, "0.0.83");
         assert_eq!(lag.newest_released_days, 3);
-        assert!(health_line(&health).starts_with("sandbox-runtime 0.0.83 bundled, up to date;"));
+        assert!(health_line(&health).starts_with("sandbox-runtime 0.0.83 installed, up to date;"));
     }
 
     #[test]
@@ -303,7 +355,76 @@ mod tests {
 
         assert_eq!(
             health_line(&health),
-            "sandbox-runtime 0.0.80 bundled, 3 releases behind (npm's newest is 0.0.83, released 3 days ago); relaxkit's newest release is 10 days old"
+            "sandbox-runtime 0.0.80 installed, 3 releases behind (npm's newest is 0.0.83, released 3 days ago); relaxkit's newest release is 10 days old"
         );
+    }
+
+    /// Writes an OpenCode install of the plugin under `home`: `<npm>/<plugin>/<stamp>/node_modules/<runtime>/package.json`
+    /// holding runtime `version`.
+    fn write_install(home: &Path, plugin: &str, stamp: &str, version: &str) {
+        let package = home
+            .join(".cache/opencode/npm")
+            .join(plugin)
+            .join(stamp)
+            .join("node_modules")
+            .join(RUNTIME_PACKAGE);
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("package.json"),
+            format!(r#"{{"name": "{RUNTIME_PACKAGE}", "version": "{version}"}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_newest_timestamp_over_every_install_names_the_installed_runtime() {
+        let home = tempfile::tempdir().unwrap();
+        write_install(home.path(), "git-relaxkit-aaa", "1700000000000", "0.0.80");
+        write_install(home.path(), "git-relaxkit-bbb", "1800000000000", "0.0.83");
+        write_install(home.path(), "git-relaxkit-bbb", "1750000000000", "0.0.82");
+        write_install(home.path(), "git-relaxkit-bbb", "latest", "0.0.99");
+        write_install(home.path(), "other-plugin", "1900000000000", "0.0.99");
+
+        assert_eq!(installed_runtime(home.path()).as_deref(), Some("0.0.83"));
+    }
+
+    #[test]
+    fn a_missing_cache_has_no_installed_runtime() {
+        let home = tempfile::tempdir().unwrap();
+
+        assert_eq!(installed_runtime(home.path()), None);
+    }
+
+    #[test]
+    fn plugin_health_compares_the_installed_runtime_with_npm() {
+        let root = tempfile::tempdir().unwrap();
+        write_install(root.path(), "git-relaxkit-aaa", "1700000000000", "0.0.80");
+        let ctx = Ctx::for_test(
+            root.path(),
+            FakeRunner::new(),
+            network(&runtime_times(), None),
+        );
+
+        let lag = plugin_health(&ctx).runtime.unwrap();
+
+        assert_eq!(lag.installed, "0.0.80");
+        assert_eq!(lag.lag, 3);
+    }
+
+    #[test]
+    fn a_plugin_not_installed_through_opencode_reports_no_lag() {
+        let root = tempfile::tempdir().unwrap();
+        let ctx = Ctx::for_test(
+            root.path(),
+            FakeRunner::new(),
+            network(&runtime_times(), Some("2026-11-12T00:00:00Z")),
+        );
+
+        let health = plugin_health(&ctx);
+        let line = health_line(&health);
+
+        assert!(health.runtime.is_err(), "{line}");
+        assert!(line.contains("not installed through OpenCode"), "{line}");
+        assert!(!line.contains("behind"), "{line}");
     }
 }

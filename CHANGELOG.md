@@ -6,6 +6,10 @@ All notable changes to relaxkit are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The OpenCode plugin takes the newest sandbox runtime 0.x when it is installed, instead of 0.0.83. `relaxkit doctor` reports the installed runtime.
+
 ## [0.1.4] - 2026-11-24
 
 ### Changed
