@@ -589,6 +589,10 @@ fn unreleased_problem(body: &[&str]) -> Option<String> {
                 ));
             }
             in_entry = true;
+        } else if line.starts_with([' ', '\t']) && line.trim_start().starts_with('#') {
+            return Some(format!(
+                "has the indented heading `{line}`, which is not allowed under `## [Unreleased]`"
+            ));
         } else if in_entry && line.starts_with([' ', '\t']) {
             if !in_section {
                 return Some(format!(
@@ -645,6 +649,18 @@ fn unreleased_wrapped_bullet_follows_the_section_rule() {
     assert!(
         unreleased_problem(&["### Fixed", "- a", "", "  b"]).is_some(),
         "a continuation after a blank line must fail"
+    );
+}
+
+#[test]
+fn unreleased_rejects_an_indented_heading() {
+    assert!(
+        unreleased_problem(&["### Fixed", "- a", "  ### Bogus"]).is_some(),
+        "an indented heading under `## [Unreleased]` must fail"
+    );
+    assert!(
+        unreleased_problem(&["### Fixed", "- a", "\t### Bogus"]).is_some(),
+        "a tab-indented heading must fail the same way"
     );
 }
 
