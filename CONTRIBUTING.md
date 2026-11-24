@@ -7,6 +7,7 @@ relaxkit installs, configures, updates and diagnoses a curated set of agent tool
 - **Report a bug:** open an issue with the bug report form. Before you do, read [troubleshooting](docs/troubleshooting.md), which lists known failures and what to do about each one.
 - **Suggest a feature:** open an issue with the feature request form.
 - **Report a security problem:** do not open a public issue. Follow [SECURITY.md](SECURITY.md).
+- **Report a conduct problem:** follow the [code of conduct](CODE_OF_CONDUCT.md).
 - **Change code or documentation:** open a pull request. See [Pull requests](#pull-requests) below.
 
 ## Development setup

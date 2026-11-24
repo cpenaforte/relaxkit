@@ -113,6 +113,7 @@ The global flags and every option are in the [command reference](docs/commands.m
 - [Changelog](CHANGELOG.md): what changed in each release.
 - [Contributing](CONTRIBUTING.md): the development setup, the checks and the pull request process.
 - [Security policy](SECURITY.md): supported versions, private reporting and how to verify a release.
+- [Code of conduct](CODE_OF_CONDUCT.md): the standards for taking part and how to report a problem.
 
 ## Platforms
 
@@ -124,7 +125,7 @@ Start with [troubleshooting](docs/troubleshooting.md), which lists the messages 
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the checks that CI runs and how to open a pull request.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the checks that CI runs and how to open a pull request. Everyone who takes part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Changelog
 

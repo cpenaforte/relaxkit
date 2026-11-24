@@ -471,6 +471,31 @@ fn readme_links_the_documents() {
     );
 }
 
+#[test]
+fn code_of_conduct_is_the_covenant_with_a_contact() {
+    assert!(
+        exists("CODE_OF_CONDUCT.md"),
+        "CODE_OF_CONDUCT.md is missing"
+    );
+    let text = read("CODE_OF_CONDUCT.md");
+    assert!(
+        text.contains("Contributor Covenant"),
+        "CODE_OF_CONDUCT.md does not name the Contributor Covenant"
+    );
+    assert!(
+        text.contains("version 2.1"),
+        "CODE_OF_CONDUCT.md does not state version 2.1"
+    );
+    assert!(
+        !text.contains("[INSERT"),
+        "CODE_OF_CONDUCT.md still has the contact placeholder"
+    );
+    assert!(
+        text.contains("SECURITY.md"),
+        "CODE_OF_CONDUCT.md does not name the private reporting channel"
+    );
+}
+
 /// The URL of every image link (`![alt](url)`) in `markdown`.
 fn image_urls(markdown: &str) -> Vec<String> {
     let mut urls = Vec::new();
