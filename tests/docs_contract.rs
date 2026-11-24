@@ -275,6 +275,49 @@ fn tools_reference() -> String {
     read("docs/tools.md")
 }
 
+fn privacy_reference() -> String {
+    read("docs/privacy.md")
+}
+
+fn sandbox_reference() -> String {
+    read("docs/sandbox.md")
+}
+
+#[test]
+fn privacy_lists_every_telemetry_switch() {
+    let doc = privacy_reference();
+    for form in [
+        "rtk telemetry disable",
+        "caveman telemetry off",
+        "SUPERPOWERS_DISABLE_TELEMETRY",
+        "DISABLE_TELEMETRY",
+        "relaxkit privacy",
+    ] {
+        assert!(
+            doc.contains(form),
+            "docs/privacy.md does not mention `{form}`"
+        );
+    }
+}
+
+#[test]
+fn sandbox_doc_names_the_commands_that_run_outside_the_sandbox() {
+    let doc = sandbox_reference();
+    for command in relaxkit::sandbox::claude::PACK_COMMANDS {
+        let form = format!("`{command}`");
+        assert!(
+            doc.contains(&form),
+            "docs/sandbox.md does not name the pack command {form}"
+        );
+    }
+    for form in ["sandbox.excludedCommands", "`gh`"] {
+        assert!(
+            doc.contains(form),
+            "docs/sandbox.md does not mention `{form}`"
+        );
+    }
+}
+
 #[test]
 fn configuration_documents_model_pinning() {
     let doc = configuration_reference();
