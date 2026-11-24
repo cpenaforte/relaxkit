@@ -131,10 +131,10 @@ Each role takes either a tier or an exact model. The tiers map to `haiku`, `sonn
 
 ```sh
 relaxkit config show
-relaxkit config set implementer cheap
+relaxkit config set implementer cheap --host claude
 relaxkit config set reviewer smarter --host opencode
 relaxkit config set planner anthropic/claude-sonnet-5-5#high
-relaxkit config unset planner
+relaxkit config unset planner --host claude
 relaxkit config set compact-at 256k
 ```
 
@@ -234,7 +234,7 @@ In `setup`, a failed check (1) takes precedence over a pending login (3).
 
 Every command marks its result lines the same way. A line starts with a mark: `✓` done, `!` done with something to check, `✗` failed, and `·` not done. A dry run prints its plans as `·` lines, because nothing is changed. A check that cannot run in a dry run, such as the sandbox self-test in `doctor`, shows `!`. Without a UTF-8 locale the marks are `ok`, `!!`, `xx` and `..`.
 
-`doctor` and `status` start their text with a verdict line. `doctor` groups its failures and warnings by area and gives a `fix` line for each. `setup` prints one line per step. `update` lists the tools in a table.
+`doctor` starts its text with a verdict line, and `status` prints one on the line after its heading. `doctor` groups its failures and warnings by area and gives a `fix` line for each. `setup` prints one line per step. `update` lists the tools in a table.
 
 Colour appears only on a terminal, and a non-empty `NO_COLOR` turns it off. A pipe or a file gets plain text. On a terminal a long step (`setup`, `update`, `uninstall` and `doctor`) shows a spinner until it ends. With `--json`, `doctor`, `update` and `config show` print one JSON document on standard output and draw no spinner.
 
@@ -267,7 +267,7 @@ Each slash command is a thin wrapper. It runs `relaxkit <subcommand>` with the a
 /relaxkit:config set reviewer smarter --host claude
 ```
 
-The examples are the same as the `config` examples above, in slash form: a tier, and an exact model in `provider/model#variant` form. `--host claude|opencode` limits a `config` change to one host, and `--project` applies a `config` change to the current project.
+The examples are the same as the `config` examples above, in slash form: a tier, and an exact model in `provider/model#variant` form. `--host claude|opencode` limits a role change to one host, and `--project` applies a `config` change to the current project.
 
 The slash form, `/relaxkit:<subcommand>`, is not yet confirmed in a live Claude Code session. Until it is confirmed, use `relaxkit <subcommand>` in a terminal.
 
