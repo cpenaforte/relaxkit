@@ -903,3 +903,17 @@ fn pull_request_template_asks_for_the_checks_and_a_changelog_entry() {
         );
     }
 }
+
+#[test]
+fn agents_file_matches_ci_and_stays_short() {
+    let doc = read("AGENTS.md");
+    assert!(
+        doc.contains(DESCRIPTION),
+        "AGENTS.md does not state the product description"
+    );
+    for command in CI_COMMANDS {
+        assert!(doc.contains(command), "AGENTS.md does not name `{command}`");
+    }
+    let lines = doc.lines().count();
+    assert!(lines <= 80, "AGENTS.md has {lines} lines, more than 80");
+}
