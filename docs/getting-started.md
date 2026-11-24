@@ -123,10 +123,10 @@ The `not enforced` marks depend on the sandbox settings that setup writes. This 
 ## 6. Check the health
 
 ```sh
-relaxkit doctor
+relaxkit doctor --dry-run
 ```
 
-`doctor` runs every check and lists the failures and warnings. The sandbox self-test runs for real. Output from `relaxkit doctor --dry-run`, which runs no self-test:
+`doctor` runs every check and lists the failures and warnings. The sandbox self-test runs for real without `--dry-run`. The example output is from `relaxkit doctor --dry-run`, which runs no self-test:
 
 ```text
 ✗  1 failed, 2 warnings, 3 ok
