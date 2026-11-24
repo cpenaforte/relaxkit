@@ -1,6 +1,6 @@
 [package]
 name = "relaxkit"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A curated pack of agent tools for Claude Code and OpenCode: install, configure, update and diagnose from one CLI."

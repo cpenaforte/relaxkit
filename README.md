@@ -32,7 +32,7 @@ The installer reads these settings from the environment or its flags:
 
 | Setting | Effect |
 | --- | --- |
-| `RELAXKIT_VERSION` | Installs this release, such as `0.1.3` or `v0.1.3`. Default: the latest release. |
+| `RELAXKIT_VERSION` | Installs this release, such as `0.1.4` or `v0.1.4`. Default: the latest release. |
 | `RELAXKIT_BIN_DIR` | Directory for `relaxkit` and the `rlx` alias. Default: `$HOME/.local/bin`. |
 | `RELAXKIT_RELEASE_BASE` | Base URL that the release files are downloaded from. Default: GitHub releases. |
 | `RELAXKIT_LATEST_URL` | API URL that names the latest release. It is read only when `RELAXKIT_VERSION` is not set. |
