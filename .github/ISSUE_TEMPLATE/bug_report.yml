@@ -15,8 +15,8 @@ body:
     attributes:
       label: Operating system and CPU
       options:
-        - macOS, Apple silicon
-        - macOS, Intel
+        - macOS Apple silicon
+        - macOS Intel
         - Linux x86_64
         - Linux arm64
     validations:

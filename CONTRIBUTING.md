@@ -4,7 +4,7 @@ relaxkit installs, configures, updates and diagnoses a curated set of agent tool
 
 ## Ways to contribute
 
-- **Report a bug or ask a question:** open an issue with the bug report form. Before you do, read [troubleshooting](docs/troubleshooting.md), which lists known failures and what to do about each one.
+- **Report a bug:** open an issue with the bug report form. Before you do, read [troubleshooting](docs/troubleshooting.md), which lists known failures and what to do about each one.
 - **Suggest a feature:** open an issue with the feature request form.
 - **Report a security problem:** do not open a public issue. Follow [SECURITY.md](SECURITY.md).
 - **Change code or documentation:** open a pull request. See [Pull requests](#pull-requests) below.
@@ -44,9 +44,11 @@ packaging/  the Homebrew formula template
 tests/      integration tests, fixtures and test support
 ```
 
-Recipes name no tool version. An install takes the newest release that the registry reports, and the only version numbers in a recipe are its minimum host versions. `tests/recipes_conformance.rs` checks that each tool, on each host, expands to the exact argument list it should.
-
 The binary-level tests run `relaxkit` with a temporary HOME and a PATH of stub commands, both set up in `tests/support/mod.rs`. They do not use your real home directory or your real PATH.
+
+## Adding or changing a tool recipe
+
+Recipes name no tool version. An install takes the newest release that the registry reports. The only other version numbers in a recipe are its minimum host versions (Claude Code 2.1.330 and OpenCode 2.2.6, in the `[minimum_host]` table, for example in `recipes/ccusage.toml`), and the serena recipe also pins Python 3.13 with `-p`. `tests/recipes_conformance.rs` checks that each tool, on each host, expands to the exact argument list it should.
 
 ## Documentation
 
