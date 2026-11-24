@@ -5,5 +5,5 @@
 /docs/superpowers/
 node_modules/
 
-# Spike notes from the superpowers workflow stay on disk, out of the repository.
+# Local planning and working notes stay on disk, out of the repository.
 /docs/spikes/

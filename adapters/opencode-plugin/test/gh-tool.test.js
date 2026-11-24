@@ -65,7 +65,7 @@ test("the tool is named gh and takes an args array", () => {
     required: ["args"],
     additionalProperties: false,
   });
-  assert.ok(tool.description.includes("shell gh runs inside the sandbox"));
+  assert.ok(tool.description.includes("runs inside the sandbox, which denies it ~/.config/gh"));
 });
 
 const refusedCalls = [

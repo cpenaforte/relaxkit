@@ -1,4 +1,4 @@
-//! Claude Code's sandbox settings (spec 7): the three switches, the allowlist, the relaxkit commands that run outside
+//! Claude Code's sandbox settings: the three switches, the allowlist, the relaxkit commands that run outside
 //! the sandbox, and `gh` when it is selected for that route. Each key is set or merged; other settings stay as they are.
 
 use std::fs;
@@ -15,7 +15,7 @@ use crate::host::{Host, HostKind};
 use crate::platform::Os;
 use crate::state::{RunId, safe_write};
 
-/// The pack commands that change the machine, which run outside the sandbox (spec 7). `status` is not among them,
+/// The pack commands that change the machine, which run outside the sandbox. `status` is not among them,
 /// so it stays sandboxed.
 pub const PACK_COMMANDS: [&str; 9] = [
     "setup",
@@ -29,7 +29,7 @@ pub const PACK_COMMANDS: [&str; 9] = [
     "doctor",
 ];
 
-/// The sandbox exclusions: each pack command under the binary name and under the `rlx` alias (spec 4).
+/// The sandbox exclusions: each pack command under the binary name and under the `rlx` alias.
 pub fn excluded_commands() -> Vec<String> {
     [brand::BIN, brand::ALIAS]
         .iter()
@@ -85,7 +85,7 @@ pub fn settings_text(old: &str, os: Os, gh: GhPath) -> Result<String> {
             &json!(true),
         )
     } else if jsonc_get(&text, &["sandbox", "enableWeakerNetworkIsolation"])? == Some(json!(true)) {
-        // K120: relaxkit removes the key while its value is true, whoever set it; docs/sandbox.md describes the same.
+        // relaxkit removes the key while its value is true, whoever set it; docs/sandbox.md describes the same.
         jsonc_remove(&text, &["sandbox", "enableWeakerNetworkIsolation"])
     } else {
         Ok(text)
@@ -93,7 +93,7 @@ pub fn settings_text(old: &str, os: Os, gh: GhPath) -> Result<String> {
 }
 
 /// Whether `enableWeakerNetworkIsolation` is set: on macOS only, and only when `gh` runs inside the sandbox, which
-/// needs it there (spike B1). Linux never sets it.
+/// needs it there. Linux never sets it.
 pub fn weaker_isolation(os: Os, gh: GhPath) -> bool {
     os == Os::MacOs && gh == GhPath::Inside
 }
@@ -156,8 +156,8 @@ mod tests {
     }
 
     #[test]
-    fn weaker_isolation_follows_spike_b1_on_macos_and_is_absent_on_linux() {
-        // B1: gh inside the sandbox on macOS needs the flag. Linux never sets it.
+    fn weaker_isolation_is_set_on_macos_and_absent_on_linux() {
+        // gh inside the sandbox on macOS needs the flag. Linux never sets it.
         assert!(weaker_isolation(Os::MacOs, GhPath::Inside));
         assert!(!weaker_isolation(Os::MacOs, GhPath::ExcludedFallback));
         assert!(!weaker_isolation(Os::Linux, GhPath::Inside));
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn weaker_isolation_is_removed_only_while_it_is_true() {
-        // K120 / F23-15: a user's own false stays on a rerun. A true that relaxkit wrote on the excluded route is removed.
+        // A user's own false stays on a rerun. A true that relaxkit wrote on the excluded route is removed.
         let users_false = settings(
             &settings_text(
                 "{\"sandbox\": {\"enableWeakerNetworkIsolation\": false}}",
@@ -238,7 +238,7 @@ mod tests {
             assert!(excluded.contains(&json!(command)), "{command} missing");
         }
         assert!(!excluded.contains(&json!("relaxkit status")));
-        // The rlx alias is how the owner types the same commands, so it is excluded the same way.
+        // The rlx alias is how the user types the same commands, so it is excluded the same way.
         for command in [
             "rlx setup",
             "rlx update",
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn claude_settings_keep_the_layout_and_escapes() {
-        // Spec 5: strict JSON edits keep the file's layout and spelling, not only its values.
+        // Strict JSON edits keep the file's layout and spelling, not only its values.
         let old = "{\n    \"effortLevel\": \"caf\\u00e9\",\n    \"hooks\": {\"Stop\": []}\n}\n";
 
         let out = settings_text(old, Os::Linux, GhPath::Inside).unwrap();

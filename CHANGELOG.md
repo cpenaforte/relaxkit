@@ -14,7 +14,8 @@ All notable changes to relaxkit are recorded here. The format follows
 - The Claude Code plugin's description now matches the description in `relaxkit --help`.
 - The `/relaxkit:uninstall` command's description now says what uninstall removes and what it keeps.
 - The `relaxkit --help` entry for `uninstall` now names what it removes: the pack's MCP entries, config keys, roles blocks and binary copies.
-- The OpenCode plugin's description of the shell `gh` command now says that it cannot authenticate in the sandbox, instead of that it cannot reach GitHub.
+- The OpenCode plugin's description of the shell `gh` command now says that the sandbox denies it `~/.config/gh`, instead of that it cannot reach GitHub.
+- The Homebrew formula's description matches the product sentence.
 
 ## [0.1.3] - 2026-11-23
 

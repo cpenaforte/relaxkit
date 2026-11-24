@@ -1,5 +1,5 @@
-//! `relaxkit setup` (spec sections 4, 6 and 7). The steps run in spec order: detect, prerequisites, install,
-//! configure, sandbox, login, verify. Each step prints one line. Rulings K46 to K54 in batch-14-brief.md apply.
+//! `relaxkit setup`. The steps run in a fixed order: detect, prerequisites, install,
+//! configure, sandbox, login, verify. Each step prints one line.
 
 use std::collections::BTreeSet;
 
@@ -26,7 +26,7 @@ use crate::state::{RunId, with_run_lock};
 use crate::tools::{Engine, Outcome};
 use crate::ui::{self, Mark, Palette, Spinner};
 
-/// The steps in the order they run (spec section 6, ruling K46).
+/// The steps in the order they run.
 pub const STEPS: [&str; 7] = [
     "detect",
     "prerequisites",
@@ -43,10 +43,10 @@ const STEP_WIDTH: usize = 13;
 /// How the sandbox step begins when the Linux packages are missing. The step's mark and the message share it.
 const MISSING_PACKAGES: &str = "Linux packages are missing";
 
-/// The exit code when the GitHub login needs the owner (ruling K48).
+/// The exit code when the GitHub login needs the user to finish it.
 const LOGIN_PENDING_EXIT: i32 = 3;
 
-/// The exit code when a doctor check failed. It takes precedence over the login (ruling K50).
+/// The exit code when a doctor check failed. It takes precedence over the login.
 const FAILED_CHECK_EXIT: i32 = 1;
 
 /// One printed step line, tagged with its step and its outcome.
@@ -57,7 +57,7 @@ pub struct StepLine {
     pub line: String,
 }
 
-/// What a setup run did. `exit_code` is 0 when all is well, 1 when a doctor check failed, 3 when the owner must
+/// What a setup run did. `exit_code` is 0 when all is well, 1 when a doctor check failed, 3 when the user must
 /// finish the GitHub login.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SetupReport {
@@ -148,7 +148,7 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
     let recipes = install_order(load_all()?)?;
     let present: Vec<HostKind> = hosts.iter().map(|host| host.info().kind).collect();
     // An unreadable OpenCode `plugins` entry stops setup before the install loop writes any OpenCode file, including
-    // the MCP remove and add of a recipe outside the lock (ruling R7-1).
+    // the MCP remove and add of a recipe outside the lock.
     for host in hosts
         .iter()
         .filter(|host| host.info().kind == HostKind::Opencode)
@@ -200,7 +200,7 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
 }
 
 /// Applies the kit's configuration to each detected host. An existing `config.toml` keeps the user's preset and
-/// settings; a fresh machine gets the balanced preset with no compact threshold (ruling K46). The telemetry switch
+/// settings; a fresh machine gets the balanced preset with no compact threshold. The telemetry switch
 /// applies on every setup run, where relaxkit can set it.
 fn configure(
     ctx: &Ctx,
@@ -220,7 +220,7 @@ fn configure(
                 adapters::install_claude(ctx, run, host.as_ref())?;
             }
             HostKind::Opencode => {
-                // An unreadable `plugins` entry stops here, before any OpenCode file is written (ruling R6-1).
+                // An unreadable `plugins` entry stops here, before any OpenCode file is written.
                 host.plugin_list(ctx)?;
                 let available = opencode_models(ctx, host.as_ref());
                 let own = config.for_host(HostKind::Opencode);
@@ -270,8 +270,8 @@ pub fn opencode_models(ctx: &Ctx, host: &dyn Host) -> Vec<String> {
     list_models(ctx, host).unwrap_or_default()
 }
 
-/// The sandbox of each host (spec section 7). Claude Code always takes `gh` outside its sandbox (ruling K42).
-/// Linux packages need sudo: they run only with `--allow-sudo`, otherwise the command is printed (ruling K47).
+/// The sandbox of each host. Claude Code always takes `gh` outside its sandbox.
+/// Linux packages need sudo: they run only with `--allow-sudo`, otherwise the command is printed.
 fn sandbox_step(
     ctx: &Ctx,
     run: &RunId,
@@ -294,7 +294,7 @@ fn sandbox_step(
                 sandbox::claude::apply(ctx, run, host.as_ref(), gh)?;
                 notes.push("Claude Code sandbox written".to_string());
             }
-            // The OpenCode sandbox is relaxkit's own plugin (spec section 11). configure installs it and stops on failure.
+            // The OpenCode sandbox is relaxkit's own plugin. configure installs it and stops on failure.
             HostKind::Opencode => notes
                 .push("OpenCode sandbox: relaxkit-opencode, installed by configure".to_string()),
         }
@@ -313,7 +313,7 @@ fn sudo_step(ctx: &Ctx, plan: &PrereqPlan) -> Result<String> {
     let have = ["bwrap", "socat"]
         .iter()
         .all(|program| ctx.runner.which(program).is_some());
-    // On Ubuntu 24.04 and later the AppArmor profile is part of the same sudo plan, so it must be on disk too (ruling K57).
+    // On Ubuntu 24.04 and later the AppArmor profile is part of the same sudo plan, so it must be on disk too.
     let profile_ready = !plan_needs_apparmor_profile(plan) || apparmor_profile_present();
     if have && profile_ready {
         return Ok("bubblewrap and socat are already installed".to_string());
@@ -339,7 +339,7 @@ pub fn sudo_command(plan: &PrereqPlan) -> String {
     }
 }
 
-/// Runs the GitHub login when gh is present (ruling K48). Returns the outcome, or `None` when the step was skipped.
+/// Runs the GitHub login when gh is present. Returns the outcome, or `None` when the step was skipped.
 fn login_step(ctx: &Ctx, run: &RunId, report: &mut SetupReport) -> Result<Option<LoginOutcome>> {
     let present = ctx.runner.which("gh").is_some() || is_executable(&ctx.dirs.bin.join("gh"));
     if !present {
@@ -376,8 +376,8 @@ fn locked_version(lock: Option<&Lockfile>, id: &str, kind: HostKind) -> String {
         .unwrap_or_else(|| "unlocked".to_string())
 }
 
-/// The verify step runs `doctor` (ruling K50). A failing probe or MCP command is repaired by reinstalling its locked
-/// tool, and the checks run again (ruling OWNER-3). The checks print here, and a check that still fails makes setup
+/// The verify step runs `doctor`. A failing probe or MCP command is repaired by reinstalling its locked
+/// tool, and the checks run again. The checks print here, and a check that still fails makes setup
 /// exit 1. Returns whether any check failed.
 fn verify_step(
     ctx: &Ctx,
@@ -479,7 +479,7 @@ fn verify_step(
     Ok(fail > 0)
 }
 
-/// A repair a failing check gets on a rerun (ruling OWNER-3, and R2-1 for the MCP entry).
+/// A repair a failing check gets on a rerun.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Repair {
     /// Reinstall the locked tool on the host, through the engine path.
@@ -491,7 +491,7 @@ enum Repair {
 /// The repair for a failing check, or `None` when no repair exists. A failing probe (`tool.<id>.<host>`) or MCP
 /// command (`mcp.<id>.<host>`) reinstalls the locked tool; a missing MCP entry (`mcp-entry.<id>.<host>`) is re-added.
 fn repair_for(check: &Check) -> Option<Repair> {
-    // An unreadable host config is reported and never repaired (rulings R3-3 and R5-1).
+    // An unreadable host config is reported and never repaired.
     if check.status != CheckStatus::Fail
         || check.id.starts_with("mcp-config.")
         || check.id.starts_with("plugin-config.")
@@ -511,7 +511,7 @@ fn repair_for(check: &Check) -> Option<Repair> {
 }
 
 /// A recipe is left alone when every host it names that is installed already has it in the lock. The lock
-/// records what setup installed; `update` is what moves versions, so setup does not reinstall (ruling K52).
+/// records what setup installed; `update` is what moves versions, so setup does not reinstall.
 fn already_locked(recipe: &Recipe, present: &[HostKind], lock: Option<&Lockfile>) -> bool {
     let Some(entry) = lock.and_then(|lock| lock.tools.get(&recipe.id)) else {
         return false;
@@ -723,7 +723,7 @@ mod tests {
     #[test]
     fn sudo_plan_runs_on_ubuntu_2404_when_the_apparmor_profile_is_missing() {
         // bubblewrap and socat are present, but Ubuntu 24.04 also needs the AppArmor profile, which is part of the same
-        // sudo plan (spec 7; ruling K57). The plan runs with --allow-sudo and is only printed without it.
+        // sudo plan. The plan runs with --allow-sudo and is only printed without it.
         let root = tempfile::tempdir().unwrap();
         let plan = prerequisite_plan(Os::Linux, Some(UBUNTU_2404));
         let programs = |fake: FakeRunner| {

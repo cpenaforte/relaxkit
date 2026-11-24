@@ -55,7 +55,7 @@ The plugin is a fork of `opencode-sandbox` 0.7.0, which is MIT licensed, built o
 - Writes are denied to `.opencode`, `opencode.json`, `opencode.jsonc` and the OpenCode config directory, which is `~/.config/opencode` by default.
 - Network access is limited to the same seven domains as Claude Code. Local binding is off.
 
-On OpenCode, `gh` runs only through a `gh` tool that the plugin provides. The tool accepts only the built-in `gh` command names that the plugin lists. Any other first argument is refused, which covers the aliases and extensions you installed in `gh`, and also `alias`, `auth`, `config`, `extension` and `help`. Each call also passes OpenCode's permission check. The plugin's tool description says that a `gh` command typed into OpenCode's shell tool runs inside the sandbox and cannot authenticate, and tells you to use the `gh` tool instead. This repository does not test that claim.
+On OpenCode, `gh` runs only through a `gh` tool that the plugin provides. The tool accepts only the built-in `gh` command names that the plugin lists. Any other first argument is refused, which covers the aliases and extensions you installed in `gh`, and also `alias`, `auth`, `config`, `extension` and `help`. Each call also passes OpenCode's permission check. The plugin's tool description says: "A gh command typed into OpenCode's shell tool runs inside the sandbox, which denies it ~/.config/gh; use the gh tool instead." This repository does not test that claim.
 
 The plugin's rules are in `adapters/opencode-plugin/src/config.js` and `adapters/opencode-plugin/src/gh-tool.js`.
 
