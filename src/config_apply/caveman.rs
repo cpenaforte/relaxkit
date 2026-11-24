@@ -1,4 +1,4 @@
-//! caveman's OpenCode files (ruling T8-2, spike A3, owner decision 2026-11-22). relaxkit copies the files that caveman's
+//! caveman's OpenCode files. relaxkit copies the files that caveman's
 //! installer defines at the latest tag (`installer/install.js`, the opencode install, at v4.1.0) and writes the V2
 //! `plugins` entry itself. It never runs caveman's `install.js`, which writes the V1 key `plugin`. Every write goes
 //! through `state::safe_write`.
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn a_tuple_entry_that_names_the_plugin_is_not_added_again() {
-        // R7-2: `["./plugins/caveman", {}]` names the plugin, so install writes no second entry and the file keeps its
+        // `["./plugins/caveman", {}]` names the plugin, so install writes no second entry and the file keeps its
         // bytes.
         let root = tempfile::tempdir().unwrap();
         let config = "{\n  \"plugins\": [[\"./plugins/caveman\", {}]]\n}\n";

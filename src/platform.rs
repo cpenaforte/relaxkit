@@ -109,8 +109,8 @@ pub fn is_executable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Where rtk keeps its `config.toml` under `home`. The macOS path is from spike A7; the Linux path follows the
-/// XDG default and is to be verified at Task 28.
+/// Where rtk keeps its `config.toml` under `home`. The macOS path was checked on macOS; the Linux path follows the
+/// XDG default and still needs checking on Linux.
 pub fn rtk_config_file(home: &Path) -> Result<PathBuf> {
     Ok(rtk_config_for(current_os()?, home))
 }
@@ -126,7 +126,7 @@ fn rtk_config_for(os: Os, home: &Path) -> PathBuf {
     }
 }
 
-/// What preparing Linux for the sandbox takes (spec 7). `lines` is shown to the user before the one sudo prompt, and
+/// What preparing Linux for the sandbox takes. `lines` is shown to the user before the one sudo prompt, and
 /// `sudo` is that one invocation (`sudo` first). Both are empty when nothing is needed, which is every macOS plan.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PrereqPlan {
@@ -135,7 +135,7 @@ pub struct PrereqPlan {
 }
 
 /// The AppArmor profile that lets bubblewrap create user namespaces on Ubuntu 24.04 and later. The Linux sandbox
-/// needs it, because that release restricts unprivileged user namespaces by default (spec 7; spike B4).
+/// needs it, because that release restricts unprivileged user namespaces by default.
 pub const BWRAP_PROFILE_PATH: &str = "/etc/apparmor.d/relaxkit-bwrap";
 const BWRAP_PROFILE: &str = "abi <abi/4.0>,\ninclude <tunables/global>\nprofile relaxkit-bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n";
 
@@ -153,7 +153,7 @@ pub fn apparmor_profile_present() -> bool {
     profile_path_from(std::env::var_os("RELAXKIT_APPARMOR_PROFILE")).exists()
 }
 
-/// Whether a plan writes the AppArmor profile, which only Ubuntu 24.04 and later need (spec 7).
+/// Whether a plan writes the AppArmor profile, which only Ubuntu 24.04 and later need.
 pub fn plan_needs_apparmor_profile(plan: &PrereqPlan) -> bool {
     plan.sudo.iter().any(|arg| arg.contains(BWRAP_PROFILE_PATH))
 }
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn prerequisite_plan_refreshes_the_apt_index_before_installing_in_the_same_sudo_call() {
-        // A fresh image has a stale index, so the install fails without an update first (spec 4 and 7: one prompt).
+        // A fresh image has a stale index, so the install fails without an update first.
         let plan = prerequisite_plan(Os::Linux, None);
 
         assert_eq!(plan.sudo.iter().filter(|word| *word == "sudo").count(), 1);

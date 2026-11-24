@@ -711,7 +711,7 @@ fn non_markdown_public_files_cite_no_private_artifacts() {
         "owner decision",
         "spec section",
     ];
-    // "Task 27" or "spec 5.1": a word followed directly by a digit cites a numbered item of a private file.
+    // A task or spec word followed directly by a number cites a numbered item of a private file.
     let numbered = |lower: &str, word: &str| {
         lower
             .match_indices(word)

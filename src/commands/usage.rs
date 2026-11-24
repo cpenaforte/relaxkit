@@ -1,4 +1,4 @@
-//! `relaxkit usage ...` (spec 10 item 19, ruling K107). Runs the pinned ccusage through the pack's Node link. The
+//! `relaxkit usage ...`. Runs the pinned ccusage through the pack's Node link. The
 //! arguments pass through unchanged, and `--offline` is added (the recipe rule: the pricing fetch is the one network
 //! path). The version is the locked one, or the recipe's pin when the lock has none.
 

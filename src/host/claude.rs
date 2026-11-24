@@ -25,8 +25,7 @@ impl ClaudeHost {
         ClaudeHost { info, dir, state }
     }
 
-    /// Every user file a native Claude command may rewrite: settings, state, and the plugin registry
-    /// (spike A2 lists the two registry files as written by `claude plugin`).
+    /// Every user file a native Claude command may rewrite: settings, state, and the plugin registry.
     fn edited_files(&self) -> Vec<PathBuf> {
         vec![
             self.dir.join("settings.json"),
@@ -378,8 +377,8 @@ mod tests {
 
     #[test]
     fn claude_plugin_list_parses_the_marketplace() {
-        // Spike A2 (claude-md-management, superpowers from claude-plugins-official) and I3 (superpowers
-        // from anthropic-plugin-directory), as printed by Claude Code 2.1.330.
+        // Plugin list as printed by Claude Code 2.1.330: claude-md-management and superpowers from
+        // claude-plugins-official, and superpowers from anthropic-plugin-directory.
         let sample = "Installed plugins:\n\
             \u{20}\u{20}\u{20}\u{20}\u{276f} claude-md-management@claude-plugins-official  Version: 1.0.0  Scope: user  Status: \u{2714} enabled\n\
             \u{20}\u{20}\u{20}\u{20}\u{276f} superpowers@anthropic-plugin-directory   Version: 7.0.2-22f0b463e7a5   Scope: user   Status: \u{2714} enabled\n";

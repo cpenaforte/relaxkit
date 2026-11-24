@@ -1,4 +1,4 @@
-//! The health of relaxkit's OpenCode sandbox plugin (spec 10 item 25). The plugin pins one sandbox runtime exactly.
+//! The health of relaxkit's OpenCode sandbox plugin. The plugin pins one sandbox runtime exactly.
 //! `status` shows how far that pin lags behind npm and how old relaxkit's newest release is. `doctor` warns only when no
 //! release has come out for 120 days: a runtime lag alone never warns. Every read fails soft: an unreachable registry or
 //! GitHub shows as unknown and never stops setup.
@@ -12,7 +12,7 @@ use crate::ctx::Ctx;
 use crate::net::Net;
 use crate::selfupdate::RELEASE_REPO;
 
-/// Days without a relaxkit release before `doctor` warns (spec 10 item 25).
+/// Days without a relaxkit release before `doctor` warns.
 pub const STALE_AFTER_DAYS: u32 = 120;
 
 /// The bundled runtime against the newest runtime npm publishes.

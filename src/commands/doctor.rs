@@ -1,6 +1,6 @@
-//! `relaxkit doctor` (spec sections 5 and 7, 10 items 11 and 15, 25): the checks that decide whether the pack is
+//! `relaxkit doctor`: the checks that decide whether the pack is
 //! sound. Read-only: nothing here rewrites a file. Each check has a stable id, its outcome, what it found, and a fix
-//! when it is not ok (rulings K47, K50, K53).
+//! when it is not ok.
 
 use std::path::PathBuf;
 
@@ -118,8 +118,8 @@ pub fn checks_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<Vec<Check>> {
     Ok(checks)
 }
 
-/// The sandbox's Linux packages (spec 7). On Linux, bubblewrap and socat must be on the PATH; the fix is the one sudo
-/// command that installs them (ruling K47). A plan with no packages (every macOS plan) is ok.
+/// The sandbox's Linux packages. On Linux, bubblewrap and socat must be on the PATH; the fix is the one sudo
+/// command that installs them. A plan with no packages (every macOS plan) is ok.
 pub fn prerequisites_check(plan: &PrereqPlan, have: impl Fn(&str) -> bool) -> Check {
     if plan.sudo.is_empty() {
         return Check::ok(
@@ -131,7 +131,7 @@ pub fn prerequisites_check(plan: &PrereqPlan, have: impl Fn(&str) -> bool) -> Ch
         .into_iter()
         .filter(|program| !have(program))
         .collect();
-    // On Ubuntu 24.04 and later the AppArmor profile is part of the plan, so a check without it fails (ruling K57).
+    // On Ubuntu 24.04 and later the AppArmor profile is part of the plan, so a check without it fails.
     let needs_profile = plan_needs_apparmor_profile(plan);
     let profile_missing = needs_profile && !apparmor_profile_present();
     let mut needs = Vec::new();
@@ -179,7 +179,7 @@ fn claude_checks(ctx: &Ctx, host: &dyn Host, checks: &mut Vec<Check>) -> Result<
     } else {
         checks.push(Check::ok("claude.settings", "settings.json parses"));
     }
-    // A warn, not a fail: relaxkit does not set this variable, and a user's own proxy sets it too (ruling OWNER-2).
+    // A warn, not a fail: relaxkit does not set this variable, and a user's own proxy sets it too.
     match jsonc_get(&text, &["env", "ANTHROPIC_BASE_URL"]).ok().flatten() {
         Some(_) => checks.push(Check::warn(
             "claude.anthropic_base_url",
@@ -241,7 +241,7 @@ fn opencode_checks(ctx: &Ctx, host: &dyn Host, checks: &mut Vec<Check>) -> Resul
     selftest_check(ctx, host, "opencode.sandbox.selftest", checks)
 }
 
-/// The sandbox self-test for one host (spec 7). A probe that is not refused fails the check. Nothing is run in a
+/// The sandbox self-test for one host. A probe that is not refused fails the check. Nothing is run in a
 /// dry run.
 /// What a failed self-test asks for. The probes run Claude Code, which refuses to answer until it is logged in, and a
 /// new machine is usually not logged in yet, so the fix names that first.
@@ -250,7 +250,7 @@ const SELFTEST_FIX: &str = "if Claude Code is not logged in, run `claude` and th
 fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>) -> Result<()> {
     let kind = host.info().kind.product_name();
     if ctx.dry_run {
-        // A dry run runs no self-test, so nothing is verified: a warn, never an ok (ruling R2-5).
+        // A dry run runs no self-test, so nothing is verified: a warn, never an ok.
         checks.push(Check::warn(
             id,
             format!("{kind}: not run in a dry run"),
@@ -270,7 +270,7 @@ fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>)
             format!("{kind}: the sandbox refused every probe"),
         ));
     } else {
-        // A probe that did not run is not a refusal, so the message says the self-test could not run (ruling Important 4).
+        // A probe that did not run is not a refusal, so the message says the self-test could not run.
         let message = if results.iter().any(|result| !result.ran) {
             format!(
                 "{kind}: sandbox self-test could not run: {}",
@@ -284,7 +284,7 @@ fn selftest_check(ctx: &Ctx, host: &dyn Host, id: &str, checks: &mut Vec<Check>)
     Ok(())
 }
 
-/// The OpenCode sandbox plugin (spec 7; spec 10 item 25). The plugin must be listed, or the OpenCode sandbox is not
+/// The OpenCode sandbox plugin. The plugin must be listed, or the OpenCode sandbox is not
 /// enforced. The check warns only when relaxkit has had no release for 120 days; a runtime lag never warns on its own,
 /// and an unreachable registry or GitHub is not a failure.
 fn plugin_check(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Result<()> {
@@ -372,7 +372,7 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
                 other => other,
             };
             if program.starts_with('{') {
-                // Not run is never an ok: the probe is unverified until someone runs it (ruling Important item 6).
+                // Not run is never an ok: the probe is unverified until someone runs it.
                 checks.push(Check::warn(
                     &check_id,
                     "not run here: the program is chosen at install time",
@@ -397,7 +397,7 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
             let expected = expected_text(recipe, kind, probe);
             checks.push(match ctx.runner.run(&cmd) {
                 Ok(out) if out.code == 0 => match expected {
-                    // A probe passes only when its output holds the expected text: exit 0 alone is not enough (R3-5).
+                    // A probe passes only when its output holds the expected text: exit 0 alone is not enough.
                     Some(text) if !out.stdout.contains(&text) && !out.stderr.contains(&text) => {
                         Check::fail(
                             &check_id,
@@ -405,7 +405,7 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
                             "run `relaxkit setup` again",
                         )
                     }
-                    // A plugin probe also needs the plugin listed by the host's config (R4-2).
+                    // A plugin probe also needs the plugin listed by the host's config.
                     _ => unlisted_plugin(ctx, host.as_ref(), recipe, kind, &check_id)
                         .unwrap_or_else(|| Check::ok(&check_id, format!("`{shown}` passed"))),
                 },
@@ -426,7 +426,7 @@ fn tool_probe_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>
 }
 
 /// The text a passing probe's output must hold: the recipe's `expect`, or, for a `plugin list` probe with none, the
-/// recipe's plugin name for this host (ruling R3-5).
+/// recipe's plugin name for this host.
 fn expected_text(recipe: &Recipe, kind: HostKind, probe: &Probe) -> Option<String> {
     if let Some(expect) = &probe.expect {
         return Some(expect.clone());
@@ -440,8 +440,8 @@ fn expected_text(recipe: &Recipe, kind: HostKind, probe: &Probe) -> Option<Strin
 }
 
 /// The check for a recipe's plugin on this host when the probe passed, or `None` when the plugin is listed. A recipe with
-/// no plugin for the host has no check here (ruling R4-2). An OpenCode `plugins` entry that cannot be read gets its own
-/// id, which setup never repairs (ruling R5-1).
+/// no plugin for the host has no check here. An OpenCode `plugins` entry that cannot be read gets its own
+/// id, which setup never repairs.
 fn unlisted_plugin(
     ctx: &Ctx,
     host: &dyn Host,
@@ -451,7 +451,7 @@ fn unlisted_plugin(
 ) -> Option<Check> {
     let spec = match plugin_spec(recipe, kind) {
         Some(spec) => spec,
-        // caveman's OpenCode entry is the path its config step writes, not a recipe plugin spec (ruling R5-2).
+        // caveman's OpenCode entry is the path its config step writes, not a recipe plugin spec.
         None if recipe.id == "caveman" && kind == HostKind::Opencode => PLUGIN_SPEC,
         None => return None,
     };
@@ -481,7 +481,7 @@ fn unlisted_plugin(
     }
 }
 
-/// Each locked MCP entry's command must resolve on the MCP PATH (spec 6, ruling K58). The command is only looked for on
+/// Each locked MCP entry's command must resolve on the MCP PATH. The command is only looked for on
 /// disk: the server is not started and no network is used. A missing command is a fail.
 fn mcp_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Result<()> {
     let Some(lock) = Lockfile::load(ctx)? else {
@@ -544,7 +544,7 @@ fn mcp_checks(ctx: &Ctx, hosts: &[Box<dyn Host>], checks: &mut Vec<Check>) -> Re
     Ok(())
 }
 
-/// Whether a locked MCP entry is in the host's own config (OWNER-3 (c), ruling R2-1). A missing entry is a fail that
+/// Whether a locked MCP entry is in the host's own config. A missing entry is a fail that
 /// setup repairs by adding it again; a config that cannot be read is a fail with the fix to repair it by hand.
 fn mcp_entry_check(ctx: &Ctx, host: &dyn Host, entry: &str, id: &str, kind: HostKind) -> Check {
     let check_id = format!("mcp-entry.{id}.{kind}");
@@ -555,7 +555,7 @@ fn mcp_entry_check(ctx: &Ctx, host: &dyn Host, entry: &str, id: &str, kind: Host
             format!("{entry} is missing from the {kind} config"),
             "run relaxkit setup; it re-adds the entry",
         ),
-        // An unreadable config has its own id, so setup never treats it as a missing entry and rewrites it (ruling R3-3).
+        // An unreadable config has its own id, so setup never treats it as a missing entry and rewrites it.
         Err(err) => Check::fail(
             &format!("mcp-config.{id}.{kind}"),
             format!("the {kind} config cannot be read: {err:#}"),
@@ -565,7 +565,7 @@ fn mcp_entry_check(ctx: &Ctx, host: &dyn Host, entry: &str, id: &str, kind: Host
 }
 
 /// The file a probe's program runs from, looked up the way the engine looks: the Node link, the pack bin, `~/.local/bin`,
-/// the system directories, then the PATH. Doctor runs that file by its full path (ruling Important 6).
+/// the system directories, then the PATH. Doctor runs that file by its full path.
 fn probe_program(ctx: &Ctx, program: &str) -> Option<PathBuf> {
     let dirs = [
         ctx.dirs.data.join("node").join("bin"),
@@ -1140,7 +1140,7 @@ mod tests {
     #[test]
     fn a_missing_apparmor_profile_on_ubuntu_2404_fails_with_the_full_sudo_plan() {
         // bubblewrap and socat are present, but the AppArmor profile is not. The fix prints the whole plan, profile step
-        // included, so no user is told to run an incomplete command (ruling K57).
+        // included, so no user is told to run an incomplete command.
         let plan = prerequisite_plan(Os::Linux, Some(UBUNTU_2404));
 
         let check = prerequisites_check(&plan, |_| true);

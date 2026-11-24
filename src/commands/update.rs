@@ -1,7 +1,7 @@
-//! `relaxkit update` for the tools (Task 21, rulings K63 to K82). Self-update is a later step (Task 22), so this module
+//! `relaxkit update` for the tools. Self-update is a later step, so this module
 //! runs the tool phase only. A check changes nothing. A run backs up what it will touch, moves each tool that has a
 //! newer release by its own route, proves it with the tool's probe, and returns a tool whose probe fails to its locked
-//! version. Every tool is independent: one failure never stops the others (K67, K80).
+//! version. Every tool is independent: one failure never stops the others.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -27,7 +27,7 @@ use crate::state::{record_backup, record_link};
 use crate::tools::engine::{Engine, UNVERSIONED};
 use crate::ui::{Cell, Mark, Palette, heading, outcome, table};
 
-/// The rows in run order (K80): rtk first, the pinned tools and Node before the tools that run on Node, then the rest.
+/// The rows in run order: rtk first, the pinned tools and Node before the tools that run on Node, then the rest.
 const ORDER: [&str; 13] = [
     "rtk",
     "nvm",
@@ -51,7 +51,7 @@ pub struct UpdateArgs {
     pub tool: Option<String>,
 }
 
-/// What happened to one tool (K75).
+/// What happened to one tool.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowResult {
     /// Moved to the newest release and confirmed by its probe.
@@ -69,7 +69,7 @@ pub enum RowResult {
     /// A check found a newer release. Only a check reports this; a run would move the tool.
     Available,
     /// A host's version was never recorded, and it is now recorded. Something ran, so this is not "current"; no move
-    /// from a known version happened, so it is not "updated" either (F4-2).
+    /// from a known version happened, so it is not "updated" either.
     Recorded,
 }
 
@@ -111,7 +111,7 @@ pub struct UpdateRow {
     pub note: Option<String>,
 }
 
-/// The whole run. `restart` lists the hosts whose tools changed (K69). `failed` names each tool that failed (K75).
+/// The whole run. `restart` lists the hosts whose tools changed. `failed` names each tool that failed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UpdateReport {
     pub rows: Vec<UpdateRow>,
@@ -289,7 +289,7 @@ fn plan<'r>(
                         plan.note = Some(format!("{err:#}"));
                     }
                     Ok(newest) => {
-                        // A locked gh whose pack copy is missing is installed again, even at the newest release (F7-2).
+                        // A locked gh whose pack copy is missing is installed again, even at the newest release.
                         let copy_missing =
                             !crate::platform::is_executable(&engine.ctx.dirs.bin.join("gh"));
                         plan.needs =
@@ -431,7 +431,7 @@ fn reported_text(reported: &[(HostKind, String)]) -> String {
 
 /// Whether a locked version is the newest release. A Claude Code listing version carries a build suffix after its
 /// first `-` (such as `7.0.2-22f0b463e7a5`) that the release tag does not carry, so for the Claude host only the part
-/// before the first `-` is compared (F3-2). Other hosts compare the whole version.
+/// before the first `-` is compared. Other hosts compare the whole version.
 fn at_newest(kind: HostKind, locked: &str, newest: &str) -> bool {
     match kind {
         HostKind::Claude => locked.split('-').next() == Some(newest),
@@ -486,7 +486,7 @@ fn reported_version(
 }
 
 /// Records each host's new version in the lock entry of `id`, one host at a time, so every other host keeps the
-/// version it had (K73, K74). The route is kept unless one is given. Only exact versions are recorded.
+/// version it had. The route is kept unless one is given. Only exact versions are recorded.
 fn record_moves(
     ctx: &Ctx,
     id: &str,
@@ -513,7 +513,7 @@ fn record_moves(
     lock.save(ctx, &ctx.run)
 }
 
-/// The Node row (K66, K81): `nvm install 24` through the pinned nvm with `PROFILE=/dev/null`, then the new Node is
+/// The Node row: `nvm install 24` through the pinned nvm with `PROFILE=/dev/null`, then the new Node is
 /// probed by its own path, and only then does the fixed link move. The previous Node stays installed.
 fn node_flow(
     ctx: &Ctx,
@@ -566,7 +566,7 @@ fn node_flow(
     }
 }
 
-/// The gh row (K84): the pack copy, which relaxkit installed and the lock records, moves to the newest release. The
+/// The gh row: the pack copy, which relaxkit installed and the lock records, moves to the newest release. The
 /// release is verified before anything is written. The previous copy is journaled before the write, and it is put back
 /// when the new copy fails its probe or the lock cannot be written. A brew or system gh is never touched.
 fn gh_flow(ctx: &Ctx, plan: &Plan<'_>, report: &mut UpdateReport) -> (UpdateRow, Vec<HostKind>) {
@@ -578,7 +578,7 @@ fn gh_flow(ctx: &Ctx, plan: &Plan<'_>, report: &mut UpdateReport) -> (UpdateRow,
         note,
     };
     let bin = ctx.dirs.bin.join("gh");
-    // A link at the pack path is not the pack copy, and its target is never written through (K84, F7-1).
+    // A link at the pack path is not the pack copy, and its target is never written through.
     if gh::is_link(&bin) {
         return (
             row(
@@ -616,7 +616,7 @@ fn gh_flow(ctx: &Ctx, plan: &Plan<'_>, report: &mut UpdateReport) -> (UpdateRow,
         .and_then(|()| gh::probe(ctx, &bin, &fetched.version))
         .and_then(|()| gh::record_version(ctx, &ctx.run, &fetched.version));
     match outcome {
-        // A move from a version that was never recorded records the version now, which is not an update (K88).
+        // A move from a version that was never recorded records the version now, which is not an update.
         Ok(()) if plan.installed.as_deref() == Some(UNVERSIONED) => (
             row(
                 RowResult::Recorded,
@@ -651,7 +651,7 @@ fn gh_flow(ctx: &Ctx, plan: &Plan<'_>, report: &mut UpdateReport) -> (UpdateRow,
     }
 }
 
-/// The rtk row (K65): the latest release is written to the pack copy through the install path. A link at the pack path
+/// The rtk row: the latest release is written to the pack copy through the install path. A link at the pack path
 /// is removed before the write; a brew copy is never upgraded by brew. A failure puts the pack copy back as it was.
 fn rtk_flow(
     engine: &Engine<'_>,
@@ -684,9 +684,9 @@ fn rtk_flow(
             bin.display()
         )
     });
-    // Owner ruling K87: while any installed host is below rtk's minimum, the shared pack binary is not moved and no lock
+    // While any installed host is below rtk's minimum, the shared pack binary is not moved and no lock
     // entry is written. Moving it would change what the other host runs while the lock keeps the old version. Relaxkit
-    // does not update the host; the owner updates it through the host's own updater.
+    // does not update the host; the user updates it through the host's own updater.
     let below: Vec<String> = recipe
         .hosts
         .iter()
@@ -704,7 +704,7 @@ fn rtk_flow(
         })
         .collect();
     if let Some(reason) = below.into_iter().next() {
-        // Nothing was written here, so the brew note ("the pack copy was updated") does not apply (F3-3).
+        // Nothing was written here, so the brew note ("the pack copy was updated") does not apply.
         return (row(RowResult::NotTouched(reason), None), Vec::new());
     }
     let before = match FileState::capture(&bin) {
@@ -727,7 +727,7 @@ fn rtk_flow(
             Vec::new(),
         ),
         Ok(out) => {
-            // Only a host whose lock version differs moved (K72). A host already at the target is not a move, so when
+            // Only a host whose lock version differs moved. A host already at the target is not a move, so when
             // none remain the row is current, the lock is not written, and no host restarts.
             let moved: Vec<HostKind> = out
                 .updated
@@ -735,7 +735,7 @@ fn rtk_flow(
                 .copied()
                 .filter(|kind| entry.version_for(kind.as_str()) != target)
                 .collect();
-            // Every host whose configuration ran against the binary restarts, moved or not (F3-4). Only the label and the
+            // Every host whose configuration ran against the binary restarts, moved or not. Only the label and the
             // lock write follow the moved filter.
             if moved.is_empty() {
                 return (row(RowResult::Current, note), out.updated);
@@ -744,7 +744,7 @@ fn rtk_flow(
                 Ok(()) => (row(RowResult::Updated, note), out.updated.clone()),
                 Err(err) => {
                     report.failed.push(plan.id.to_string());
-                    // The pack copy was written before the lock failed, so the hosts are still listed to restart (K69).
+                    // The pack copy was written before the lock failed, so the hosts are still listed to restart.
                     (
                         row(RowResult::RollbackFailed(format!("{err:#}")), note),
                         out.updated,
@@ -754,7 +754,7 @@ fn rtk_flow(
         }
         Err(err) => {
             report.failed.push(plan.id.to_string());
-            // The hosts' configuration may have been rewritten before the failure, so they are listed to restart (K69).
+            // The hosts' configuration may have been rewritten before the failure, so they are listed to restart.
             let changed = present_hosts(recipe, entry, engine.hosts);
             match before.restore(&bin) {
                 Ok(()) => (
@@ -774,7 +774,7 @@ fn rtk_flow(
 }
 
 /// Any other tool: the route moves it on each host it is locked on, the probe confirms it, and a failure returns it
-/// to its locked version (K67). A Claude Code plugin has no pin to return to, so its failure is named, not undone.
+/// to its locked version. A Claude Code plugin has no pin to return to, so its failure is named, not undone.
 fn tool_flow(
     engine: &Engine<'_>,
     hosts: &[Box<dyn Host>],
@@ -800,8 +800,8 @@ fn tool_flow(
         );
     };
     let target = plan.newest.clone().unwrap_or_default();
-    // K72 per host: only the hosts behind the target run. A host already at the newest version gets no call at all, so
-    // the rollback below counts only the hosts that moved (F4-1).
+    // Per host, only the hosts behind the target run. A host already at the newest version gets no call at all, so
+    // the rollback below counts only the hosts that moved.
     let present: Vec<HostKind> = present_hosts(recipe, entry, hosts)
         .into_iter()
         .filter(|kind| !at_newest(*kind, entry.version_for(kind.as_str()), &target))
@@ -872,7 +872,7 @@ fn tool_flow(
                 Ok(()) => {
                     // A move from a version that was never recorded records the version now. When every move in the
                     // row came from such a version, nothing is "updated" and nothing is "current": the row is
-                    // "recorded". A move from a known version keeps the "updated" label (F4-2).
+                    // "recorded". A move from a known version keeps the "updated" label.
                     let from_unversioned = changed
                         .iter()
                         .any(|(kind, _)| entry.version_for(kind.as_str()) == UNVERSIONED);
@@ -901,7 +901,7 @@ fn tool_flow(
         Err(err) => {
             report.failed.push(plan.id.to_string());
             let note = Some(format!("{err:#}"));
-            // The hosts were updated before the probe failed, so they are listed to restart whatever the result (K69).
+            // The hosts were updated before the probe failed, so they are listed to restart whatever the result.
             let changed = present.clone();
             if !every_pinnable || old_versions.len() != 1 {
                 let reason = if !every_pinnable {
@@ -913,7 +913,7 @@ fn tool_flow(
                 return (row(RowResult::RollbackFailed(reason), note), changed);
             }
             let old = old_versions.into_iter().next().unwrap_or_default();
-            // The placeholder is never a pin: a rollback to an unrecorded version is refused, and nothing runs (F5-1).
+            // The placeholder is never a pin: a rollback to an unrecorded version is refused, and nothing runs.
             if old == UNVERSIONED {
                 return (
                     row(
@@ -987,7 +987,7 @@ impl FileState {
     }
 }
 
-/// Backs up everything the run may touch, before any change (K67): the lock snapshot and its journal record, the
+/// Backs up everything the run may touch, before any change: the lock snapshot and its journal record, the
 /// existing user files of each detected host, and the pack's rtk copy. The rtk copy is journaled
 /// even when absent, because the release is written as a new file, and undo must remove it again. A link is not backed
 /// up: a backup would read the file behind it, and undo does not restore links.
@@ -1030,7 +1030,7 @@ fn back_up_first(
 }
 
 /// The text of the report: a table with one row per tool, then any failures, then the restart list, which is always
-/// last (K69).
+/// last.
 pub fn lines(report: &UpdateReport, palette: Palette) -> Vec<String> {
     let mut lines = Vec::new();
     if !report.rows.is_empty() {
@@ -1084,7 +1084,7 @@ pub fn lines(report: &UpdateReport, palette: Palette) -> Vec<String> {
     lines
 }
 
-/// The report as JSON (K70 and K75): rows of {tool, installed, newest, result, note}, then restart and failed.
+/// The report as JSON: rows of {tool, installed, newest, result, note}, then restart and failed.
 pub fn to_json(report: &UpdateReport) -> Value {
     json!({
         "rows": report.rows.iter().map(|row| json!({

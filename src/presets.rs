@@ -84,7 +84,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn presets_match_the_spec_table() {
+    fn presets_match_the_expected_table() {
         assert_eq!(
             Preset::Balanced.tiers(),
             (Tier::Smarter, Tier::Cheap, Tier::Standard)

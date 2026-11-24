@@ -1,6 +1,6 @@
-//! `relaxkit login github` (spec 6, 7, ruling K108). The flow is Task 18's `github::login`: it is skipped when
+//! `relaxkit login github`. The flow is `github::login`: it is skipped when
 //! `gh auth status` passes, and otherwise runs the web login and `gh auth setup-git`. relaxkit never handles a token,
-//! so there is no token delivery step; the `gh` route for Claude Code is fixed by setup (K42).
+//! so there is no token delivery step; the `gh` route for Claude Code is fixed by setup.
 
 use std::io::IsTerminal;
 
@@ -16,7 +16,7 @@ pub fn run(ctx: &Ctx) -> Result<i32> {
     run_with(ctx, std::io::stdin().is_terminal())
 }
 
-/// The login with the terminal question answered by the caller. Returns the exit code: 3 when the owner must finish.
+/// The login with the terminal question answered by the caller. Returns the exit code: 3 when the user must finish.
 pub fn run_with(ctx: &Ctx, interactive: bool) -> Result<i32> {
     let outcome = if ctx.dry_run {
         github::login_with(ctx, &ctx.run, interactive)?

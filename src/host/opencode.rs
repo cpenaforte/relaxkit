@@ -60,8 +60,8 @@ impl OpencodeHost {
 }
 
 /// The plugin spec a `plugins` entry names. A string is its own spec. A two-element array whose first element is a
-/// string is `[spec, options]`, which OpenCode 2.2.6 accepts (ruling R6-2). Any other shape names no spec, so it is
-/// `None`. Every reader and writer of `plugins` entries uses this one rule (ruling R7-2).
+/// string is `[spec, options]`, which OpenCode 2.2.6 accepts. Any other shape names no spec, so it is
+/// `None`. Every reader and writer of `plugins` entries uses this one rule.
 pub fn plugin_name(entry: &Value) -> Option<&str> {
     match entry {
         Value::String(spec) => Some(spec),
@@ -79,7 +79,7 @@ pub fn opencode_dir(home: &Path, xdg: Option<&OsStr>) -> PathBuf {
 }
 
 /// The config file in `dir`: `opencode.jsonc` when it exists, otherwise `opencode.json`. With neither file,
-/// `opencode plugin add` creates `opencode.json` (spike B2), so that is the default.
+/// `opencode plugin add` creates `opencode.json`, so that is the default.
 pub fn config_file_in(dir: &Path) -> PathBuf {
     let jsonc = dir.join("opencode.jsonc");
     if jsonc.exists() {
@@ -140,7 +140,7 @@ fn autoloaded_plugin_names(dir: &Path) -> Result<Vec<String>> {
 
 /// Reads one `plugins` entry as a plugin. A local path has no version, and it is named by its last component. A
 /// package's version is whatever follows the package name, except that a git spec names its release after the last
-/// `#`: `#v7.0.2` is version 7.0.2 (ruling R8-1).
+/// `#`: `#v7.0.2` is version 7.0.2.
 fn to_plugin(spec: &str) -> InstalledPlugin {
     if let Some(name) = local_plugin_name(spec) {
         return InstalledPlugin {
@@ -215,7 +215,7 @@ impl Host for OpencodeHost {
         for word in argv {
             cmd = cmd.arg(word);
         }
-        // Clear the old entry first, so an update really replaces the argv (for example the K9 `--context ide`).
+        // Clear the old entry first, so an update really replaces the argv.
         // If the add fails, the old entry is written back.
         let files = self.config_candidates();
         let saved = snapshot(&files)?;
@@ -225,7 +225,7 @@ impl Host for OpencodeHost {
         })
     }
 
-    /// Whether `mcp.servers.<name>` is in either config file (ruling R2-1).
+    /// Whether `mcp.servers.<name>` is in either config file.
     fn mcp_entry_present(&self, _ctx: &Ctx, name: &str) -> Result<bool> {
         for file in self.config_candidates() {
             let text = match fs::read_to_string(&file) {
@@ -241,7 +241,7 @@ impl Host for OpencodeHost {
     }
 
     /// Removes `mcp.servers.<name>` with the comment-preserving editor. No native `mcp remove` is known
-    /// for OpenCode 2.2.6 (spike A1 covers add only), so this path does not shell out.
+    /// for OpenCode 2.2.6, so this path does not shell out.
     fn mcp_remove(&self, ctx: &Ctx, name: &str) -> Result<()> {
         let path = config_file_in(&self.dir);
         let text = match fs::read_to_string(&path) {
@@ -261,7 +261,7 @@ impl Host for OpencodeHost {
         run_edit(ctx, &self.config_candidates(), &cmd)
     }
 
-    /// Relaxkit reinstalls the exact pinned spec (controller ruling I1) rather than running
+    /// Relaxkit reinstalls the exact pinned spec rather than running
     /// `opencode plugin update`. Entries of the same package are removed first, so two versions never
     /// load side by side.
     fn plugin_update(&self, ctx: &Ctx, spec: &str) -> Result<()> {
@@ -286,7 +286,7 @@ impl Host for OpencodeHost {
     /// Lists the plugins OpenCode loads. It reads the `plugins` array of the config file, then the `.ts` and `.js`
     /// files directly in `plugins/` that no entry already names, because OpenCode loads those without a config entry.
     /// `opencode plugin list` is not used: it needs the managed service on a fixed port, and `--standalone` did not
-    /// show loaded plugins (spike A1).
+    /// show loaded plugins.
     fn plugin_list(&self, _ctx: &Ctx) -> Result<Vec<InstalledPlugin>> {
         let mut plugins: Vec<InstalledPlugin> = self
             .plugin_specs()?
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn config_file_defaults_to_json_on_an_empty_home() {
-        // Spike B2: `opencode plugin add` on an empty home creates opencode.json.
+        // `opencode plugin add` on an empty home creates opencode.json.
         let root = tempfile::tempdir().unwrap();
         assert_eq!(
             config_file_in(root.path()),

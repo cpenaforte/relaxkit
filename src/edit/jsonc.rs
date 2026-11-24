@@ -78,7 +78,7 @@ pub fn jsonc_restore(text: &str, original: Option<&str>, path: &[&str]) -> Resul
 }
 
 /// Restores `path` as `jsonc_restore` does, but only while it still holds `written`, the value relaxkit wrote. A value
-/// changed by hand stays (K118).
+/// changed by hand stays.
 pub fn jsonc_restore_if(
     text: &str,
     original: Option<&str>,

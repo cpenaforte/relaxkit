@@ -83,7 +83,7 @@ pub enum Command {
         #[arg(long)]
         run: Option<String>,
     },
-    /// Remove relaxkit and what it installed
+    /// Remove the pack's MCP entries, config keys, roles blocks and binary copies
     Uninstall,
     /// Run the usage tool. Tool flags must come after `--` or after the first argument.
     Usage {

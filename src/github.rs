@@ -1,6 +1,6 @@
-//! GitHub login (spec 7, ruling K43) and the `gh` route from Claude Code (spec 7, ruling K42).
+//! GitHub login and the `gh` route from Claude Code.
 //!
-//! relaxkit never reads or writes a GitHub token. `gh` keeps the owner's keyring login, and nothing this module
+//! relaxkit never reads or writes a GitHub token. `gh` keeps the user's keyring login, and nothing this module
 //! writes names a token, an environment variable or a session hook.
 
 use anyhow::{Result, bail};
@@ -13,7 +13,7 @@ use crate::runtime::utf8;
 use crate::sandbox::GhPath;
 use crate::state::RunId;
 
-/// The exit code of `relaxkit login github` when the owner must finish the login by hand (ruling K43).
+/// The exit code of `relaxkit login github` when the user must finish the login by hand.
 pub const MANUAL_STEP_EXIT_CODE: i32 = 3;
 
 /// What `login` did, or would do.
@@ -25,7 +25,7 @@ pub enum LoginOutcome {
     LoggedIn,
     /// A dry run: nothing ran.
     Planned,
-    /// No terminal, and gh is not logged in. The owner runs `command` (a single shell line) to finish.
+    /// No terminal, and gh is not logged in. The user runs `command` (a single shell line) to finish.
     ManualStep { command: String },
 }
 
@@ -50,7 +50,7 @@ pub fn login(ctx: &Ctx, run: &RunId) -> Result<LoginOutcome> {
 
 /// The login with the terminal question answered by the caller, so tests do not depend on how they were started.
 pub fn login_with(ctx: &Ctx, run: &RunId, interactive: bool) -> Result<LoginOutcome> {
-    // Installs gh first when it is missing (Task 11); a dry run only reports the path it would use.
+    // Installs gh first when it is missing; a dry run only reports the path it would use.
     let gh = ensure_gh(ctx, run)?;
     let program = utf8(&gh.path)?;
     let login_cmd = Cmd::new(program).args(&["auth", "login", "--web", "--clipboard"]);
@@ -71,7 +71,7 @@ pub fn login_with(ctx: &Ctx, run: &RunId, interactive: bool) -> Result<LoginOutc
     }
 
     if !interactive {
-        // The web flow waits for the owner (a prompt and a one-time code), so it cannot run here.
+        // The web flow waits for the user (a prompt and a one-time code), so it cannot run here.
         let command = format!("{login_cmd} && {setup_cmd}");
         ctx.out.warn(&format!(
             "GitHub login needs a terminal. Run this in one to finish: {command}"
@@ -79,7 +79,7 @@ pub fn login_with(ctx: &Ctx, run: &RunId, interactive: bool) -> Result<LoginOutc
         return Ok(LoginOutcome::ManualStep { command });
     }
 
-    // Printed plainly, not as a result: the web flow that follows prompts the owner and cannot show a spinner.
+    // Printed plainly, not as a result: the web flow that follows prompts the user and cannot show a spinner.
     ctx.out.info(
         "logging in to GitHub: a browser opens and a one-time code is copied for you to paste",
     );
@@ -102,7 +102,7 @@ pub fn login_with(ctx: &Ctx, run: &RunId, interactive: bool) -> Result<LoginOutc
     Ok(LoginOutcome::LoggedIn)
 }
 
-/// The `gh` route from Claude Code (ruling K42): always outside the sandbox, through `sandbox.excludedCommands`.
+/// The `gh` route from Claude Code: always outside the sandbox, through `sandbox.excludedCommands`.
 /// No probe runs, so this never returns `GhPath::Inside`.
 pub fn choose_gh_path(_ctx: &Ctx, _host: &dyn Host) -> GhPath {
     GhPath::ExcludedFallback
@@ -183,7 +183,7 @@ mod tests {
         let cmds = runner.cmds();
         assert!(
             cmds[1].inherits_terminal(),
-            "the web login needs the owner's terminal for its prompt and one-time code"
+            "the web login needs the user's terminal for its prompt and one-time code"
         );
         assert!(!cmds[2].inherits_terminal());
     }
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn login_leaves_no_token_hook_or_env_entry_on_disk() {
-        // Replaces the token-delivery test (ruling K42): after a login, no file under the home holds a token,
+        // Replaces the token-delivery test: after a login, no file under the home holds a token,
         // a token hook, or an envVars entry, the settings file is unchanged, and no command carried an environment.
         let root = tempfile::tempdir().unwrap();
         let settings = root.path().join(".claude").join("settings.json");

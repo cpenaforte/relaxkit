@@ -1,4 +1,4 @@
-//! The Claude Code adapter's plugin files (Task 24, part B): the manifest, and one slash-command file per CLI subcommand.
+//! The Claude Code adapter's plugin files: the manifest, and one slash-command file per CLI subcommand.
 //! Each command file is a thin wrapper that passes its arguments to the binary and shows the output.
 
 use std::fs;
@@ -9,7 +9,7 @@ use relaxkit::brand;
 use relaxkit::cli::Cli;
 use relaxkit::sandbox::claude::PACK_COMMANDS;
 
-/// The sentence that a mutating command file must contain (R24B-2).
+/// The sentence that a mutating command file must contain.
 const OUTSIDE_SANDBOX: &str = "outside the sandbox";
 
 /// The line that every command file ends its body with.
@@ -100,7 +100,7 @@ fn every_cli_subcommand_has_a_command_file() {
         assert!(path.is_file(), "{} is missing", path.display());
     }
 
-    // One file per subcommand and no other: no bare-name or alias commands (R24B-1).
+    // One file per subcommand and no other: no bare-name or alias commands.
     let mut files: Vec<String> = fs::read_dir(commands_dir())
         .expect("the commands directory is readable")
         .map(|entry| {
@@ -138,7 +138,7 @@ fn command_files_have_frontmatter() {
 
 #[test]
 fn mutating_commands_say_they_run_outside_the_sandbox() {
-    assert_eq!(PACK_COMMANDS.len(), 9, "the mutating list changed (R24B-2)");
+    assert_eq!(PACK_COMMANDS.len(), 9, "the mutating list changed");
     for name in PACK_COMMANDS {
         let text = command_file(name);
         assert!(

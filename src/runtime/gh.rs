@@ -28,21 +28,21 @@ pub struct GhInstall {
     pub owned_by_pack: bool,
 }
 
-/// The lock key and route of the gh pack copy (K84).
+/// The lock key and route of the gh pack copy.
 pub const GH_ID: &str = "gh";
 const GH_ROUTE: &str = "release";
 
-/// Records the pack copy in the lock when relaxkit installed it (K84). A brew or system gh is never recorded, and a dry
+/// Records the pack copy in the lock when relaxkit installed it. A brew or system gh is never recorded, and a dry
 /// run writes nothing. The version is the one `gh --version` reports, or `unversioned` when none is read.
 pub fn record_pack_copy(ctx: &Ctx, run: &RunId, gh: &GhInstall) -> Result<()> {
     if ctx.dry_run || !gh.owned_by_pack || gh.path != ctx.dirs.bin.join("gh") {
         return Ok(());
     }
-    // A link is never the pack copy: its target belongs to another install (K84, F7-1).
+    // A link is never the pack copy: its target belongs to another install.
     if is_link(&gh.path) {
         return Ok(());
     }
-    // The lock takes the version the copy reports, replacing an older entry (F7-3). A copy whose version cannot be read
+    // The lock takes the version the copy reports, replacing an older entry. A copy whose version cannot be read
     // keeps the entry it has, so a failed probe does not turn a known version into unversioned.
     let version = reported_version(ctx, &gh.path);
     let existing = Lockfile::load(ctx)?
@@ -121,7 +121,7 @@ fn ensure_gh_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<GhInstall
         });
     }
     // A dangling link, or a link to a file that is not executable, is where an install would write through it: it is
-    // refused before any download or write (K84, F8-1). A link to an executable gh is used as present above (K90).
+    // refused before any download or write. A link to an executable gh is used as present above.
     if is_link(&bin) {
         bail!(
             "the pack path {} is a link; relaxkit does not write through it",
@@ -157,7 +157,7 @@ pub struct Fetched {
     pub body: Vec<u8>,
 }
 
-/// The newest release of gh for this platform, verified against its checksums (K84).
+/// The newest release of gh for this platform, verified against its checksums.
 pub fn fetch_latest(ctx: &Ctx, run: &RunId) -> Result<Fetched> {
     fetch_verified(ctx, run, current_os()?, current_arch()?)
 }
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn a_link_to_a_working_gh_is_used_as_present_with_no_write_and_no_entry() {
         // The link points at an executable gh and dirs.bin is not on the PATH: it is used as the present copy, with no
-        // download, no write, and no lock entry (K90, F9-1).
+        // download, no write, and no lock entry.
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("elsewhere").join("gh");
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn a_dangling_link_at_the_pack_path_is_refused_before_any_download() {
-        // The install would write through the link into a path that does not exist, so it is refused (K90, F9-1).
+        // The install would write through the link into a path that does not exist, so it is refused.
         let root = tempfile::tempdir().unwrap();
         let bin = KitDirs::rooted(root.path()).bin;
         fs::create_dir_all(&bin).unwrap();
@@ -479,8 +479,7 @@ mod tests {
     #[test]
     fn a_link_at_the_pack_path_stops_the_install_and_is_never_written_through() {
         // The target is a regular file that is not executable, so the install path would be reached. The link is
-        // refused before any download or write: the target keeps its bytes and mode, and no lock entry is written
-        // (K84, F8-1).
+        // refused before any download or write: the target keeps its bytes and mode, and no lock entry is written.
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("elsewhere").join("gh");
@@ -513,7 +512,7 @@ mod tests {
             runner.lines()
         );
         assert!(lock_in(&ctx).is_none(), "a link was recorded");
-        // A link that reaches the record step is still never recorded (F7-1).
+        // A link that reaches the record step is still never recorded.
         let link = GhInstall {
             path: bin.join("gh"),
             owned_by_pack: true,
@@ -525,7 +524,7 @@ mod tests {
     #[test]
     fn a_reinstalled_pack_copy_replaces_an_older_locked_version_with_the_one_it_reports() {
         // The lock says 2.60.0 but the copy is missing: setup installs the release tagged 9.9.9, and the copy reports
-        // 9.9.8. The lock takes what the copy reports, not the tag (F7-3).
+        // 9.9.8. The lock takes what the copy reports, not the tag.
         let root = tempfile::tempdir().unwrap();
         let (bytes, checksums) = fixture(root.path(), None);
         let bin = KitDirs::rooted(root.path()).bin.join("gh");

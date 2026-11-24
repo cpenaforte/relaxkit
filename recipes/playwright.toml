@@ -1,5 +1,5 @@
 # The Chromium download comes from the same exact @playwright/mcp version as the MCP entry.
-# `--browser chromium` is required: without it the entry uses Chrome stable (spike A I5).
+# `--browser chromium` is required: without it the entry uses Chrome stable.
 id = "playwright"
 title = "Playwright"
 kind = "mcp"

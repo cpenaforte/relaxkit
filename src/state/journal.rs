@@ -78,7 +78,7 @@ pub struct EditRecord {
     /// For a link the update replaced or removed: the target it pointed at, which undo puts back. Absent for files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<PathBuf>,
-    /// The run group the change belongs to (K105): a self step and the tool run it re-executes share one. Absent
+    /// The run group the change belongs to: a self step and the tool run it re-executes share one. Absent
     /// in journals written before groups existed, where the record's own run is its group.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<RunId>,

@@ -28,7 +28,7 @@ The synopses leave out the global flags, which apply to every command (see [Glob
 | [privacy](#relaxkit-privacy) | Show or change telemetry |
 | [login](#relaxkit-login) | Log in to a service |
 | [undo](#relaxkit-undo) | Revert the last change, or a named run group |
-| [uninstall](#relaxkit-uninstall) | Remove the pack's MCP entries, config keys, roles blocks and binary copies. |
+| [uninstall](#relaxkit-uninstall) | Remove the pack's MCP entries, config keys, roles blocks and binary copies. It also removes the lock file, unless it is a symlink, which it keeps. `relaxkit undo` restores a removed lock file. |
 | [usage](#relaxkit-usage) | Run the usage tool |
 
 ## Global flags
@@ -200,7 +200,7 @@ relaxkit undo --dry-run
 relaxkit uninstall
 ```
 
-Uninstall removes the MCP entries, config keys and roles blocks the pack wrote, and the pack's binary copies under `dirs.bin`. It keeps the relaxkit binary, its config and journal (so `relaxkit undo` still works), the Node link with the Node it points at, and the pack's plugins. Uninstall also removes the lock file, which `relaxkit undo` restores. The dry run lists each of these, so you can see what stays. Uninstall refuses `--project`.
+Uninstall removes the MCP entries, config keys and roles blocks the pack wrote, and the pack's binary copies under `dirs.bin`. It keeps the relaxkit binary, its config and journal (so `relaxkit undo` still works), the Node link with the Node it points at, and the pack's plugins. Uninstall also removes the lock file, unless it is a symlink, which it keeps. `relaxkit undo` restores a removed lock file. The dry run lists each of these, so you can see what stays. Uninstall refuses `--project`.
 
 ```sh
 relaxkit uninstall --dry-run
@@ -290,7 +290,7 @@ Commands:
   privacy    Show or change telemetry
   login      Log in to a service
   undo       Revert the last change, or a named run group
-  uninstall  Remove relaxkit and what it installed
+  uninstall  Remove the pack's MCP entries, config keys, roles blocks and binary copies
   usage      Run the usage tool. Tool flags must come after `--` or after the first argument
   help       Print this message or the help of the given subcommand(s)
 

@@ -1,4 +1,4 @@
-//! The coding-agent adapters that relaxkit installs into a host (spec section 9). The Claude Code adapter is a plugin
+//! The coding-agent adapters that relaxkit installs into a host. The Claude Code adapter is a plugin
 //! that lives in this repository, and the repository's marketplace file lists it. The OpenCode adapter is a plugin in
 //! `adapters/opencode-plugin`, installed from its pinned release tag.
 

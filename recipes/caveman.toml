@@ -1,4 +1,4 @@
-# Routing stays off: `caveman off routing --yes` is required (spike A I4). Never run `caveman login`,
+# Routing stays off: `caveman off routing --yes` is required. Never run `caveman login`,
 # `caveman providers`, or `caveman --only opencode` (the last one writes the V1 key).
 # The Claude marketplace repo (JuliusBrussee/caveman) is not in this data: the claude_marketplace handler supplies it.
 id = "caveman"

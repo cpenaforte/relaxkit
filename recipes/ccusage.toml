@@ -1,5 +1,5 @@
 # No install step: relaxkit runs ccusage through npx at the newest release resolved at install, and every invocation passes --offline,
-# because the pricing fetch is the one network path (spike A A9 item 12).
+# because the pricing fetch is the one network path.
 id = "ccusage"
 title = "ccusage"
 kind = "npm"

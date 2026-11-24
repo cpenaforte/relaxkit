@@ -55,7 +55,7 @@ pub trait Host {
         env: &[(String, String)],
     ) -> Result<()>;
     fn mcp_remove(&self, ctx: &Ctx, name: &str) -> Result<()>;
-    /// Whether the host's own config holds an MCP entry with this name. Read-only: nothing is started (ruling R2-1).
+    /// Whether the host's own config holds an MCP entry with this name. Read-only: nothing is started.
     fn mcp_entry_present(&self, ctx: &Ctx, name: &str) -> Result<bool>;
     fn plugin_install(&self, ctx: &Ctx, spec: &str) -> Result<()>;
     fn plugin_update(&self, ctx: &Ctx, spec: &str) -> Result<()>;
@@ -167,7 +167,7 @@ pub(crate) fn run_read(ctx: &Ctx, cmd: &Cmd) -> Result<Output> {
 
 /// Runs a host command that edits user files and returns its output whatever the exit code. Each existing
 /// file is backed up and journaled through `state::safe_write` before the command runs. Its mode is
-/// restored afterwards, because OpenCode's own writes change it (spike A1: 644 became 600). A dry run only
+/// restored afterwards, because OpenCode's own writes change it. A dry run only
 /// reports the command.
 pub(crate) fn edit_guarded(ctx: &Ctx, files: &[PathBuf], cmd: &Cmd) -> Result<Output> {
     if ctx.dry_run {
@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn serena_recipe_argv_matches_the_rulings() {
+    fn serena_recipe_argv_matches_the_expected_flags() {
         let recipes = crate::recipe::load_all().unwrap();
         let serena = recipes.iter().find(|r| r.id == "serena").unwrap();
         let mcp_argv = |steps: &[crate::recipe::Step]| -> Vec<String> {

@@ -1,4 +1,4 @@
-//! The update route of each tool (ruling K71): how one tool moves to a newer exact version on each host it is installed
+//! The update route of each tool: how one tool moves to a newer exact version on each host it is installed
 //! on, and the probe that confirms the move. The caller (`commands::update`) chooses the tools and hosts, takes the
 //! backups and the lock, and rolls a tool back when its update or probe fails. Nothing here writes the lock.
 
@@ -61,7 +61,7 @@ impl Engine<'_> {
     fn update_once(&self, next: &Recipe, target: &str, host: &dyn Host) -> Result<()> {
         match next.id.as_str() {
             "rtk" => {
-                // rtk is always the latest release (owner's exception, ruling R2-2). The release written must be the
+                // rtk is always the latest release. The release written must be the
                 // one the update asked for, or the tool is not confirmed.
                 let tag = rtk::reinstall_latest(self.ctx, self.run)?;
                 let bare = tag.strip_prefix('v').unwrap_or(&tag);
@@ -71,7 +71,7 @@ impl Engine<'_> {
             }
             "playwright" => chromium::ensure_chromium(self.ctx, self.run, target)?,
             "serena" => {
-                // `uv tool install` at the newest pin, with --force so an installed tool moves (spike I6). The pin is
+                // `uv tool install` at the newest pin, with --force so an installed tool moves. The pin is
                 // written with `==`, the requirement form uv reads; `@` would name a URL.
                 uv::ensure_uv(self.ctx, self.run)?;
                 let argv = [
@@ -117,12 +117,12 @@ impl Engine<'_> {
                     let vars = self.vars(next)?;
                     let expanded = next.expand(&[spec.to_string()], &vars)?;
                     host.plugin_update(self.ctx, &expanded[0])?;
-                    // The config must list the new spec before the lock may move (K67, R4-2): an exit of 0 from
+                    // The config must list the new spec before the lock may move: an exit of 0 from
                     // `opencode plugin add` is not proof that the plugin is now at the target version.
                     let name = plugin_name(&expanded[0]).to_string();
                     let want = next.pin.clone().unwrap_or_default();
                     let listed = host.plugin_list(self.ctx)?;
-                    // Exactly one entry for the package, at the target version (F2-4). Two entries means the old spec
+                    // Exactly one entry for the package, at the target version. Two entries means the old spec
                     // survived the remove, and two loaded copies of one plugin are not the target state.
                     let entries: Vec<_> =
                         listed.iter().filter(|plugin| plugin.name == name).collect();
@@ -144,7 +144,7 @@ impl Engine<'_> {
             }
         }
         if next.id == "caveman" && kind == HostKind::Opencode {
-            // caveman's OpenCode files come from its newest tag (spec 5.1), through the same handler as the install.
+            // caveman's OpenCode files come from its newest tag, through the same handler as the install.
             let run = handler("caveman_opencode").context("caveman_opencode handler is missing")?;
             let mut vars = self.vars(next)?;
             run(self, next, host, &mut vars)?;
@@ -161,7 +161,7 @@ impl Engine<'_> {
     }
 
     /// Updates a Claude Code plugin by name at its installed marketplace. Every marketplace is refreshed first, except
-    /// for caveman, whose plugin is updated by name only (K71).
+    /// for caveman, whose plugin is updated by name only.
     fn claude_plugin_update(&self, next: &Recipe, host: &dyn Host, spec: &str) -> Result<()> {
         let name = plugin_name(spec).to_string();
         if next.id != "caveman" {

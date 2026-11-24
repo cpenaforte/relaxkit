@@ -1,4 +1,4 @@
-//! Install script tests (Task 26).
+//! Install script tests.
 //!
 //! Each test lays out a fake release under a temporary directory, laid out as GitHub serves it under `download/`:
 //! `v<version>/` holds the archive for this host, the checksums file, and nothing else. The archive holds a stub

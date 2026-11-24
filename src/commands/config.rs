@@ -1,4 +1,4 @@
-//! `relaxkit config set|unset|show` (spec 6.1, 6.2). A role setting, the voice and the compact threshold are saved in
+//! `relaxkit config set|unset|show`. A role setting, the voice and the compact threshold are saved in
 //! `config.toml` and written to the hosts' own files through the `config_apply` editors. `--host` limits a role to one
 //! host (saved under `[hosts.<host>.roles]`). `--project` writes the project-level files instead and leaves
 //! `config.toml` alone. Every write goes through `state::safe_write`, so `relaxkit undo` reverts it.
@@ -151,7 +151,7 @@ pub fn show(ctx: &Ctx, key: Option<&str>) -> Result<Vec<String>> {
     Ok(lines)
 }
 
-/// The JSON document of `relaxkit config show --json` (the spec 6.1 table): both hosts for every role, with the
+/// The JSON document of `relaxkit config show --json`: both hosts for every role, with the
 /// preset, the voice and the threshold. With a key, only that entry.
 pub fn show_json(ctx: &Ctx, key: Option<&str>) -> Result<Value> {
     let view = View::load(ctx)?;
@@ -202,7 +202,7 @@ fn save_global(ctx: &Ctx, run: &RunId, config: &KitConfig) -> Result<()> {
     Ok(())
 }
 
-/// K123: a tier on OpenCode needs the model list. When the list cannot be read, a change that leaves one of `roles` as
+/// A tier on OpenCode needs the model list. When the list cannot be read, a change that leaves one of `roles` as
 /// a tier on OpenCode is refused before any write. Pins need no list, so they are not refused.
 pub(crate) fn refuse_tier_without_list(
     ctx: &Ctx,
@@ -314,7 +314,7 @@ fn set_compact(ctx: &Ctx, run: &RunId, tokens: u64) -> Result<()> {
                 )?;
             }
             HostKind::Opencode => {
-                // K114: no verified window source exists for OpenCode yet, so no buffer is written.
+                // No verified window source exists for OpenCode yet, so no buffer is written.
                 match opencode::apply_compact(ctx, run, host.as_ref(), tokens, None)? {
                     opencode::CompactNote::Applied { .. } => {}
                     opencode::CompactNote::KeptDefault => ctx.out.warn(
@@ -433,7 +433,7 @@ fn remove_host_role(config: &mut KitConfig, host: HostKind, role: Role) {
 
 // ---- validation ------------------------------------------------------------------------------------------------
 
-/// Checks an exact pin (spec 6.1, rule 4). OpenCode's model must be in `opencode models --standalone`; an unknown name is rejected
+/// Checks an exact pin. OpenCode's model must be in `opencode models --standalone`; an unknown name is rejected
 /// with the closest matches, and an unreadable list accepts the pin with a warning. Claude Code takes aliases and
 /// `claude-*` ids, and warns on anything else. Without an OpenCode host there is no list, so nothing is checked there.
 fn check_pin(
@@ -448,7 +448,7 @@ fn check_pin(
             .iter()
             .find(|host| host.info().kind == HostKind::Opencode)
         {
-            // K109 / F23-4: the pin is still stored, since OpenCode may be installed later.
+            // The pin is still stored, since OpenCode may be installed later.
             None => ctx.out.warn(&format!(
                 "OpenCode is not installed, so `{value}` is not checked against its model list"
             )),

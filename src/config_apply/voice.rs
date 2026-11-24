@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn voice_keeps_the_layout_and_escapes() {
-        // Spec 5: strict JSON edits keep the file's layout and spelling, not only its values.
+        // Strict JSON edits keep the file's layout and spelling, not only its values.
         let root = tempfile::tempdir().unwrap();
         fs::create_dir_all(global(root.path()).parent().unwrap()).unwrap();
         fs::write(

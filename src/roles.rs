@@ -232,7 +232,7 @@ pub(crate) fn family_version(model: &str, family: &str) -> Option<Vec<u64>> {
             .collect()
     };
     // The version follows the family word (`claude-sonnet-5-5`) or, for old-style ids, precedes it
-    // (`claude-3-5-sonnet-20241022`). No digits at all, as in `claude-sonnet-latest`, is no family (F23-20, F23-23).
+    // (`claude-3-5-sonnet-20241022`). No digits at all, as in `claude-sonnet-latest`, is no family.
     let after = parts(&model[at + family.len()..]);
     let version = if after.is_empty() {
         parts(&model[..at])
@@ -410,13 +410,13 @@ mod tests {
 
     #[test]
     fn a_family_needs_a_version() {
-        // F23-20: `claude-sonnet-latest` has no version, so it is not the sonnet family.
+        // `claude-sonnet-latest` has no version, so it is not the sonnet family.
         assert_eq!(family_version("claude-sonnet-latest", "sonnet"), None);
         assert_eq!(
             family_version("claude-sonnet-5-5", "sonnet"),
             Some(vec![5, 5])
         );
-        // F23-23: an old-style id has its version before the family word, and the date stamp is not a version.
+        // An old-style id has its version before the family word, and the date stamp is not a version.
         assert_eq!(
             family_version("claude-3-5-sonnet-20241022", "sonnet"),
             Some(vec![3, 5])

@@ -1,4 +1,4 @@
-//! Self-update of relaxkit itself (Task 22, rulings K91 to K100). A verified release is downloaded: its checksums file
+//! Self-update of relaxkit itself. A verified release is downloaded: its checksums file
 //! is checked against the embedded minisign key, then the archive is checked against that file, and only then is the
 //! binary swapped. Nothing is written before both checks pass. A Homebrew-owned binary is left to `brew upgrade`.
 
@@ -17,13 +17,13 @@ use crate::runtime::{checksum_for, download_dir, fresh_dir, sha256_hex, utf8};
 use crate::state::record_backup;
 use crate::ui::Mark;
 
-/// The GitHub repository whose latest release is the newest relaxkit (K97). Confirmed by the owner (2026-11-22).
+/// The GitHub repository whose latest release is the newest relaxkit. Confirmed by the maintainer.
 pub const RELEASE_REPO: &str = "cpenaforte/relaxkit";
 
-/// The minisign public key embedded in the binary (K91). This is the owner's release public key (2026-11-22).
+/// The minisign public key embedded in the binary. This is the maintainer's release public key.
 pub const EMBEDDED_KEY: &str = include_str!("../release/minisign.pub");
 
-/// The text that marks the embedded key as a placeholder (K91).
+/// The text that marks the embedded key as a placeholder.
 pub const PLACEHOLDER_MARKER: &str = "relaxkit-placeholder";
 
 /// The version this binary was built as.
@@ -36,31 +36,31 @@ pub enum SelfUpdate {
     Current { version: String },
     /// A check or a dry run found a newer release. Nothing changed.
     Available { version: String },
-    /// Swapped to `to`, and the new binary's `update --tools` ran and exited zero (K96).
+    /// Swapped to `to`, and the new binary's `update --tools` ran and exited zero.
     Updated { from: String, to: String },
     /// Swapped to `to`, and the new binary's `update --tools` ran and exited non-zero: a tool failed. The failure is a
-    /// result, not a spawn error, so this process does not run the tool phase again (K102).
+    /// result, not a spawn error, so this process does not run the tool phase again.
     UpdatedToolsFailed {
         from: String,
         to: String,
         reason: String,
     },
-    /// A Homebrew-owned binary was upgraded by `brew upgrade relaxkit` (K93). `from` and `to` are the versions the
-    /// brew-managed link reports before and after; equal versions are current (K103).
+    /// A Homebrew-owned binary was upgraded by `brew upgrade relaxkit`. `from` and `to` are the versions the
+    /// brew-managed link reports before and after; equal versions are current.
     DelegatedToBrew { from: String, to: String },
-    /// The embedded key is the placeholder, so nothing was fetched or swapped (K91).
+    /// The embedded key is the placeholder, so nothing was fetched or swapped.
     NotConfigured,
-    /// A check could not reach the release repository, so the newest version is unknown (K98).
+    /// A check could not reach the release repository, so the newest version is unknown.
     NewestUnknown { reason: String },
 }
 
 /// The self step for the running binary, with the embedded key. The running path is resolved through symbolic links
-/// first, so a run as `rlx` replaces the real file (K95).
+/// first, so a run as `rlx` replaces the real file.
 pub fn run(ctx: &Ctx, check_only: bool) -> Result<SelfUpdate> {
     run_with(ctx, check_only, true)
 }
 
-/// `run`, where `tools` says whether a swapped binary runs the tool phase (K96). `update --self` passes false (K101).
+/// `run`, where `tools` says whether a swapped binary runs the tool phase. `update --self` passes false.
 pub fn run_with(ctx: &Ctx, check_only: bool, tools: bool) -> Result<SelfUpdate> {
     let invoked = std::env::current_exe().context("cannot find the running relaxkit")?;
     let exe = resolve_exe(&invoked)?;
@@ -78,8 +78,7 @@ pub fn apply(ctx: &Ctx, exe: &Path, pubkey_text: &str, check_only: bool) -> Resu
     apply_with(ctx, exe, pubkey_text, check_only, true)
 }
 
-/// `apply`, where `tools` says whether the new binary runs `update --tools` after a swap (K96). `false` is `--self`
-/// (K101): the self step runs without the re-run and without any tool.
+/// `apply`, where `tools` says whether the new binary runs `update --tools` after a swap. `false` is `--self`: the self step runs without the re-run and without any tool.
 pub fn apply_with(
     ctx: &Ctx,
     exe: &Path,
@@ -123,7 +122,7 @@ pub fn apply_with(
     })
 }
 
-/// Checks a minisign signature over `bytes` with the public key in `pubkey_text` (R11). The signature must be the
+/// Checks a minisign signature over `bytes` with the public key in `pubkey_text`. The signature must be the
 /// prehashed (`ED`) form that minisign writes by default.
 pub fn verify(bytes: &[u8], sig_text: &str, pubkey_text: &str) -> Result<()> {
     let key_line = pubkey_text
@@ -139,7 +138,7 @@ pub fn verify(bytes: &[u8], sig_text: &str, pubkey_text: &str) -> Result<()> {
 }
 
 /// The release target triple for an OS and architecture as `std::env::consts` names them, or `None` when no release
-/// exists for it (K94).
+/// exists for it.
 pub fn triple_for(os: &str, arch: &str) -> Option<&'static str> {
     match (os, arch) {
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
@@ -150,7 +149,7 @@ pub fn triple_for(os: &str, arch: &str) -> Option<&'static str> {
     }
 }
 
-/// The release target of this build (K94). The OS and architecture are compile-time constants.
+/// The release target of this build. The OS and architecture are compile-time constants.
 pub fn target() -> Result<&'static str> {
     triple_for(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
         anyhow!(
@@ -166,7 +165,7 @@ pub fn asset_name(version: &str, target: &str) -> String {
     format!("relaxkit-{version}-{target}.tar.gz")
 }
 
-/// Whether a path is inside a Homebrew Cellar, so brew owns the binary (K93).
+/// Whether a path is inside a Homebrew Cellar, so brew owns the binary.
 pub fn is_homebrew_path(path: &Path) -> bool {
     [
         "/opt/homebrew/Cellar",
@@ -224,7 +223,7 @@ pub fn row(outcome: &SelfUpdate) -> String {
     }
 }
 
-/// Upgrades a Homebrew-owned binary, then runs the new one through the brew-managed link (K103). The Cellar path may be
+/// Upgrades a Homebrew-owned binary, then runs the new one through the brew-managed link. The Cellar path may be
 /// gone after the upgrade, so the link is the only path used after it. A failed upgrade is an error. A failed re-run is
 /// a result that names the tool that failed.
 fn brew_upgrade(ctx: &Ctx, exe: &Path, tools: bool) -> Result<SelfUpdate> {
@@ -275,7 +274,7 @@ fn reported_version(ctx: &Ctx, bin: &Path) -> Result<String> {
     Ok(word.to_string())
 }
 
-/// The newest release of relaxkit, without its leading `v`, from the latest GitHub release (K97).
+/// The newest release of relaxkit, without its leading `v`, from the latest GitHub release.
 fn newest_version(ctx: &Ctx) -> Result<String> {
     let tag = github_latest_tag(ctx.net.as_ref(), RELEASE_REPO)?;
     let version = tag
@@ -394,11 +393,11 @@ fn write_executable(path: &Path, bytes: &[u8]) -> Result<()> {
         .with_context(|| format!("cannot make {} executable", path.display()))
 }
 
-/// Runs the new binary as `<new relaxkit> update --tools`, so the tool phase uses the new recipes (K96). Its output is
-/// passed on. A spawn error is an error. A non-zero exit is returned as the reason (K102).
+/// Runs the new binary as `<new relaxkit> update --tools`, so the tool phase uses the new recipes. Its output is
+/// passed on. A spawn error is an error. A non-zero exit is returned as the reason.
 fn rerun(ctx: &Ctx, exe: &Path) -> Result<Option<String>> {
     let program = utf8(exe)?;
-    // The re-run belongs to this run's group, so `undo` reverts the self step and the tool run as one (K105).
+    // The re-run belongs to this run's group, so `undo` reverts the self step and the tool run as one.
     let group = ctx.group.clone().unwrap_or_else(|| ctx.run.clone());
     let out = ctx
         .runner
