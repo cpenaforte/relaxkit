@@ -1,4 +1,4 @@
-//! Drift guards between the OpenCode plugin under `adapters/opencode-plugin` and the crate (Task 25b). Each test reads
+//! Drift guards between the OpenCode plugin under `adapters/opencode-plugin` and the crate. Each test reads
 //! a value from a plugin file and compares it with the value the crate defines, so a change on either side fails here.
 
 use std::collections::BTreeSet;

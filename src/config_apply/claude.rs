@@ -18,7 +18,7 @@ use crate::state::{RunId, safe_write};
 /// The CLAUDE.md block that names the model for each subagent role.
 pub const ROLES_BLOCK: &str = "roles";
 
-/// Sets Claude Code's compact threshold (spec 6.2): `autoCompactWindow` under `modelSettings.<model>` for each Claude
+/// Sets Claude Code's compact threshold: `autoCompactWindow` under `modelSettings.<model>` for each Claude
 /// model the roles resolve to. Missing entries are created. Nothing else in the file changes.
 pub fn apply_compact(
     ctx: &Ctx,
@@ -41,7 +41,7 @@ pub fn apply_compact(
 }
 
 /// The config as Claude Code reads it. A pin to another provider has no Claude alias, so it is dropped and the role
-/// keeps the tier it has without that pin (spec 6.1, rule 1). Roles derived from such a role then follow its preset tier.
+/// keeps the tier it has without that pin. Roles derived from such a role then follow its preset tier.
 fn claude_view(config: &KitConfig) -> KitConfig {
     let mut view = config.clone();
     view.roles.retain(
@@ -160,8 +160,8 @@ pub fn link_pack_rtk(ctx: &Ctx) -> Result<()> {
     }
 }
 
-/// Writes rtk's Claude Code hook (spike A C6): a `PreToolUse` command for the `Bash` tool that runs the pack's rtk
-/// copy by its absolute, quoted path (spec 4, item 5: hooks point at a fixed path in relaxkit's directory).
+/// Writes rtk's Claude Code hook: a `PreToolUse` command for the `Bash` tool that runs the pack's rtk
+/// copy by its absolute, quoted path.
 /// `rtk init -g` does not write it non-interactively. Other hooks are kept, and a second run changes nothing.
 pub fn apply_rtk_hook(ctx: &Ctx, run: &RunId, host: &dyn Host) -> Result<()> {
     let path = host.config_file(ctx);
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn roles_block_keeps_the_tier_of_a_non_anthropic_planner_pin() {
-        // Spec 6.1 rule 1: Claude Code takes only Anthropic models, so the planner keeps its role tier.
+        // Claude Code takes only Anthropic models, so the planner keeps its role tier.
         let root = tempfile::tempdir().unwrap();
         let ctx = ctx(root.path());
         let mut config = KitConfig::default();
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn escalation_derives_from_a_pinned_implementer_preset_tier() {
-        // Spec 6.1 rule 1: the implementer keeps its preset tier on Claude, and escalation is one tier above that.
+        // The implementer keeps its preset tier on Claude, and escalation is one tier above that.
         let root = tempfile::tempdir().unwrap();
         let ctx = ctx(root.path());
         let mut config = KitConfig::default();
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn privacy_env_keeps_the_layout_and_escapes() {
-        // Spec 5: strict JSON edits keep the file's layout and spelling, not only its values.
+        // Strict JSON edits keep the file's layout and spelling, not only its values.
         let root = tempfile::tempdir().unwrap();
         fs::create_dir_all(root.path().join(".claude")).unwrap();
         fs::write(
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn rtk_hook_appends_to_pretooluse_and_keeps_order_and_comments() {
-        // Spec 5: the hook is appended; the existing hook objects keep their key order, their text and the comments.
+        // The hook is appended; the existing hook objects keep their key order, their text and the comments.
         let root = tempfile::tempdir().unwrap();
         fs::create_dir_all(root.path().join(".claude")).unwrap();
         let before = "{\n  // keep me\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"lint\"}]}, // first\n      {\"hooks\": [{\"type\": \"command\", \"command\": \"z-last\"}], \"matcher\": \"Read\"}\n    ]\n  }\n}\n";

@@ -1,4 +1,4 @@
-//! The Claude Code adapter (Task 24, part A): the plugin manifest, the marketplace file, and the install argv.
+//! The Claude Code adapter: the plugin manifest, the marketplace file, and the install argv.
 
 use std::cell::RefCell;
 use std::fs;
@@ -84,7 +84,7 @@ fn claude_adapter_install_argv() {
     assert_eq!(listed.calls(), vec!["claude plugin list".to_string()]);
 }
 
-/// The OpenCode install spec for release tag v0.1.0 (Task 25b).
+/// The OpenCode install spec for release tag v0.1.0.
 const SPEC_V010: &str = "relaxkit-opencode@git+https://github.com/cpenaforte/relaxkit.git#v0.1.0::path:adapters/opencode-plugin";
 
 /// An OpenCode host that lists the plugins it is given and records each install and update it receives.

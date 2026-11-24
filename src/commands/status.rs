@@ -1,4 +1,4 @@
-//! `relaxkit status` (spec section 6): versions, drift, enforced-vs-advisory settings, the sandbox plugin's health
+//! `relaxkit status`: versions, drift, enforced-vs-advisory settings, the sandbox plugin's health
 //! and `rtk gain`. Read-only: it writes nothing and runs only detection and read commands.
 //!
 //! The report is typed: each table row is a value, and `render` lays the rows out as text. Tests read the values.
@@ -140,7 +140,7 @@ impl StatusReport {
         self.render(Palette::PLAIN)
     }
 
-    /// The count of rows that need the owner: a tool that is missing, unreadable or drifted, and a sandbox that does
+    /// The count of rows that need the user: a tool that is missing, unreadable or drifted, and a sandbox that does
     /// not enforce. Returns the mark of the worst of them and the words that say what they are.
     fn verdict(&self) -> (Mark, String) {
         // Nothing was checked when no host is found or nothing is locked, so the verdict must not say all is well.
@@ -316,7 +316,7 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
     if let Some(lock) = &lock {
         for (id, tool) in &lock.tools {
             // gh is not a recipe, and status does not read its version (parked). A missing pack copy is the one note
-            // status shows for it (F7-2, K84).
+            // status shows for it.
             if id == crate::runtime::gh::GH_ID {
                 let bin = ctx.dirs.bin.join("gh");
                 if !crate::platform::is_executable(&bin) {
@@ -339,7 +339,7 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                 let Ok(kind) = host_name.parse::<HostKind>() else {
                     continue;
                 };
-                // Each host is compared with the version its own lock entry records (K73).
+                // Each host is compared with the version its own lock entry records.
                 let locked = tool.version_for(host_name).to_string();
                 let route = tool.route.clone();
                 let Some(host) = hosts.iter().find(|host| host.info().kind == kind) else {
@@ -354,7 +354,7 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                     continue;
                 };
                 // An MCP entry is not read by status (engine.detect returns nothing for it), so it is neither "not found"
-                // nor compared (F5-2).
+                // nor compared.
                 if recipe.kind == Kind::Mcp {
                     tools.push(ToolRow {
                         id: id.clone(),
@@ -376,7 +376,7 @@ pub fn report_for(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<StatusReport> {
                 } else {
                     let (installed, state) = match engine.detect(recipe, host.as_ref()) {
                         Ok(Some((version, _))) => {
-                            // A version that was never recorded cannot drift: its host version is shown, not compared (F3-1).
+                            // A version that was never recorded cannot drift: its host version is shown, not compared.
                             let state = if locked == crate::tools::engine::UNVERSIONED {
                                 ToolState::AsLockedUnrecorded
                             } else if version == locked {
@@ -458,7 +458,7 @@ fn role_rows(ctx: &Ctx, hosts: &[Box<dyn Host>], config: &KitConfig) -> Vec<Role
         .into_iter()
         .map(|role| {
             let setting = effective(config, role);
-            // Each host shows the setting it runs with, which a `--host` override may change (K-6.1 rule 3).
+            // Each host shows the setting it runs with, which a `--host` override may change.
             let host_cell = |kind: HostKind| -> String {
                 if !hosts.iter().any(|host| host.info().kind == kind) {
                     return "-".to_string();
@@ -492,7 +492,7 @@ fn role_rows(ctx: &Ctx, hosts: &[Box<dyn Host>], config: &KitConfig) -> Vec<Role
         .collect()
 }
 
-/// Managed blocks that no longer match what relaxkit writes (spec 6.1: `status` reports drift from hand edits).
+/// Managed blocks that no longer match what relaxkit writes.
 fn drift_notes(
     ctx: &Ctx,
     hosts: &[Box<dyn Host>],
@@ -536,7 +536,7 @@ fn drift_notes(
     Ok(())
 }
 
-/// Whether each host's sandbox is enforcing (spec 7): Claude Code's settings, and whether the OpenCode sandbox plugin
+/// Whether each host's sandbox is enforcing: Claude Code's settings, and whether the OpenCode sandbox plugin
 /// is listed.
 fn sandbox_rows(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<Vec<SandboxRow>> {
     let mut rows = Vec::new();
@@ -586,7 +586,7 @@ fn sandbox_rows(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<Vec<SandboxRow>> {
 /// The savings line of `rtk gain`: the line that names the tokens saved (`Tokens saved: …`), or `n/a` when rtk
 /// reports none. The title line above it is not the savings.
 fn rtk_gain(ctx: &Ctx) -> String {
-    // The same rtk every caller resolves: the pack copy first (ruling R3-2).
+    // The same rtk every caller resolves: the pack copy first.
     let program =
         crate::runtime::rtk::resolve(ctx).unwrap_or_else(|| std::path::PathBuf::from("rtk"));
     match ctx
@@ -639,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn the_verdict_counts_what_needs_the_owner() {
+    fn the_verdict_counts_what_needs_the_user() {
         let row = |state| ToolRow {
             id: "caveman".to_string(),
             host: HostKind::Claude,

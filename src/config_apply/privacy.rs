@@ -1,6 +1,5 @@
 //! The telemetry switches of the pack's own tools. Each tool's own command turns its telemetry off. The generic
 //! `DO_NOT_TRACK` is never used: Claude Code also reads it, and it silently turns off Claude Code's feature flags
-//! (spec section 6.3).
 
 use std::env;
 

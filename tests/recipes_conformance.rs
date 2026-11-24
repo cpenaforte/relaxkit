@@ -1,4 +1,4 @@
-//! Recipe conformance (spec section 5.1): each pack tool, on each host, expands to the exact argv list the spec
+//! Recipe conformance: each pack tool, on each host, expands to the exact argv list the recipe
 //! names. Commands are recorded as argv tokens, so assertions do not depend on shell quoting. Every host command
 //! is answered by a recording runner; nothing reaches the real machine.
 
@@ -251,7 +251,7 @@ fn write_catalog(rig: &Rig, marketplace: &str, plugins: &[&str]) {
     .unwrap();
 }
 
-/// The PATH every MCP entry carries: the node link, then the system directories (spec 4).
+/// The PATH every MCP entry carries: the node link, then the system directories.
 /// The literal PATH serena's MCP entries run with: the node link, the uv tool bin (`~/.local/bin`), then the system
 /// directories. Spelled out from the layout, not computed by the engine's helper.
 fn mcp_path(rig: &Rig) -> String {
@@ -498,7 +498,7 @@ fn caveman_on_opencode_installs_the_cli_then_stops_at_the_opencode_handler() {
     let (result, calls) = install(&rig, "caveman", HostKind::Opencode);
     let err = format!("{:#}", result.unwrap_err());
     assert!(err.contains("caveman_opencode"), "{err}");
-    // Only the CLI install runs before the stop (ruling T8-2). No `caveman` command runs on OpenCode.
+    // Only the CLI install runs before the stop. No `caveman` command runs on OpenCode.
     assert_eq!(calls.len(), 1, "{calls:?}");
     assert_eq!(
         calls[0][1..],
@@ -736,7 +736,7 @@ fn serena_on_opencode_uses_the_ide_context() {
     );
 }
 
-/// Serena has no workdir: the owner keeps --project-from-cwd and accepts .serena/ inside a repo (spec commit 4354020).
+/// Serena has no workdir: the user keeps --project-from-cwd and accepts .serena/ inside a repo.
 #[test]
 fn serena_recipe_sets_no_workdir() {
     let serena = load_all()

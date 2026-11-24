@@ -47,7 +47,7 @@ fn profile_candidates(ctx: &Ctx, search: &NvmSearch) -> Vec<PathBuf> {
     unique
 }
 
-/// The nvm release whose installer relaxkit runs. Pinned by owner decision O8.
+/// The nvm release whose installer relaxkit runs. Pinned by the maintainer.
 pub const NVM_VERSION: &str = "v0.41.0";
 
 /// SHA-256 of nvm's `install.sh` at `NVM_VERSION`. The download must match before anything runs.
@@ -245,7 +245,7 @@ pub fn ensure_node(ctx: &Ctx, run: &RunId) -> Result<NodeInstall> {
 pub fn ensure_node_in(ctx: &Ctx, run: &RunId, search: &NvmSearch) -> Result<NodeInstall> {
     let reused = find_nvm_in(ctx, search).is_some();
     let nvm = ensure_nvm_in(ctx, run, search)?;
-    // A Node 24 that nvm already holds is reused as it is, so a rerun makes no nvm call (spec 4, item 2).
+    // A Node 24 that nvm already holds is reused as it is, so a rerun makes no nvm call.
     if let Some(node) = installed_node(&nvm.dir) {
         return Ok(node);
     }
@@ -300,7 +300,7 @@ fn run_nvm_install(
     Ok(NodeInstall { version, root })
 }
 
-/// Updates Node to the newest 24.x through the nvm in use (K66, K81). `nvm install 24` resolves the newest 24.x, and
+/// Updates Node to the newest 24.x through the nvm in use. `nvm install 24` resolves the newest 24.x, and
 /// `PROFILE=/dev/null` keeps nvm from editing the shell profile. Nothing else is changed: no `nvm use`, no alias.
 pub fn update_node_in(ctx: &Ctx, search: &NvmSearch) -> Result<NodeInstall> {
     let Some(nvm) = find_nvm_in(ctx, search) else {
@@ -318,7 +318,7 @@ pub fn current_node(ctx: &Ctx) -> Option<NodeInstall> {
 }
 
 /// The newest 24.x release in Node's public index, without its `v` (such as `24.22.3`). Other majors are ignored, so
-/// Node never moves to 25 or later through relaxkit (K81).
+/// Node never moves to 25 or later through relaxkit.
 pub fn latest_node_24(net: &dyn Net) -> Result<String> {
     let body = net.get_text("https://nodejs.org/dist/index.json")?;
     let index: Vec<serde_json::Value> =
@@ -559,7 +559,7 @@ mod tests {
 
         assert_eq!(node.version, "v24.22.3");
         assert_eq!(node.root, version);
-        // A Node 24 that nvm already holds is reused without any nvm call (spec 4, item 2; ruling K55).
+        // A Node 24 that nvm already holds is reused without any nvm call.
         let lines = runner.lines();
         assert!(lines.is_empty(), "commands: {lines:?}");
         assert!(

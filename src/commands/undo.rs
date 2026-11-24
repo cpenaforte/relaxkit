@@ -1,7 +1,7 @@
-//! `relaxkit undo [--run <group>]` (spec 6, ruling K104). Reverts the newest run group, or the named one: the files and
+//! `relaxkit undo [--run <group>]`. Reverts the newest run group, or the named one: the files and
 //! link targets it journaled, and the lock as it was before the group (the lock is journaled before it changes, so its
 //! journal record holds that state). Host-registry state is not restored; the report says so, names the Claude
-//! plugin versions that moved (K86), and names each Claude marketplace the group added with its removal command.
+//! plugin versions that moved, and names each Claude marketplace the group added with its removal command.
 
 use std::collections::BTreeSet;
 use std::fs;

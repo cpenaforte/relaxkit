@@ -73,7 +73,7 @@ pub struct Recipe {
     pub title: String,
     pub kind: Kind,
     pub hosts: Vec<HostKind>,
-    /// Admission rule (spec section 3). Always false in an accepted recipe.
+    /// Admission rule. Always false in an accepted recipe.
     pub needs_login: bool,
     /// Declared claim that telemetry is off once relaxkit's own switches are applied.
     /// The loader cannot prove it. Always true in an accepted recipe.
@@ -247,14 +247,10 @@ impl RawRecipe {
     fn into_recipe(self) -> Result<Recipe> {
         let id = self.id;
         if self.needs_login {
-            bail!(
-                "recipe `{id}` breaks the admission rule: needs_login must be false (spec section 3)"
-            );
+            bail!("recipe `{id}` breaks the admission rule: needs_login must be false");
         }
         if !self.telemetry_default_off {
-            bail!(
-                "recipe `{id}` breaks the admission rule: telemetry_default_off must be true (spec section 3)"
-            );
+            bail!("recipe `{id}` breaks the admission rule: telemetry_default_off must be true");
         }
         if id.trim().is_empty() || self.title.trim().is_empty() {
             bail!("recipe `{id}` needs a non-empty id and title");

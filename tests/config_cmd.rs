@@ -1,4 +1,4 @@
-//! `config`, `preset`, `privacy`, `login`, `undo`, `uninstall` and `usage` (Task 23, rulings K104 to K111). Binary-level
+//! `config`, `preset`, `privacy`, `login`, `undo`, `uninstall` and `usage`. Binary-level
 //! tests run against a Scratch home with stub host commands; library-level tests use FakeRunner and temporary roots.
 
 mod support;
@@ -40,7 +40,7 @@ fn claude_settings(home: &Path) -> PathBuf {
     home.join(".claude/settings.json")
 }
 
-/// The global OpenCode config. With neither file present, the host writes `opencode.json` (spike B2).
+/// The global OpenCode config. With neither file present, the host writes `opencode.json`.
 fn opencode_config(home: &Path) -> PathBuf {
     home.join(".config/opencode/opencode.json")
 }
@@ -162,7 +162,7 @@ fn unknown_opencode_model_is_rejected_with_closest_matches() {
 
 #[test]
 fn opencode_pin_without_opencode_warns_and_is_still_stored() {
-    // K109 / F23-4: with no OpenCode installed, its pin cannot be checked, so the pin is stored with a warning.
+    // With no OpenCode installed, its pin cannot be checked, so the pin is stored with a warning.
     let scratch = Scratch::claude_only();
 
     let assert = scratch
@@ -283,7 +283,7 @@ fn best_is_rejected_with_a_smarter_hint() {
 fn compact_at_256k_writes_both_hosts() {
     let scratch = Scratch::new();
     with_models(&scratch, MODELS);
-    // A buffer the user set is not relaxkit's: compact-at must leave it as it is (K114).
+    // A buffer the user set is not relaxkit's: compact-at must leave it as it is.
     let path = opencode_config(scratch.home());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -306,7 +306,7 @@ fn compact_at_256k_writes_both_hosts() {
         json!(256_000),
         "Claude Code's threshold is absolute, so it is written"
     );
-    // K114: OpenCode has no verified window source yet, so its compaction buffer is not written.
+    // OpenCode has no verified window source yet, so its compaction buffer is not written.
     assert_eq!(
         jsonc_get(
             &read(&opencode_config(scratch.home())),
@@ -577,7 +577,7 @@ fn undo_restores_the_last_run() {
 
 #[test]
 fn undo_of_an_older_group_is_refused_when_a_later_group_changed_the_same_file() {
-    // K117 / F23-6: undoing an older group would leave the later group's change to the same file without its base.
+    // Undoing an older group would leave the later group's change to the same file without its base.
     let scratch = Scratch::new();
     with_models(&scratch, MODELS);
     scratch.relaxkit().arg("privacy").assert().success();
@@ -631,7 +631,7 @@ fn undo_reverts_a_run_group_as_one() {
     fs::write(&y, "y0").unwrap();
     fs::write(&z, "z0").unwrap();
 
-    // The parent is the self step, the child is the tool run it re-executes (K105).
+    // The parent is the self step, the child is the tool run it re-executes.
     safe_write(&parent, &parent.run, &x, "x1").unwrap();
     let mut child = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
     child.group = Some(group.clone());
@@ -743,7 +743,7 @@ fn lock_with(version: &str) -> Lockfile {
 
 #[test]
 fn privacy_refuses_project_and_writes_nothing() {
-    // K115 / F23-9: the rtk and caveman switches are tool-wide, so privacy is global like preset and uninstall.
+    // The rtk and caveman switches are tool-wide, so privacy is global like preset and uninstall.
     let scratch = Scratch::new();
     let before = tree(scratch.home());
 
@@ -766,7 +766,7 @@ fn privacy_refuses_project_and_writes_nothing() {
 
 #[test]
 fn preset_and_uninstall_refuse_project_and_write_nothing() {
-    // K113 / F23-5: both are global by spec, so --project is refused rather than ignored.
+    // Both are global by design, so --project is refused rather than ignored.
     let scratch = Scratch::new();
     let before = tree(scratch.home());
 
@@ -797,7 +797,7 @@ fn preset_and_uninstall_refuse_project_and_write_nothing() {
 
 #[test]
 fn uninstall_keeps_a_user_compaction_buffer() {
-    // K114 / F23-10: relaxkit writes no compaction buffer on OpenCode, so a buffer present is the user's.
+    // Relaxkit writes no compaction buffer on OpenCode, so a buffer present is the user's.
     let scratch = Scratch::new();
     with_models(&scratch, MODELS);
     scratch
@@ -824,8 +824,8 @@ fn uninstall_keeps_a_user_compaction_buffer() {
 }
 
 #[test]
-fn uninstall_keeps_a_compact_window_the_owner_changed_by_hand() {
-    // K118 / F23-12: autoCompactWindow goes only while it still holds the value compact-at wrote.
+fn uninstall_keeps_a_compact_window_the_user_changed_by_hand() {
+    // AutoCompactWindow goes only while it still holds the value compact-at wrote.
     let scratch = Scratch::new();
     with_models(&scratch, MODELS);
     scratch
@@ -848,13 +848,13 @@ fn uninstall_keeps_a_compact_window_the_owner_changed_by_hand() {
     assert_eq!(
         settings["modelSettings"]["claude-opus-5-5"]["autoCompactWindow"],
         json!(200_000),
-        "a value the owner set stays"
+        "a value the user set stays"
     );
 }
 
 #[test]
 fn uninstall_removes_the_claude_md_setup_created_and_undo_brings_it_back() {
-    // Task 8: setup created CLAUDE.md and wrote only the roles block into it, so uninstall removes the file, after
+    // Setup created CLAUDE.md and wrote only the roles block into it, so uninstall removes the file, after
     // backing it up, and undo restores it.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
@@ -874,8 +874,8 @@ fn uninstall_removes_the_claude_md_setup_created_and_undo_brings_it_back() {
 }
 
 #[test]
-fn uninstall_keeps_a_claude_md_the_owner_wrote_byte_for_byte() {
-    // Task 8: the owner wrote CLAUDE.md before setup, so its text stays exactly as written.
+fn uninstall_keeps_a_claude_md_the_user_wrote_byte_for_byte() {
+    // The user wrote CLAUDE.md before setup, so its text stays exactly as written.
     let scratch = Scratch::claude_only();
     let owner = "# my notes\n\nkeep this line\n";
     fs::create_dir_all(claude_md(scratch.home()).parent().unwrap()).unwrap();
@@ -888,9 +888,9 @@ fn uninstall_keeps_a_claude_md_the_owner_wrote_byte_for_byte() {
 }
 
 #[test]
-fn uninstall_keeps_an_owner_claude_md_without_a_final_newline_byte_for_byte() {
-    // The owner's file has no final newline. Setup adds its block on a new line, and uninstall must leave the bytes
-    // exactly as the owner wrote them, with no newline added.
+fn uninstall_keeps_a_user_claude_md_without_a_final_newline_byte_for_byte() {
+    // The user's file has no final newline. Setup adds its block on a new line, and uninstall must leave the bytes
+    // exactly as the user wrote them, with no newline added.
     let scratch = Scratch::claude_only();
     let owner = "# my notes\n\nkeep this line";
     fs::create_dir_all(claude_md(scratch.home()).parent().unwrap()).unwrap();
@@ -904,7 +904,7 @@ fn uninstall_keeps_an_owner_claude_md_without_a_final_newline_byte_for_byte() {
 
 #[test]
 fn a_second_uninstall_after_the_claude_md_is_gone_succeeds() {
-    // Task 8: the file is already gone, so there is nothing to back up or remove.
+    // The file is already gone, so there is nothing to back up or remove.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     scratch.relaxkit().arg("uninstall").assert().success();
@@ -916,7 +916,7 @@ fn a_second_uninstall_after_the_claude_md_is_gone_succeeds() {
 
 #[test]
 fn a_dry_run_uninstall_keeps_the_claude_md_setup_created() {
-    // Task 8: a dry run reports the removal and changes nothing.
+    // A dry run reports the removal and changes nothing.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     let before = read(&claude_md(scratch.home()));
@@ -932,7 +932,7 @@ fn a_dry_run_uninstall_keeps_the_claude_md_setup_created() {
 
 #[test]
 fn uninstall_never_removes_a_symlinked_claude_md() {
-    // Task 8 follow-up: CLAUDE.md is a link to a file that does not exist yet. Whatever setup does with that link,
+    // CLAUDE.md is a link to a file that does not exist yet. Whatever setup does with that link,
     // uninstall keeps the link itself.
     let scratch = Scratch::claude_only();
     let target = scratch.home().join(".claude/owner-notes.md");
@@ -945,7 +945,7 @@ fn uninstall_never_removes_a_symlinked_claude_md() {
     scratch.relaxkit().arg("uninstall").assert().success();
 
     let meta = fs::symlink_metadata(claude_md(scratch.home()))
-        .expect("the owner's link survives uninstall");
+        .expect("the user's link survives uninstall");
     assert!(meta.file_type().is_symlink(), "uninstall kept the link");
 }
 
@@ -967,7 +967,7 @@ fn uninstall_run_id(home: &Path) -> String {
 
 #[test]
 fn uninstall_removes_the_lock_and_status_then_shows_no_tools() {
-    // Task 9: the lock is read for the leftover lines, then removed, so status has no tool to show afterwards.
+    // The lock is read for the leftover lines, then removed, so status has no tool to show afterwards.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     assert!(lock_file(scratch.home()).exists(), "setup writes the lock");
@@ -1001,7 +1001,7 @@ fn uninstall_removes_the_lock_and_status_then_shows_no_tools() {
 
 #[test]
 fn undo_of_the_uninstall_restores_the_lock_byte_for_byte() {
-    // Task 9: the lock removal is journaled like every other uninstall change, so undo brings it back unchanged.
+    // The lock removal is journaled like every other uninstall change, so undo brings it back unchanged.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     let lock_before = fs::read(lock_file(scratch.home())).unwrap();
@@ -1025,7 +1025,7 @@ fn undo_of_the_uninstall_restores_the_lock_byte_for_byte() {
 
 #[test]
 fn a_dry_run_uninstall_keeps_the_lock_and_claims_no_removal() {
-    // Task 9: a dry run says the lock would be removed, and removes nothing.
+    // A dry run says the lock would be removed, and removes nothing.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     let before = fs::read(lock_file(scratch.home())).unwrap();
@@ -1059,7 +1059,7 @@ fn a_dry_run_uninstall_keeps_the_lock_and_claims_no_removal() {
 
 #[test]
 fn uninstall_keeps_a_symlinked_lock_as_a_link() {
-    // Task 9: a lock that is a link is never removed, so the file behind it is not deleted and undo has no
+    // A lock that is a link is never removed, so the file behind it is not deleted and undo has no
     // link to restore.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
@@ -1083,11 +1083,11 @@ fn tree_without_run_lock(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     out
 }
 
-// ---- unreadable OpenCode list (K123) ----------------------------------------------------------------------------
+// ---- unreadable OpenCode list ----------------------------------------------------------------------------
 
 #[test]
 fn a_tier_change_is_refused_when_the_opencode_list_is_unreadable() {
-    // K123 / F23-21: a tier cannot be applied to OpenCode without its list, so the change is refused before any write.
+    // A tier cannot be applied to OpenCode without its list, so the change is refused before any write.
     let scratch = Scratch::new();
     let before = tree_without_run_lock(scratch.home());
 
@@ -1144,7 +1144,7 @@ fn a_preset_is_refused_when_the_opencode_list_is_unreadable_and_it_sets_tiers() 
 
 #[test]
 fn a_pin_still_works_when_the_opencode_list_is_unreadable() {
-    // K123: pins need no list, so they are not refused. The row names the pin, not the host default.
+    // Pins need no list, so they are not refused. The row names the pin, not the host default.
     let scratch = Scratch::new();
 
     let assert = scratch
@@ -1180,7 +1180,7 @@ fn uninstall_removes_only_pack_managed_entries() {
     fs::write(bin.join("rtk"), "rtk copy").unwrap();
 
     // The user's own settings are on disk before relaxkit first writes the file. `privacy` then journals that
-    // file (F23-7), so the pack's entries written after it have an earlier record to revert to.
+    // file, so the pack's entries written after it have an earlier record to revert to.
     fs::write(
         claude_settings(&home),
         "{\"env\": {\"USER_KEY\": \"keep\"}, \"hooks\": {\"PreToolUse\": [{\"matcher\": \"Write\", \"hooks\": [{\"type\": \"command\", \"command\": \"user-hook\"}]}]}}\n",
@@ -1349,7 +1349,7 @@ fn usage_without_a_lock_says_to_run_setup_and_runs_nothing() {
     );
 }
 
-// ---- JSON discipline (K110) ------------------------------------------------------------------------------------
+// ---- JSON discipline ------------------------------------------------------------------------------------
 
 #[test]
 fn doctor_json_prints_one_document_on_stdout() {
@@ -1366,7 +1366,7 @@ fn doctor_json_prints_one_document_on_stdout() {
     assert!(document["checks"].is_array(), "{stdout}");
 }
 
-// ---- run groups (K105) -----------------------------------------------------------------------------------------
+// ---- run groups -----------------------------------------------------------------------------------------
 
 /// One logged call: its display and its environment.
 type Logged = (String, Vec<(String, String)>);
@@ -1397,7 +1397,7 @@ impl relaxkit::exec::Runner for EnvRecorder {
 #[test]
 fn self_step_passes_its_run_group_to_the_tool_run() {
     // The Homebrew self step re-runs `update --tools` through the brew link. The child gets the parent's run as
-    // its group (K105), so `undo` reverts the two as one.
+    // its group, so `undo` reverts the two as one.
     let root = tempfile::tempdir().unwrap();
     let recorder = EnvRecorder::default();
     let mut ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());

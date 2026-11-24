@@ -1,4 +1,4 @@
-//! The sandbox self-test (spec 7, spike B). It drives the pinned sandbox runtime through the Node link and checks
+//! The sandbox self-test. It drives the pinned sandbox runtime through the Node link and checks
 //! three things the sandbox must do: refuse a write outside the project, refuse a direct connection that skips the
 //! proxy, and refuse a host that is not on the allowlist. Nothing here runs unless the caller asks for it.
 
@@ -16,7 +16,7 @@ use crate::host::Host;
 use crate::runtime::nvm::npx_bin;
 use crate::runtime::utf8;
 
-/// The sandbox runtime package the self-test drives (spec 7, item 25).
+/// The sandbox runtime package the self-test drives.
 pub const RUNTIME_PACKAGE: &str = "@anthropic-ai/sandbox-runtime";
 /// The runtime version the self-test drives: the one the OpenCode plugin bundles (`adapters/opencode-plugin/package.json`,
 /// checked by a drift test).
@@ -35,7 +35,7 @@ pub struct ProbeResult {
     pub probe: &'static str,
     pub passed: bool,
     /// Whether the probe's script ran far enough to report an exit status. A probe that did not run (a fetch or start
-    /// failure) is never a refusal, so it fails with "could not run" (ruling Important 4).
+    /// failure) is never a refusal, so it fails with "could not run".
     pub ran: bool,
     pub detail: String,
 }
@@ -46,7 +46,7 @@ pub fn selftest(ctx: &Ctx, host: &dyn Host) -> Vec<ProbeResult> {
 }
 
 /// Runs the three probes through runtime `runtime` (an exact version). An update passes the runtime the candidate
-/// plugin declares, so the candidate is proven with the runtime it will run on (K83).
+/// plugin declares, so the candidate is proven with the runtime it will run on.
 pub fn selftest_with(ctx: &Ctx, host: &dyn Host, runtime: &str) -> Vec<ProbeResult> {
     let kind = host.info().kind;
     if ctx.dry_run {
@@ -106,7 +106,7 @@ pub fn probe_command_with(ctx: &Ctx, index: usize, runtime: &str) -> Result<Cmd>
     let package = format!("{RUNTIME_PACKAGE}@{runtime}");
     let settings = utf8(&settings_file(ctx))?.to_string();
     let script = script(ctx, index)?;
-    // The child gets the engine's search path, so the runtime is found through the Node link on a fresh machine (R3-1).
+    // The child gets the engine's search path, so the runtime is found through the Node link on a fresh machine.
     Ok(Cmd::new(&npx)
         .arg("--yes")
         .arg(&package)

@@ -1,4 +1,4 @@
-//! The end-to-end run for the `e2e-linux` CI job (plan Task 28, step 1): the real binary, the Claude Code stub on the PATH,
+//! The end-to-end run for the `e2e-linux` CI job: the real binary, the Claude Code stub on the PATH,
 //! and no prompt. The flow is a dry run, then setup, then the doctor report. Each step must exit 0. stdin is closed, so a
 //! prompt would fail the step instead of waiting for an answer.
 //!

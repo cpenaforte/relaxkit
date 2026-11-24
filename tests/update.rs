@@ -1,4 +1,4 @@
-//! `relaxkit update` for the tools (Task 21, rulings K63 to K82). Every test runs against a temporary root, a scripted
+//! `relaxkit update` for the tools. Every test runs against a temporary root, a scripted
 //! runner that records each command with its environment, and FakeNet. No test touches the real home, the real
 //! network, or a real host command.
 
@@ -316,7 +316,7 @@ fn check_reports_installed_and_newest_and_changes_nothing() {
             "Installed plugins:\n\n  \u{276f} superpowers@anthropic-plugin-directory\n    Version: 7.0.2-22f0b463e7a5\n    Scope: user\n    Status: \u{2714} enabled\n",
         ),
     );
-    // No runner answer and no served registry for rtk: its row is "newest unknown", not a failure of the run (K70).
+    // No runner answer and no served registry for rtk: its row is "newest unknown", not a failure of the run.
     let before = tree(fx.root());
 
     let report = fx.run(true, None).unwrap();
@@ -468,7 +468,7 @@ fn each_tool_updates_by_its_own_route() {
 
     let lines = fx.shell.lines();
     let has = |line: &str| lines.iter().any(|l| l == line);
-    // Claude Code plugins: marketplace first, then the plugin (K71).
+    // Claude Code plugins: marketplace first, then the plugin.
     let marketplace = lines
         .iter()
         .position(|l| l == "claude plugin marketplace update")
@@ -481,7 +481,7 @@ fn each_tool_updates_by_its_own_route() {
     assert!(has("claude plugin update caveman@caveman"), "{lines:?}");
     assert!(has("caveman off routing --yes"), "{lines:?}");
     assert!(has("caveman telemetry off"), "{lines:?}");
-    // npm pins are rewritten through the MCP remove and add, at the exact new version (K71).
+    // npm pins are rewritten through the MCP remove and add, at the exact new version.
     assert!(
         has("claude mcp remove --scope user playwright"),
         "{lines:?}"
@@ -495,7 +495,7 @@ fn each_tool_updates_by_its_own_route() {
                 ))),
         "{lines:?}"
     );
-    // Serena reinstalls at the newest pin with --force (spike I6), then runs `serena init` (K71).
+    // Serena reinstalls at the newest pin with --force, then runs `serena init`.
     assert!(
         has("uv tool install -p 3.13 serena-agent==2.2.0 --force"),
         "{lines:?}"
@@ -691,7 +691,7 @@ fn failed_probe_rolls_back_only_that_tool() {
 
 #[test]
 fn tool_not_installed_by_the_pack_is_reported_not_touched() {
-    // gh from Homebrew: the pack wrote no lock entry for it, so nothing runs (K64).
+    // gh from Homebrew: the pack wrote no lock entry for it, so nothing runs.
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.87", "npm", &["claude"])]);
 
@@ -823,7 +823,7 @@ fn undo_puts_back_the_pack_rtk_link_an_update_removed() {
 
 #[test]
 fn repair_re_adds_the_mcp_entry_at_the_locked_version_not_the_pin() {
-    // The lock records Playwright 0.0.87 on this host. A repair puts back what the lock says (K67, OWNER-3), not the
+    // The lock records Playwright 0.0.87 on this host. A repair puts back what the lock says, not the
     // newest release, and the lock itself is not rewritten by a repair.
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.87", "npm", &["claude"])]);
@@ -858,7 +858,7 @@ fn repair_re_adds_the_mcp_entry_at_the_locked_version_not_the_pin() {
 #[test]
 fn a_repair_of_an_unversioned_cli_installs_the_newest_release_not_the_placeholder() {
     // The lock records caveman as unversioned and its CLI is missing, so the repair installs the CLI. It must use the
-    // recipe's pin (4.1.0), never the placeholder word `unversioned` (K ruling T8-4, F4-4).
+    // recipe's pin (4.1.0), never the placeholder word `unversioned`.
     let fx = Fixture::new();
     fx.lock(&[("caveman", "unversioned", "npm", &["claude"])]);
     Registry::new(&[("caveman", "4.1.0")], &[]).attach(&fx.shell);
@@ -931,7 +931,7 @@ fn rtk_below_its_minimum_host_is_not_touched_and_its_lock_stays() {
 #[test]
 fn a_failed_claude_update_still_restarts_claude() {
     // The plugin is updated on disk before its probe fails. The probe finds no superpowers listing, so the update is
-    // not confirmed, but Claude's plugin changed and must be listed to restart (K69).
+    // not confirmed, but Claude's plugin changed and must be listed to restart.
     let fx = Fixture::new();
     fx.shell
         .on("claude plugin marketplace update", Output::ok(""));
@@ -961,7 +961,7 @@ fn a_failed_claude_update_still_restarts_claude() {
 #[test]
 fn an_opencode_update_the_config_does_not_show_is_rolled_back_and_named() {
     // `opencode plugin add` exits 0, but the config still lists the old spec. The new version is not confirmed, so the
-    // lock must not move, the tool goes back to its locked spec, and the report names it (K67, R4-2).
+    // lock must not move, the tool goes back to its locked spec, and the report names it.
     let mut fx = Fixture::new();
     let config = fx.root().join(".config/opencode/opencode.jsonc");
     fs::create_dir_all(config.parent().unwrap()).unwrap();
@@ -1003,7 +1003,7 @@ fn an_opencode_update_the_config_does_not_show_is_rolled_back_and_named() {
 #[test]
 fn status_reports_no_drift_after_a_partial_update() {
     // Claude moved to 7.0.3 and OpenCode stayed at 7.0.2. The lock records each host's own version, so status compares
-    // each host with it and reports no drift on either (K73).
+    // each host with it and reports no drift on either.
     let mut fx = Fixture::new();
     let root = fx.root().to_path_buf();
     let config = root.join(".config/opencode/opencode.jsonc");
@@ -1079,7 +1079,7 @@ fn status_reports_no_drift_after_a_partial_update() {
 #[test]
 fn a_claude_update_with_no_reported_version_still_restarts_claude() {
     // The plugin is updated on disk and its probe passes, but the listing names no exact version, so the new version
-    // cannot be recorded. The row is named as failed, and Claude is still listed to restart (K69).
+    // cannot be recorded. The row is named as failed, and Claude is still listed to restart.
     let fx = Fixture::new();
     fx.shell
         .on("claude plugin marketplace update", Output::ok(""));
@@ -1118,7 +1118,7 @@ fn a_claude_update_with_no_reported_version_still_restarts_claude() {
 
 #[test]
 fn rtk_is_not_touched_while_a_host_is_below_its_minimum() {
-    // Owner ruling K87: Claude (2.1.300) is below rtk's minimum (2.1.330). The pack binary is shared, so the update
+    // Claude (2.1.300) is below rtk's minimum (2.1.330). The pack binary is shared, so the update
     // does not move it and writes no lock entry. The row is NotTouched and names the host, its version and the minimum.
     // Two runs must read the same, and OpenCode, already at the newest 1.2.1, changes nothing either.
     let mut fx = Fixture::new();
@@ -1248,7 +1248,7 @@ fn a_claude_update_in_the_real_listing_shape_succeeds_and_moves_the_lock() {
 #[test]
 fn an_opencode_config_with_two_entries_for_the_plugin_is_rolled_back() {
     // `opencode plugin remove` leaves the old spec in place, so after the add the config lists both the old and the new
-    // spec. Exactly one entry per plugin is the rule (F2-4), so the update is rolled back and named, and the lock keeps
+    // spec. Exactly one entry per plugin is the rule, so the update is rolled back and named, and the lock keeps
     // the old version. The rollback removes the new entry and finds the old one again.
     let mut fx = Fixture::new();
     let config = fx.root().join(".config/opencode/opencode.jsonc");
@@ -1329,7 +1329,7 @@ fn an_opencode_config_with_two_entries_for_the_plugin_is_rolled_back() {
 #[test]
 fn an_unversioned_lock_entry_is_not_drift() {
     // A Claude plugin locked as `unversioned` (its listing reported no version when it was recorded) is not drift:
-    // status says its version is not recorded (F3-1).
+    // status says its version is not recorded.
     let fx = Fixture::new();
     fx.shell.on(
         "claude plugin list",
@@ -1357,7 +1357,7 @@ fn an_unversioned_lock_entry_is_not_drift() {
 #[test]
 fn a_first_move_from_an_unversioned_entry_records_without_the_updated_label() {
     // The entry was recorded without a version, so the move records the version now. The row must not claim an update
-    // of a version it never knew, and Claude is still listed to restart (F3-1).
+    // of a version it never knew, and Claude is still listed to restart.
     let fx = Fixture::new();
     let version = Arc::new(Mutex::new("7.0.2".to_string()));
     let listed = version.clone();
@@ -1402,7 +1402,7 @@ fn a_first_move_from_an_unversioned_entry_records_without_the_updated_label() {
 #[test]
 fn a_claude_plugin_at_the_newest_release_is_current_with_no_call() {
     // The listing reports `7.0.2-22f0b463e7a5`; the newest release tag is `7.0.2`. The build suffix is not a different
-    // version, so the plugin is current: a check says so, and an update makes no marketplace or plugin call (K72, F3-2).
+    // version, so the plugin is current: a check says so, and an update makes no marketplace or plugin call.
     let fx = Fixture::new();
     fx.shell
         .on("claude plugin marketplace update", Output::ok(""));
@@ -1448,8 +1448,8 @@ fn a_claude_plugin_at_the_newest_release_is_current_with_no_call() {
 
 #[test]
 fn a_blocked_brew_rtk_does_not_claim_it_was_updated() {
-    // A brew-route rtk with a host below its minimum is not touched (K87). Nothing was written, so the row's note must
-    // not say the pack copy was updated (F3-3).
+    // A brew-route rtk with a host below its minimum is not touched. Nothing was written, so the row's note must
+    // not say the pack copy was updated.
     let mut fx = Fixture::new();
     let root = fx.root().to_path_buf();
     fx.hosts = vec![Box::new(ClaudeHost::new(
@@ -1478,7 +1478,7 @@ fn a_blocked_brew_rtk_does_not_claim_it_was_updated() {
 #[test]
 fn rtk_restarts_every_host_whose_config_ran_not_only_the_moved_ones() {
     // Claude is already at the newest 1.2.1 and OpenCode is stale at 1.1.0. Only OpenCode moves, but both hosts'
-    // configuration steps run against the new binary, so both hosts are listed to restart (F3-4).
+    // configuration steps run against the new binary, so both hosts are listed to restart.
     let mut fx = Fixture::new();
     let root = fx.root().to_path_buf();
     fx.hosts = vec![
@@ -1542,7 +1542,7 @@ fn rtk_restarts_every_host_whose_config_ran_not_only_the_moved_ones() {
 fn a_host_already_at_the_newest_version_is_not_touched_when_another_host_is_behind() {
     // Claude is at the newest 7.0.2 (its listing carries a build suffix) and OpenCode is behind at 7.0.1. Only OpenCode
     // runs: no Claude marketplace or plugin call. OpenCode's probe fails once and then passes, so the rollback is a
-    // real rollback to 7.0.1 (K72 per host, F4-1).
+    // real rollback to 7.0.1.
     let mut fx = Fixture::new();
     let root = fx.root().to_path_buf();
     let config = root.join(".config/opencode/opencode.jsonc");
@@ -1647,7 +1647,7 @@ fn a_host_already_at_the_newest_version_is_not_touched_when_another_host_is_behi
 #[test]
 fn an_mcp_host_already_at_the_newest_version_keeps_its_entry() {
     // Playwright is at the newest 0.0.87 on Claude and behind on OpenCode (0.0.86). Only OpenCode's MCP entry is
-    // removed and added again; Claude's entry is neither removed nor re-added (K72 per host, F4-1).
+    // removed and added again; Claude's entry is neither removed nor re-added.
     let mut fx = Fixture::new();
     let root = fx.root().to_path_buf();
     fx.hosts.push(Box::new(OpencodeHost::new(
@@ -1716,7 +1716,7 @@ fn an_mcp_host_already_at_the_newest_version_keeps_its_entry() {
 fn a_row_with_a_known_move_keeps_the_updated_label() {
     // Claude was recorded without a version (unversioned) and OpenCode is at 7.0.1. Both move to 7.0.2. The
     // unversioned Claude move carries no label of its own, but OpenCode's move from a known version does, so the row
-    // says "updated" (F4-2).
+    // says "updated".
     let mut fx = Fixture::new();
     let root = fx.root().to_path_buf();
     let config = root.join(".config/opencode/opencode.jsonc");
@@ -1810,7 +1810,7 @@ fn a_row_with_a_known_move_keeps_the_updated_label() {
 #[test]
 fn an_unversioned_entry_for_a_missing_tool_reports_not_found() {
     // The lock says unversioned, but the plugin is not in the listing: status must say it was not found, not that it
-    // is as locked (F4-3).
+    // is as locked.
     let fx = Fixture::new();
     fx.shell.on("claude plugin list", Output::ok(""));
     fx.lock(&[(
@@ -1836,7 +1836,7 @@ fn an_unversioned_entry_for_a_missing_tool_reports_not_found() {
 fn a_rollback_never_pins_an_unversioned_locked_version() {
     // Caveman is locked `unversioned` on OpenCode. Its update fails (the GitHub fetch has no stub here, so the failure
     // is before the probe). The rollback must not call the install with `unversioned` as a pin: it returns
-    // RollbackFailed, names the tool, and leaves the lock byte-identical (F5-1).
+    // RollbackFailed, names the tool, and leaves the lock byte-identical.
     let mut fx = Fixture::new();
     let root = fx.root().to_path_buf();
     fx.hosts.push(Box::new(OpencodeHost::new(
@@ -1894,7 +1894,7 @@ fn a_rollback_never_pins_an_unversioned_locked_version() {
 #[test]
 fn an_mcp_entry_is_shown_as_not_read_not_as_missing() {
     // Playwright is locked at 0.0.86 on Claude. Status cannot read an MCP entry, so the line says so: no "not found",
-    // and no drift line (F5-2).
+    // and no drift line.
     let fx = Fixture::new();
     fx.lock(&[("playwright", "0.0.86", "npm", &["claude"])]);
 
@@ -1912,8 +1912,8 @@ fn an_mcp_entry_is_shown_as_not_read_not_as_missing() {
 
 #[test]
 fn status_reports_a_missing_gh_copy_and_not_a_present_one() {
-    // gh is not a recipe: status does not print the "no recipe carries it" line for its entry (K84, G1). Its one line
-    // is shown only when the pack copy is missing, which names gh and the path (F7-2).
+    // gh is not a recipe: status does not print the "no recipe carries it" line for its entry. Its one line
+    // is shown only when the pack copy is missing, which names gh and the path.
     let fx = Fixture::new();
     fx.lock(&[("gh", "9.9.9", "release", &[])]);
 
@@ -1944,7 +1944,7 @@ fn status_reports_a_missing_gh_copy_and_not_a_present_one() {
 #[test]
 fn a_locked_gh_with_no_pack_copy_is_installed_again_and_is_not_current() {
     // The lock says 9.9.9 and the newest release is 9.9.9, but the pack copy is gone: the update installs it again
-    // rather than reporting Current (F7-2).
+    // rather than reporting Current.
     let fx = Fixture::new();
     fx.lock(&[("gh", "9.9.9", "release", &[])]);
     serve_gh(
@@ -1974,7 +1974,7 @@ fn a_locked_gh_with_no_pack_copy_is_installed_again_and_is_not_current() {
     assert!(report.failed.is_empty(), "{report:?}");
 }
 
-/// The gh release archive for this platform, named as the release publishes it (K84).
+/// The gh release archive for this platform, named as the release publishes it.
 fn gh_archive(version: &str) -> String {
     match (current_os().unwrap(), current_arch().unwrap()) {
         (Os::MacOs, Arch::Aarch64) => format!("gh_{version}_macOS_arm64.zip"),
@@ -2173,7 +2173,7 @@ fn a_failed_gh_probe_restores_the_previous_copy_and_is_rolled_back() {
 
 #[test]
 fn a_brew_gh_is_never_touched_by_an_update() {
-    // The lock records the pack copy; the gh on the PATH is Homebrew's. Only the pack copy is written (K84).
+    // The lock records the pack copy; the gh on the PATH is Homebrew's. Only the pack copy is written.
     let fx = Fixture::new();
     fx.lock(&[("gh", "9.9.8", "release", &[])]);
     fx.shell.program("gh", Path::new("/opt/homebrew/bin/gh"));
@@ -2204,7 +2204,7 @@ fn a_brew_gh_is_never_touched_by_an_update() {
 
 #[test]
 fn undo_puts_back_the_previous_gh_copy_and_its_lock_entry() {
-    // The gh copy and the lock entry are journaled like rtk's pack copy, so undo restores both (K84, G3).
+    // The gh copy and the lock entry are journaled like rtk's pack copy, so undo restores both.
     let fx = Fixture::new();
     fx.lock(&[("gh", "9.9.8", "release", &[])]);
     let bin = pack_gh(&fx);
@@ -2245,7 +2245,7 @@ fn undo_puts_back_the_previous_gh_copy_and_its_lock_entry() {
 
 #[test]
 fn a_gh_move_from_an_unversioned_entry_is_recorded_not_updated() {
-    // The lock never recorded gh's version, so the move records it: the row says so, and does not claim an update (K88, G4).
+    // The lock never recorded gh's version, so the move records it: the row says so, and does not claim an update.
     let fx = Fixture::new();
     fx.lock(&[("gh", "unversioned", "release", &[])]);
     let bin = pack_gh(&fx);
@@ -2272,7 +2272,7 @@ fn a_gh_move_from_an_unversioned_entry_is_recorded_not_updated() {
 #[test]
 fn a_link_at_the_gh_pack_path_is_not_written_through() {
     // The pack path is a link to a file elsewhere. The update never writes through it: the target and the lock stay
-    // byte-identical, the link stays, and the row is not Updated (K84, F7-1).
+    // byte-identical, the link stays, and the row is not Updated.
     let fx = Fixture::new();
     fx.lock(&[("gh", "9.9.8", "release", &[])]);
     let target = fx.root().join("elsewhere").join("gh");
@@ -2506,13 +2506,13 @@ fn rtk_is_always_latest_and_a_brew_copy_is_never_upgraded() {
     let lock = fx.read_lock();
     assert_eq!(lock.tools["rtk"].version, "1.2.1");
     assert_eq!(lock.tools["rtk"].route, "script");
-    // The configuration steps run again after the binary changed (K65 with the rtk recipe).
+    // The configuration steps run again after the binary changed.
     assert!(lines.iter().any(|l| l == "rtk init -g"), "{lines:?}");
 }
 
 #[test]
 fn dangling_pack_rtk_link_is_removed_before_the_write() {
-    // A dangling link at the pack rtk path (K65, batch 10 requirement 3). The release must be written as a regular
+    // A dangling link at the pack rtk path. The release must be written as a regular
     // file, and nothing may be created where the link points.
     let fx = Fixture::new();
     fx.lock(&[("rtk", "1.1.0", "script", &["claude"])]);
@@ -2744,7 +2744,7 @@ fn stdout_of(scratch: &Scratch, args: &[&str]) -> String {
 #[test]
 fn check_through_the_binary_exits_zero_offline_and_runs_no_mutating_command() {
     // With no network (the proxy is closed), a check still succeeds: a registry failure is "newest unknown", not a
-    // failure of the run (K70). The stubs must see no mutating call and the home must not change.
+    // failure of the run. The stubs must see no mutating call and the home must not change.
     let scratch = Scratch::new();
     let before = tree(scratch.home());
 
@@ -2756,7 +2756,7 @@ fn check_through_the_binary_exits_zero_offline_and_runs_no_mutating_command() {
         "a check ran a mutating command: {:?}",
         scratch.calls()
     );
-    // Offline, the self step reports the newest release as unknown: it names the failed request and touches nothing (K97).
+    // Offline, the self step reports the newest release as unknown: it names the failed request and touches nothing.
     assert!(text.contains("newest unknown"), "{text}");
     assert!(text.contains("not touched"), "{text}");
 }
@@ -2765,7 +2765,7 @@ fn check_through_the_binary_exits_zero_offline_and_runs_no_mutating_command() {
 fn flags_select_scope_at_the_command_line() {
     let scratch = Scratch::new();
 
-    // A plain update names the self step, which reports the newest release (unknown offline here). `--tools` leaves it out (K63).
+    // A plain update names the self step, which reports the newest release (unknown offline here). `--tools` leaves it out.
     let plain = stdout_of(&scratch, &["update", "--check"]);
     let tools_only = stdout_of(&scratch, &["update", "--check", "--tools"]);
     assert!(plain.contains("newest unknown"), "{plain}");

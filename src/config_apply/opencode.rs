@@ -1,5 +1,5 @@
 //! OpenCode configuration: one agent per role in `opencode.jsonc`, the routing block in `AGENTS.md`, and the compaction
-//! buffer (spec 6.2). Every write goes through `state::safe_write`, and an unchanged file is not written. Only V2 keys
+//! buffer. Every write goes through `state::safe_write`, and an unchanged file is not written. Only V2 keys
 //! are written (`agents`, `compaction`, `plugins`, `mcp.servers`), never the V1 `plugin` key or `mcp.<name>`.
 
 use std::fs;
@@ -100,7 +100,7 @@ pub fn apply_roles(
 pub const ROUTING_TEXT: &str = "When you dispatch a subagent, pick its agent by the prompt: implementer prompts go to the `implementer` agent; review prompts go to the `reviewer` agent; fix-loop rounds 4 to 5 go to the `implementer-escalated` agent; the final whole-branch review goes to the `reviewer-final` agent. Planning runs in the main session with the `plan` agent. These model choices are set by relaxkit's configuration.";
 
 /// Sets `agents.<id>.model` to the model the setting resolves to. With no listed models the setting cannot resolve, so
-/// the key is left as it is (K122). Otherwise a setting with no model removes the key, and the agent inherits the host
+/// the key is left as it is. Otherwise a setting with no model removes the key, and the agent inherits the host
 /// default.
 fn set_model(text: &str, id: &str, setting: &RoleSetting, available: &[String]) -> Result<String> {
     match resolve_opencode(setting, available) {
@@ -110,8 +110,7 @@ fn set_model(text: &str, id: &str, setting: &RoleSetting, available: &[String]) 
     }
 }
 
-/// Sets `compaction.buffer` to the window minus `compact_at`, so OpenCode compacts when `compact_at` tokens are used
-/// (spec 6.2). Without a known window, or with a window at or below the target, nothing is written.
+/// Sets `compaction.buffer` to the window minus `compact_at`, so OpenCode compacts when `compact_at` tokens are used. Without a known window, or with a window at or below the target, nothing is written.
 pub fn apply_compact(
     ctx: &Ctx,
     run: &RunId,
@@ -132,9 +131,9 @@ pub fn apply_compact(
 }
 
 /// Removes what `apply_roles` wrote, and restores each managed key to the value the file held before relaxkit first
-/// wrote it (F23-11). The routing block is removed. A managed agent block is removed only when the original file did
+/// wrote it. The routing block is removed. A managed agent block is removed only when the original file did
 /// not have it and nothing else is left in it. Any other agent the user defined, and the rest of the file, stay as
-/// they are. With no earlier journaled write to revert (K117), the config file is left alone.
+/// they are. With no earlier journaled write to revert, the config file is left alone.
 pub fn unset_roles(
     ctx: &Ctx,
     run: &RunId,
@@ -171,10 +170,10 @@ fn role_of(id: &str) -> Option<Role> {
         .map(|(_, role, _)| *role)
 }
 
-/// Whether the managed key should be restored to its original value (K118, K121). An absent key is restored. A key
+/// Whether the managed key should be restored to its original value. An absent key is restored. A key
 /// with a known expected value is restored only when it holds that value. When the expected model is unknown (the
 /// list is empty or unreadable), a model is restored only when it is an `anthropic/` id of the family relaxkit would
-/// have written for the role's tier. Any other value is the owner's and stays.
+/// have written for the role's tier. Any other value is the user's and stays.
 fn key_restores(
     text: &str,
     config: &KitConfig,
@@ -182,7 +181,7 @@ fn key_restores(
     id: &str,
     key: &str,
 ) -> Result<bool> {
-    // K122: relaxkit never removes a model key itself, so an absent key was removed by the owner and stays absent.
+    // Relaxkit never removes a model key itself, so an absent key was removed by the user and stays absent.
     let Some(current) = jsonc_get(text, &["agents", id, key])? else {
         return Ok(false);
     };
@@ -229,8 +228,8 @@ fn strip_managed_agents(
 ) -> Result<String> {
     let mut text = text.to_string();
     for id in managed_agent_ids() {
-        // Only the keys relaxkit wrote come out; a key the user added under the same agent stays (K106). A key
-        // comes out only while it holds the value setup wrote (K118).
+        // Only the keys relaxkit wrote come out; a key the user added under the same agent stays. A key
+        // comes out only while it holds the value setup wrote.
         let keys: &[&str] = if id == PLANNER_AGENT {
             &["model"]
         } else {
@@ -307,7 +306,7 @@ mod tests {
     use crate::roles::{ModelSpec, Role, RoleSetting};
     use crate::state::journal;
 
-    /// K33: comments, a trailing comma and a V1 `mcp.legacy` entry.
+    /// Comments, a trailing comma and a V1 `mcp.legacy` entry.
     const FIXTURE: &str = "{\n  // my settings\n  \"theme\": \"dark\",\n  \"mcp\": {\n    \"legacy\": {\"type\": \"local\", \"command\": [\"old\"]},\n  },\n}\n";
 
     const MODELS: [&str; 3] = [
@@ -678,7 +677,7 @@ mod tests {
 
     #[test]
     fn a_user_model_before_setup_survives_unset() {
-        // F23-11: the managed keys go back to the values the file held before setup, so the user's plan model stays.
+        // The managed keys go back to the values the file held before setup, so the user's plan model stays.
         let root = tempfile::tempdir().unwrap();
         let user = jsonc_set(
             FIXTURE,
@@ -704,7 +703,7 @@ mod tests {
 
     #[test]
     fn a_model_changed_by_hand_after_setup_stays_through_unset() {
-        // F23-13 / K118: the user's model before setup is not restored over a value the owner set after setup.
+        // The user's model before setup is not restored over a value the user set after setup.
         let root = tempfile::tempdir().unwrap();
         let before = jsonc_set(
             FIXTURE,
@@ -740,7 +739,7 @@ mod tests {
 
     #[test]
     fn empty_list_at_uninstall_restores_the_user_model_when_relaxkit_wrote_its_family() {
-        // F23-16 / K121 (a): the list is empty at uninstall, relaxkit wrote opus, and the user had sonnet before setup.
+        // The list is empty at uninstall, relaxkit wrote opus, and the user had sonnet before setup.
         let root = tempfile::tempdir().unwrap();
         let before = jsonc_set(
             FIXTURE,
@@ -767,7 +766,7 @@ mod tests {
 
     #[test]
     fn empty_list_at_uninstall_keeps_a_hand_set_model_from_another_provider() {
-        // F23-16 / K121 (b): an id from another provider is the owner's, whatever the list says.
+        // An id from another provider is the user's, whatever the list says.
         let root = tempfile::tempdir().unwrap();
         seed(root.path(), FIXTURE);
         let host = opencode(root.path());
@@ -791,7 +790,7 @@ mod tests {
 
     #[test]
     fn an_absent_model_key_stays_absent_through_unset() {
-        // F23-19 / K122 (c): relaxkit never removes a model key itself, so a key the owner removed stays absent.
+        // Relaxkit never removes a model key itself, so a key the user removed stays absent.
         let root = tempfile::tempdir().unwrap();
         let before = jsonc_set(
             FIXTURE,
@@ -817,7 +816,7 @@ mod tests {
 
     #[test]
     fn an_unreadable_list_leaves_the_user_model_as_it_is_at_setup() {
-        // F23-19 / K122 (a): with no list, a tier cannot be resolved, so the existing model key is not touched.
+        // With no list, a tier cannot be resolved, so the existing model key is not touched.
         let root = tempfile::tempdir().unwrap();
         let before = jsonc_set(
             FIXTURE,
@@ -839,7 +838,7 @@ mod tests {
 
     #[test]
     fn an_empty_version_is_not_the_family_so_the_model_stays_through_unset() {
-        // F23-20: `claude-sonnet-latest` has no version, so it is not a sonnet id relaxkit would have written.
+        // `claude-sonnet-latest` has no version, so it is not a sonnet id relaxkit would have written.
         let root = tempfile::tempdir().unwrap();
         seed(root.path(), FIXTURE);
         let host = opencode(root.path());
@@ -865,8 +864,8 @@ mod tests {
     }
 
     #[test]
-    fn a_description_the_owner_deleted_after_setup_stays_absent_through_unset() {
-        // F23-18 / K122: an absent mode or description is the owner's removal, so it is not restored.
+    fn a_description_the_user_deleted_after_setup_stays_absent_through_unset() {
+        // An absent mode or description is the user's removal, so it is not restored.
         let root = tempfile::tempdir().unwrap();
         let before = jsonc_set(
             FIXTURE,

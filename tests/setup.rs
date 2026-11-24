@@ -1,4 +1,4 @@
-//! `relaxkit setup` against stub host commands in a temporary HOME (Task 19, rulings K46 to K54).
+//! `relaxkit setup` against stub host commands in a temporary HOME.
 
 mod support;
 
@@ -136,7 +136,7 @@ fn detect_runs_before_any_install() {
 }
 
 #[test]
-fn setup_runs_steps_in_spec_order() {
+fn setup_runs_steps_in_their_declared_order() {
     let scratch = Scratch::claude_only();
 
     let output = scratch.relaxkit().arg("setup").assert().success();
@@ -328,7 +328,7 @@ fn setup_keeps_an_existing_preset() {
 }
 
 #[test]
-fn setup_exits_3_when_the_login_needs_the_owner() {
+fn setup_exits_3_when_the_login_needs_the_user() {
     let mut scratch = Scratch::claude_only();
     scratch.gh_auth_status(1);
 
@@ -409,7 +409,7 @@ fn setup_exits_nonzero_when_a_check_fails() {
 
 #[test]
 fn setup_warns_on_anthropic_base_url_and_never_deletes_it() {
-    // A warn does not fail setup, and setup never removes a variable it did not write (ruling OWNER-2).
+    // A warn does not fail setup, and setup never removes a variable it did not write.
     let scratch = Scratch::claude_only();
     let settings = scratch.home().join(".claude/settings.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
@@ -432,7 +432,7 @@ fn setup_warns_on_anthropic_base_url_and_never_deletes_it() {
 
 #[test]
 fn setup_reinstalls_a_tool_whose_probe_fails_and_passes_on_rerun() {
-    // OWNER-3 (i): a locked tool whose probe fails on a rerun is reinstalled at its locked version and configured
+    // A locked tool whose probe fails on a rerun is reinstalled at its locked version and configured
     // again. The rerun finds the probe passing and exits 0. serena's probe is used: its reinstall runs only stubs.
     let mut scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
@@ -466,7 +466,7 @@ fn setup_reinstalls_a_tool_whose_probe_fails_and_passes_on_rerun() {
 
 #[test]
 fn a_repair_that_still_fails_leaves_a_fail_and_setup_exits_1() {
-    // OWNER-3 (iv): a probe that still fails after the repair stays a fail, and setup exits 1 with that check's fix.
+    // A probe that still fails after the repair stays a fail, and setup exits 1 with that check's fix.
     let mut scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
     scratch.fail_calls_matching("serena --help");
@@ -481,7 +481,7 @@ fn a_repair_that_still_fails_leaves_a_fail_and_setup_exits_1() {
 
 #[test]
 fn setup_rewrites_a_hand_edited_relaxkit_key() {
-    // OWNER-3 (ii): a relaxkit-owned key changed by hand is written back to its expected value on a rerun.
+    // A relaxkit-owned key changed by hand is written back to its expected value on a rerun.
     let scratch = Scratch::claude_only();
     let settings = scratch.home().join(".claude/settings.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
@@ -503,7 +503,7 @@ fn setup_rewrites_a_hand_edited_relaxkit_key() {
 
 #[test]
 fn a_failed_check_takes_precedence_over_a_pending_login() {
-    // Ruling D5: a failed check (exit 1) wins over the login that needs the owner (exit 3), and the login line is
+    // A failed check (exit 1) wins over the login that needs the user (exit 3), and the login line is
     // still printed.
     let mut scratch = Scratch::claude_only();
     scratch.gh_auth_status(1);
@@ -525,7 +525,7 @@ fn a_failed_check_takes_precedence_over_a_pending_login() {
 
 #[test]
 fn setup_readds_a_missing_mcp_entry_through_the_host_step() {
-    // R2-1: a locked MCP entry that is gone from the host config is added again by the host's MCP step. The tool is
+    // A locked MCP entry that is gone from the host config is added again by the host's MCP step. The tool is
     // not reinstalled.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
@@ -562,7 +562,7 @@ fn setup_readds_a_missing_mcp_entry_through_the_host_step() {
 
 #[test]
 fn an_unparsable_claude_config_is_left_alone_and_fails_the_run() {
-    // R3-3: a ~/.claude.json that does not parse is reported as unreadable, with no repair. Setup never runs
+    // A ~/.claude.json that does not parse is reported as unreadable, with no repair. Setup never runs
     // `claude mcp` against it, and its bytes stay as they are.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
@@ -583,7 +583,7 @@ fn an_unparsable_claude_config_is_left_alone_and_fails_the_run() {
 
 #[test]
 fn a_listed_plugin_whose_cli_is_missing_gets_its_cli_installed_and_no_plugin_install() {
-    // R3-4: a listed unpinned plugin (caveman) whose CLI probe fails gets its non-plugin install steps again, which
+    // A listed unpinned plugin (caveman) whose CLI probe fails gets its non-plugin install steps again, which
     // install the CLI. `claude plugin install` is never called, so the plugin's version does not move.
     let scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
@@ -613,7 +613,7 @@ fn a_listed_plugin_whose_cli_is_missing_gets_its_cli_installed_and_no_plugin_ins
 
 #[test]
 fn setup_with_an_unreadable_opencode_list_keeps_the_user_model_and_says_the_tier_is_not_applied() {
-    // K122 / F23-22: setup cannot resolve a tier without the list, so the owner's implementer model stays, and the
+    // Setup cannot resolve a tier without the list, so the user's implementer model stays, and the
     // output says the tier was not applied.
     let scratch = Scratch::new();
     write_lock_except(&scratch, None);
@@ -648,7 +648,7 @@ fn setup_with_an_unreadable_opencode_list_keeps_the_user_model_and_says_the_tier
 
 #[test]
 fn an_unreadable_opencode_plugins_entry_stops_setup_before_any_write() {
-    // R6-1: an OpenCode `plugins` entry that is not a list stops setup before any OpenCode file is written. The config
+    // An OpenCode `plugins` entry that is not a list stops setup before any OpenCode file is written. The config
     // file and AGENTS.md keep their bytes, no `opencode plugin` call runs, nothing is repaired, and the run exits 1
     // with the read error.
     let scratch = Scratch::new();
@@ -686,7 +686,7 @@ fn an_unreadable_opencode_plugins_entry_stops_setup_before_any_write() {
 
 #[test]
 fn an_unreadable_opencode_plugins_entry_stops_the_install_loop_before_any_write() {
-    // R7-1: setup reads the OpenCode plugins entry before its install loop. Serena is left out of the lock, so its
+    // Setup reads the OpenCode plugins entry before its install loop. Serena is left out of the lock, so its
     // install step would remove and re-add its MCP entry in opencode.json. It does not: the file and AGENTS.md keep
     // their bytes, no `opencode mcp` call runs, and the run exits 1 on the plugins error.
     let scratch = Scratch::new();
@@ -718,7 +718,7 @@ fn an_unreadable_opencode_plugins_entry_stops_the_install_loop_before_any_write(
 
 #[test]
 fn a_repair_never_moves_a_listed_unpinned_plugin() {
-    // R2-3: a repair for an unpinned plugin that is already listed reruns its configuration only. It never calls
+    // A repair for an unpinned plugin that is already listed reruns its configuration only. It never calls
     // `claude plugin install`, which would move the version it can see.
     let mut scratch = Scratch::claude_only();
     scratch.relaxkit().arg("setup").assert().success();
@@ -743,7 +743,7 @@ fn a_repair_never_moves_a_listed_unpinned_plugin() {
 
 #[test]
 fn setup_does_not_record_a_brew_or_system_gh() {
-    // The Scratch PATH holds a gh stub that the pack did not install, so setup must not write a gh lock entry (K84).
+    // The Scratch PATH holds a gh stub that the pack did not install, so setup must not write a gh lock entry.
     let scratch = Scratch::claude_only();
 
     scratch.relaxkit().arg("setup").assert().success();
@@ -755,7 +755,7 @@ fn setup_does_not_record_a_brew_or_system_gh() {
 
 #[test]
 fn setup_installs_the_opencode_adapter_for_an_opencode_host() {
-    // Task 25b: configure installs the OpenCode adapter after the OpenCode roles. Every recipe is locked, so the
+    // Configure installs the OpenCode adapter after the OpenCode roles. Every recipe is locked, so the
     // install loop does not reach GitHub, and the run gets as far as configure. The stubs do not write the config,
     // so the adapter is added once. Only the calls matter: the run may still exit non-zero.
     let scratch = Scratch::new();
@@ -780,7 +780,7 @@ fn setup_installs_the_opencode_adapter_for_an_opencode_host() {
 
 #[test]
 fn setup_installs_the_adapter_for_each_detected_host() {
-    // Task 24 part A: configure installs the Claude adapter for each detected Claude host. A Claude-only home gets
+    // Configure installs the Claude adapter for each detected Claude host. A Claude-only home gets
     // only that adapter, and no OpenCode call runs.
     let scratch = Scratch::claude_only();
 

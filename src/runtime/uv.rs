@@ -11,10 +11,10 @@ use crate::platform::is_executable;
 use crate::runtime::{download_verified, utf8};
 use crate::state::RunId;
 
-/// The uv release whose installer is run (owner decision O8).
+/// The uv release whose installer is run.
 pub const UV_VERSION: &str = "0.13.9";
 
-/// The installer at `UV_VERSION`. It is run with `UV_INSTALL_DIR` and `UV_NO_MODIFY_PATH=1` (spike A6).
+/// The installer at `UV_VERSION`. It is run with `UV_INSTALL_DIR` and `UV_NO_MODIFY_PATH=1`.
 pub const UV_INSTALL_URL: &str = "https://astral.sh/uv/0.13.9/install.sh";
 
 /// SHA-256 of that installer. The download must match before anything runs.
@@ -107,7 +107,7 @@ mod tests {
     }
 
     #[test]
-    fn uv_installs_with_the_flags_from_spike_a6_when_missing() {
+    fn uv_installs_with_the_expected_flags_when_missing() {
         let root = tempfile::tempdir().unwrap();
         let bin_uv = root.path().join(".local/share/relaxkit/bin/uv");
         let runner = Recorder::new(FakeRunner::new().reply("sh ", Output::ok(""))).effect(

@@ -92,8 +92,7 @@ impl Plan {
     }
 }
 
-/// Handlers that only configure a tool that is already installed. An adopted install runs them too (ruling T12-2
-/// covers configuration steps), so rtk on Claude gets its hook whether relaxkit installed rtk or found it.
+/// Handlers that only configure a tool that is already installed. An adopted install runs them too, so rtk on Claude gets its hook whether relaxkit installed rtk or found it.
 const CONFIGURATION_HANDLERS: [&str; 1] = ["rtk_claude_hook"];
 
 /// The steps of a recipe on `kind` that install or add nothing: the configuration an adopted install still
@@ -145,7 +144,7 @@ impl<'a> Engine<'a> {
     /// The recipe with its pin set to the newest release of its version source. A recipe that names no source has no
     /// release to take, so it is returned unchanged.
     pub fn with_newest(&self, recipe: &Recipe) -> Result<Recipe> {
-        // rtk is always the latest release and its install looks that release up itself (ruling R2-2).
+        // rtk is always the latest release and its install looks that release up itself.
         if recipe.id == "rtk" || matches!(recipe.version, VersionSource::None) {
             return Ok(recipe.clone());
         }
@@ -230,7 +229,7 @@ impl<'a> Engine<'a> {
     ) -> Option<(String, PathBuf)> {
         let probe = recipe.probe.get(&kind)?;
         let bin = probe.argv.first().filter(|arg| !arg.starts_with('{'))?;
-        // rtk resolves its pack copy first, so a broken rtk elsewhere on the PATH does not decide (ruling R3-2).
+        // rtk resolves its pack copy first, so a broken rtk elsewhere on the PATH does not decide.
         if recipe.id == "rtk"
             && let Some(path) = rtk::resolve(self.ctx)
         {
@@ -352,7 +351,7 @@ impl<'a> Engine<'a> {
 
     /// Runs the recipe's install steps again on one installed host, at the recipe's pin, and updates the lock for that
     /// host. Unlike `install`, an adopted tool is not skipped, and the steps include the MCP entry, which the
-    /// configuration of an adopted install does not rerun. Setup uses this to repair a failing check (ruling OWNER-3).
+    /// configuration of an adopted install does not rerun. Setup uses this to repair a failing check.
     pub fn reinstall(&self, recipe: &Recipe, kind: HostKind) -> Result<Outcome> {
         let locked = self.at_locked_version(recipe, kind)?;
         let recipe = &locked;
@@ -363,7 +362,7 @@ impl<'a> Engine<'a> {
                 recipe.id
             );
         };
-        // The same floor plan() applies: a host below the recipe's minimum is refused, not reinstalled (K73).
+        // The same floor plan() applies: a host below the recipe's minimum is refused, not reinstalled.
         if let Some(need) = recipe.minimum_host.get(&kind)
             && let HostCheck::TooOld { have, need } = check_minimum(host.info(), need)
         {
@@ -375,13 +374,13 @@ impl<'a> Engine<'a> {
         let steps = recipe.install.get(&kind).cloned().unwrap_or_default();
         self.preflight_steps(recipe, kind, &steps)?;
         // An unpinned plugin that is already listed keeps the version it has: only its configuration runs again, and
-        // `claude plugin install` is never called, because it would move the version (ruling R2-3).
+        // `claude plugin install` is never called, because it would move the version.
         let listed = match plugin_spec(recipe, kind) {
             Some(spec) if !spec.contains("{version}") => self.detect(recipe, host.as_ref())?,
             _ => None,
         };
         if let Some((version, route)) = listed {
-            // A listed plugin whose CLI probe fails gets its non-plugin steps again, which install the CLI (ruling R3-4).
+            // A listed plugin whose CLI probe fails gets its non-plugin steps again, which install the CLI.
             if self.cli_missing(recipe, kind)? {
                 self.run_steps(recipe, host.as_ref(), false)?;
                 self.record(recipe, &[(kind, version.clone(), route)])?;
@@ -391,7 +390,7 @@ impl<'a> Engine<'a> {
             self.record(recipe, &[(kind, version.clone(), route.clone())])?;
             return Ok(Outcome::Adopted { version, route });
         }
-        // rtk is always the latest release (owner's exception, ruling R2-2), so its repair installs that release even
+        // rtk is always the latest release, so its repair installs that release even
         // when rtk is already on the PATH, and the release tag is what the lock records.
         let latest = if recipe.id == "rtk" {
             Some(
@@ -403,7 +402,7 @@ impl<'a> Engine<'a> {
             None
         };
         let (installed, route) = self.install_here(recipe, kind, host.as_ref())?;
-        // The rtk repair records the release it installed, as a script copy in the pack bin (ruling R3-2).
+        // The rtk repair records the release it installed, as a script copy in the pack bin.
         let (version, route) = match latest {
             Some(tag) => (tag, Route::Script),
             None => (installed, route),
@@ -516,7 +515,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Runs the install steps in order. `with_plugins` false skips every plugin step: a repair of a listed plugin
-    /// re-runs its CLI and its other steps, and never moves the plugin (ruling R3-4).
+    /// re-runs its CLI and its other steps, and never moves the plugin.
     fn run_steps(&self, recipe: &Recipe, host: &dyn Host, with_plugins: bool) -> Result<Vars> {
         let kind = host.info().kind;
         let steps: &[Step] = recipe.install.get(&kind).map(Vec::as_slice).unwrap_or(&[]);
@@ -552,7 +551,7 @@ impl<'a> Engine<'a> {
         Ok(vars)
     }
 
-    /// Adds one MCP entry through the host. The entry starts Node through the fixed link (spec 4, items 4 and 5), so PATH
+    /// Adds one MCP entry through the host. The entry starts Node through the fixed link, so PATH
     /// names that link first, then the system directories, and no other PATH is inherited.
     pub(crate) fn add_mcp(
         &self,
@@ -573,7 +572,7 @@ impl<'a> Engine<'a> {
         host.mcp_add(self.ctx, name, &argv, &env)
     }
 
-    /// Adds one locked MCP entry again through the host's MCP step, without reinstalling its tool (ruling R2-1).
+    /// Adds one locked MCP entry again through the host's MCP step, without reinstalling its tool.
     pub fn readd_mcp(&self, recipe: &Recipe, kind: HostKind) -> Result<()> {
         let locked = self.at_locked_version(recipe, kind)?;
         let recipe = &locked;
@@ -600,8 +599,8 @@ impl<'a> Engine<'a> {
     }
 
     /// The recipe at the version the lock records for `kind`, so a repair puts back the locked version and not the
-    /// recipe's pin (K67, OWNER-3). A tool with no lock entry keeps its pin, which is the fresh-install version.
-    /// rtk is the exception: it is always the latest release (K65), so its recipe is returned unchanged.
+    /// recipe's pin. A tool with no lock entry keeps its pin, which is the fresh-install version.
+    /// rtk is the exception: it is always the latest release, so its recipe is returned unchanged.
     fn at_locked_version(&self, recipe: &Recipe, kind: HostKind) -> Result<Recipe> {
         if recipe.id == "rtk" {
             return Ok(recipe.clone());
@@ -614,7 +613,7 @@ impl<'a> Engine<'a> {
             .filter(|version| *version != UNVERSIONED);
         match locked {
             Some(version) => Ok(crate::tools::update::pinned(recipe, version)),
-            // Nothing exact is locked for this host (F4-4), so the repair takes the newest release, as install does.
+            // Nothing exact is locked for this host, so the repair takes the newest release, as install does.
             None => self.with_newest(recipe),
         }
     }
@@ -725,7 +724,7 @@ impl<'a> Engine<'a> {
             tools: BTreeMap::new(),
         });
         // The hosts already locked for this tool stay locked, each on its own version: a run on some hosts only moves
-        // those hosts (ruling K56, and K73 for the per-host versions).
+        // those hosts.
         let touched: Vec<String> = rows.iter().map(|(kind, _, _)| kind.to_string()).collect();
         let mut next = match lock.tools.get(&recipe.id) {
             Some(existing) => existing.moved(&touched, version, &route),
@@ -771,7 +770,7 @@ pub(crate) fn refuse_workdir(recipe: &Recipe) -> Result<()> {
 }
 
 /// The directories an MCP entry's command is found in, in order: the Node link, then `~/.local/bin` (where
-/// `uv tool install` puts `serena`), then the system directories. No other PATH is inherited (spec 4, items 4 and 5).
+/// `uv tool install` puts `serena`), then the system directories. No other PATH is inherited.
 pub fn mcp_path_dirs(ctx: &Ctx) -> Vec<PathBuf> {
     vec![
         ctx.dirs.data.join("node").join("bin"),
@@ -782,7 +781,7 @@ pub fn mcp_path_dirs(ctx: &Ctx) -> Vec<PathBuf> {
 }
 
 /// The PATH a probe child runs with: the Node link bin, the pack bin, `~/.local/bin`, then the PATH doctor was started
-/// with (ruling R2-4). It is the engine's search order, so a probe finds the tools the engine installed.
+/// with. It is the engine's search order, so a probe finds the tools the engine installed.
 pub fn probe_path(ctx: &Ctx) -> String {
     let mut entries = vec![
         ctx.dirs.data.join("node").join("bin").display().to_string(),
@@ -1952,7 +1951,7 @@ handler = "rtk_claude_hook"
         )
         .unwrap();
 
-        // A run that installs rtk on Claude Code only must not drop the OpenCode host from the lock (ruling K56).
+        // A run that installs rtk on Claude Code only must not drop the OpenCode host from the lock.
         engine
             .record(
                 &recipe,

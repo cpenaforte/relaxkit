@@ -1,5 +1,5 @@
-//! Test support for the binary-level tests (ruling K54). Each `Scratch` is a temporary HOME with stub host
-//! commands and a fake nvm, all on a PATH that holds nothing else of the owner's. The relaxkit process gets a
+//! Test support for the binary-level tests. Each `Scratch` is a temporary HOME with stub host
+//! commands and a fake nvm, all on a PATH that holds nothing else of the user's. The relaxkit process gets a
 //! cleared environment, stdin from null, and proxy variables that point at a closed local port, so no test
 //! reaches the real network, the real home, or a real `sudo`: `sudo` is a stub too.
 
@@ -122,7 +122,7 @@ pub struct Scratch {
 
 impl Scratch {
     /// A scratch with a Claude Code stub only. Setup with an OpenCode stub present reaches GitHub for caveman's
-    /// OpenCode files (ruling K54 forbids that here), so the success-path tests use this fixture.
+    /// OpenCode files, so the success-path tests use this fixture.
     pub fn claude_only() -> Scratch {
         let scratch = Scratch::new();
         fs::remove_file(scratch.bin.join("opencode")).expect("remove the opencode stub");
@@ -170,7 +170,7 @@ impl Scratch {
         let browser = cache.join("chromium-1200").join(CHROMIUM_BINARY);
         fs::create_dir_all(browser.parent().unwrap()).expect("chromium dir");
         write_executable(&browser, "#!/bin/sh\nexit 0\n");
-        // The Claude marketplace that lists the two plugins the pack resolves from disk (spec 5.1).
+        // The Claude marketplace that lists the two plugins the pack resolves from disk.
         let catalog =
             home.join(".claude/plugins/marketplaces/anthropic-plugin-directory/.claude-plugin");
         fs::create_dir_all(&catalog).expect("marketplace catalog");

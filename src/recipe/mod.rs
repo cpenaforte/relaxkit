@@ -165,7 +165,7 @@ argv = ["fixture", "--version"]
     }
 
     #[test]
-    fn host_scope_matches_the_spec() {
+    fn host_scope_matches_the_stated_rules() {
         let both: BTreeSet<HostKind> = [HostKind::Claude, HostKind::Opencode].into();
         let claude_only: BTreeSet<HostKind> = [HostKind::Claude].into();
         for id in ["claude-md-management", "frontend-design"] {
@@ -423,11 +423,7 @@ argv = ["fixture", "--version"]
         let err = parse_recipe(&bad).unwrap_err().to_string();
         assert!(err.contains("workdir"), "error was: {err}");
         assert!(err.contains("data directory"), "error was: {err}");
-        assert_eq!(
-            by_id("serena").workdir,
-            None,
-            "serena sets no workdir (owner decision)"
-        );
+        assert_eq!(by_id("serena").workdir, None, "serena sets no workdir");
     }
 
     #[test]
@@ -575,7 +571,7 @@ argv = ["fixture", "--version"]
         assert_eq!(
             opencode_context.as_deref(),
             Some("ide"),
-            "serena opencode entry must pass --context ide (ruling K9)"
+            "serena opencode entry must pass --context ide"
         );
         assert_eq!(by_id("chrome-devtools").requires, ["playwright"]);
     }

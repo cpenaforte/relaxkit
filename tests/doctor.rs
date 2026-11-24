@@ -1,4 +1,4 @@
-//! `relaxkit status` and `relaxkit doctor` on fixture homes (Task 20). Most tests call the library with a fake
+//! `relaxkit status` and `relaxkit doctor` on fixture homes. Most tests call the library with a fake
 //! runner, a fake registry and a temporary root, and build the hosts directly, so nothing reads the real PATH,
 //! the real home or the environment. The binary tests use the stub support.
 
@@ -112,7 +112,7 @@ fn doctor_reports_v1_mcp_shape_without_rewriting() {
 #[test]
 fn doctor_warns_when_anthropic_base_url_is_set() {
     // relaxkit does not set ANTHROPIC_BASE_URL, and a user's own proxy sets it too, so it is a warn with the removal
-    // as its fix. Nothing repairs it: setup never deletes a variable it did not write (ruling OWNER-2).
+    // as its fix. Nothing repairs it: setup never deletes a variable it did not write.
     let root = tempfile::tempdir().unwrap();
     write(
         &root.path().join(".claude/settings.json"),
@@ -241,7 +241,7 @@ fn doctor_flags_a_locked_tool_whose_probe_fails() {
 
 #[test]
 fn doctor_fails_when_a_locked_mcp_command_is_missing_from_the_mcp_path() {
-    // The MCP entry starts `serena` from the MCP PATH (spec 6), so a missing command means the entry cannot start.
+    // The MCP entry starts `serena` from the MCP PATH, so a missing command means the entry cannot start.
     let root = tempfile::tempdir().unwrap();
     lock(root.path(), &[("serena", "2.1.0", "uv", &["claude"])]);
 
@@ -272,7 +272,7 @@ fn doctor_fails_when_a_locked_mcp_command_is_missing_from_the_mcp_path() {
 
 #[test]
 fn a_plugin_probe_that_exits_zero_without_its_plugin_fails() {
-    // R3-5: a tool probe passes only when it exits 0 and its expect text is in its output. `claude plugin list` that
+    // A tool probe passes only when it exits 0 and its expect text is in its output. `claude plugin list` that
     // exits 0 without superpowers in its list is a fail, not an ok.
     let root = tempfile::tempdir().unwrap();
     lock(
@@ -299,7 +299,7 @@ fn a_plugin_probe_that_exits_zero_without_its_plugin_fails() {
 
 #[test]
 fn an_opencode_plugin_probe_fails_unless_the_plugin_is_listed() {
-    // R4-2: an OpenCode plugin probe passes only when its program exits 0 and the plugin is listed under `plugins` in
+    // An OpenCode plugin probe passes only when its program exits 0 and the plugin is listed under `plugins` in
     // the OpenCode config. Without superpowers listed the probe fails; with it listed the probe passes.
     let root = tempfile::tempdir().unwrap();
     lock(
@@ -346,7 +346,7 @@ fn an_opencode_plugin_probe_fails_unless_the_plugin_is_listed() {
 
 #[test]
 fn an_unreadable_opencode_plugins_entry_is_a_plugin_config_fail_and_is_not_rewritten() {
-    // R5-1: an OpenCode `plugins` entry that is not a list cannot be read. The plugin probe reports that under its own
+    // An OpenCode `plugins` entry that is not a list cannot be read. The plugin probe reports that under its own
     // id, plugin-config.<id>.<kind>, and the file keeps its bytes.
     let root = tempfile::tempdir().unwrap();
     lock(
@@ -376,7 +376,7 @@ fn an_unreadable_opencode_plugins_entry_is_a_plugin_config_fail_and_is_not_rewri
 
 #[test]
 fn caveman_on_opencode_fails_unless_its_plugin_entry_is_listed() {
-    // R5-2: caveman's OpenCode plugin entry `./plugins/caveman` is checked like the other plugins. The probe passes
+    // Caveman's OpenCode plugin entry `./plugins/caveman` is checked like the other plugins. The probe passes
     // only when that entry is listed under `plugins`.
     let root = tempfile::tempdir().unwrap();
     lock(root.path(), &[("caveman", "4.1.0", "npm", &["opencode"])]);
@@ -414,7 +414,7 @@ fn caveman_on_opencode_fails_unless_its_plugin_entry_is_listed() {
 
 #[test]
 fn opencode_tuple_plugin_entries_are_read_by_their_first_element() {
-    // R6-2: OpenCode accepts `[name, options]` in `plugins`. The first element is the plugin spec. A tuple whose first
+    // OpenCode accepts `[name, options]` in `plugins`. The first element is the plugin spec. A tuple whose first
     // element is not a string cannot be read, so it is a plugin-config Fail.
     let root = tempfile::tempdir().unwrap();
     lock(
@@ -455,7 +455,7 @@ fn opencode_tuple_plugin_entries_are_read_by_their_first_element() {
 
 #[test]
 fn status_reads_a_git_plugin_spec_version_from_its_tag() {
-    // R8-1: a git spec `superpowers@git+https://...#v7.0.2` is at version 7.0.2, so status says "as locked" and
+    // A git spec `superpowers@git+https://...#v7.0.2` is at version 7.0.2, so status says "as locked" and
     // prints no drift.
     let root = tempfile::tempdir().unwrap();
     lock(
@@ -483,7 +483,7 @@ fn status_reads_a_git_plugin_spec_version_from_its_tag() {
 #[test]
 fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
     // The probe's program lives only in relaxkit's bin directory, which the stub PATH does not hold. The engine finds it
-    // there, so doctor must run it by its full path rather than by its bare name (ruling Important 6).
+    // there, so doctor must run it by its full path rather than by its bare name.
     let root = tempfile::tempdir().unwrap();
     let program = ctx(root.path(), FakeRunner::new(), FakeNet::new())
         .dirs
@@ -513,7 +513,7 @@ fn doctor_runs_a_probe_from_the_pack_bin_by_its_full_path() {
 
 #[test]
 fn doctor_fails_when_the_sandbox_selftest_cannot_fetch_its_runtime() {
-    // A fetch or start failure is not a refusal: the self-test did not run, so the check fails (ruling Important 4).
+    // A fetch or start failure is not a refusal: the self-test did not run, so the check fails.
     let root = tempfile::tempdir().unwrap();
     let npx = npx_bin(&ctx(root.path(), FakeRunner::new(), FakeNet::new()));
     let runner = FakeRunner::new().reply(
@@ -558,7 +558,7 @@ fn doctor_runs_the_playwright_probe_with_the_packs_npx() {
 
 #[test]
 fn doctor_fails_when_a_locked_mcp_entry_is_missing_from_claude() {
-    // R2-1 (OWNER-3 (c)): the locked serena entry must exist in Claude's user-scope state file. The command is present,
+    // The locked serena entry must exist in Claude's user-scope state file. The command is present,
     // so only the entry is missing; setup re-adds it.
     let root = tempfile::tempdir().unwrap();
     lock(root.path(), &[("serena", "2.1.0", "uv", &["claude"])]);
@@ -635,7 +635,7 @@ fn doctor_fails_when_a_locked_mcp_entry_is_missing_from_opencode() {
     );
 }
 
-/// A runner that answers a probe only when the child's PATH holds `dir` (ruling R2-4).
+/// A runner that answers a probe only when the child's PATH holds `dir`.
 struct NeedsDirOnPath {
     dir: PathBuf,
     answer: &'static str,
@@ -663,7 +663,7 @@ impl Runner for NeedsDirOnPath {
 
 #[test]
 fn doctor_probes_run_on_the_engine_search_path() {
-    // R2-4: a probe child gets the engine's search path, which starts with the Node link bin, so a fresh machine's
+    // A probe child gets the engine's search path, which starts with the Node link bin, so a fresh machine's
     // probe finds its own Node. The program is in the pack bin, which the stub PATH does not hold.
     let root = tempfile::tempdir().unwrap();
     let base = ctx(root.path(), FakeRunner::new(), FakeNet::new());
@@ -690,7 +690,7 @@ fn doctor_probes_run_on_the_engine_search_path() {
 
 #[test]
 fn doctor_dry_run_warns_that_the_selftests_did_not_run() {
-    // R2-5: a dry run does not run the sandbox self-test, so each self-test id is a warn, never an ok.
+    // A dry run does not run the sandbox self-test, so each self-test id is a warn, never an ok.
     let root = tempfile::tempdir().unwrap();
     let mut context = ctx(root.path(), FakeRunner::new(), FakeNet::new());
     context.dry_run = true;
@@ -710,7 +710,7 @@ fn doctor_dry_run_warns_that_the_selftests_did_not_run() {
 
 #[test]
 fn selftest_runs_its_runtime_on_the_engine_search_path() {
-    // R3-1: the self-test's npx child gets the engine's search path, so the pinned runtime is found through the Node
+    // The self-test's npx child gets the engine's search path, so the pinned runtime is found through the Node
     // link on a fresh machine. The runner refuses the runtime unless the child's PATH holds the link.
     let root = tempfile::tempdir().unwrap();
     let node_link = ctx(root.path(), FakeRunner::new(), FakeNet::new())
@@ -892,7 +892,7 @@ fn doctor_fails_on_a_settings_file_that_does_not_parse() {
     assert_eq!(fs::read_to_string(&settings).unwrap(), "{\"env\": {\n");
 }
 
-// ---- the OpenCode sandbox plugin (spec 10 item 25) ----------------------------------------------------------------
+// ---- the OpenCode sandbox plugin ----------------------------------------------------------------
 
 const RELAXKIT_OPENCODE_LISTED: &str = "{\"plugins\": [\"relaxkit-opencode@git+https://github.com/cpenaforte/relaxkit.git#v0.1.0::path:adapters/opencode-plugin\"]}\n";
 

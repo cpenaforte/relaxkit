@@ -24,7 +24,7 @@ pub struct LockedTool {
     pub version: String,
     pub route: String,
     pub hosts: Vec<String>,
-    /// The version each host is at, one entry per host, so a partial update keeps the other host's version (K73).
+    /// The version each host is at, one entry per host, so a partial update keeps the other host's version.
     /// A lock file written before this table existed has none: `version` then applies to every host.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub host_versions: BTreeMap<String, String>,
@@ -66,7 +66,7 @@ impl LockedTool {
     }
 
     /// The entry after `updated` hosts moved to `version` by `route`. Every other host keeps the version it had, so a
-    /// partial update never moves a host it did not touch (ruling K73). `version` is the version the move wrote, and
+    /// partial update never moves a host it did not touch. `version` is the version the move wrote, and
     /// `host_versions` records every host's own version, so no host's version is inferred from another's.
     pub fn moved(&self, updated: &[String], version: &str, route: &str) -> LockedTool {
         let mut hosts: BTreeSet<String> = self.hosts.iter().cloned().collect();

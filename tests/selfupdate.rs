@@ -1,4 +1,4 @@
-//! Self-update tests (Task 22, rulings K91 to K100).
+//! Self-update tests.
 //!
 //! The release signature is checked with a throwaway test key. Its public key, the fixture archive, the checksums file
 //! listing the archive under each release target name, and the minisign signature over the checksums are checked in
@@ -84,13 +84,13 @@ struct Recorder {
     calls: Arc<Mutex<Vec<Call>>>,
     /// The bytes of the program at the moment each command ran, so a test can see what was on disk then.
     seen: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
-    /// The exit code of `update --tools` (K102). Zero by default.
+    /// The exit code of `update --tools`. Zero by default.
     rerun_exit: i32,
-    /// Makes `update --tools` fail to start, which is a spawn error (K102).
+    /// Makes `update --tools` fail to start, which is a spawn error.
     rerun_spawn_error: bool,
-    /// The exit code of `brew upgrade relaxkit` (K103). Zero by default.
+    /// The exit code of `brew upgrade relaxkit`. Zero by default.
     brew_exit: i32,
-    /// What `<bin> --version` reports, in order, for the brew-managed link (K103). `0.1.0` once the queue is empty.
+    /// What `<bin> --version` reports, in order, for the brew-managed link. `0.1.0` once the queue is empty.
     versions: Arc<Mutex<VecDeque<String>>>,
 }
 
@@ -247,7 +247,7 @@ fn rejects_a_bad_signature() {
         .expect_err("a checksums file with a bad signature was accepted");
 
     assert!(format!("{err:#}").contains("does not verify"), "{err:#}");
-    // The order (K94): the archive is not requested until the checksums file has verified.
+    // The order: the archive is not requested until the checksums file has verified.
     let archive_url = format!("{}/{}", base_url(), asset());
     assert!(
         !requests.requested().contains(&archive_url),
@@ -339,7 +339,7 @@ fn homebrew_owned_binary_delegates_to_brew_upgrade() {
 const BREW_LINK: &str = "/opt/homebrew/bin/relaxkit";
 const CELLAR_EXE: &str = "/opt/homebrew/Cellar/relaxkit/0.1.0/bin/relaxkit";
 
-/// A runner whose link reports `before`, then `after`, around the brew upgrade (K103).
+/// A runner whose link reports `before`, then `after`, around the brew upgrade.
 fn brew_runner(before: &str, after: &str) -> Recorder {
     let runner = Recorder::default();
     runner
@@ -352,7 +352,7 @@ fn brew_runner(before: &str, after: &str) -> Recorder {
 
 #[test]
 fn brew_upgrade_is_followed_by_a_re_run_through_the_link_and_is_updated_when_the_version_moves() {
-    // K103 (F22-3): after `brew upgrade relaxkit`, the new binary runs `update --tools` through the brew link. The row
+    // After `brew upgrade relaxkit`, the new binary runs `update --tools` through the brew link. The row
     // says "updated" because the link now reports a different version.
     let root = temp();
     let runner = brew_runner(INSTALLED, VERSION);
@@ -422,7 +422,7 @@ fn a_failing_brew_upgrade_is_named_and_runs_no_re_run() {
 
 #[test]
 fn self_only_on_brew_runs_no_re_run() {
-    // K101 applies to brew too: `--self` upgrades through brew and runs no tool.
+    // The brew route is the same: `--self` upgrades through brew and runs no tool.
     let root = temp();
     let runner = brew_runner(INSTALLED, VERSION);
     let ctx = ctx_for(root.path(), &runner, FakeNet::new());
@@ -507,7 +507,7 @@ fn current_version_means_no_download() {
 
 #[test]
 fn the_placeholder_key_is_not_configured_and_nothing_is_fetched() {
-    // The placeholder text the repository shipped before the owner's key (R12). The embedded key is the owner's now.
+    // The placeholder text the repository shipped before the maintainer's key. The embedded key is the maintainer's now.
     let placeholder =
         "untrusted comment: relaxkit-placeholder: the release signing key is not configured\n";
     assert!(
@@ -632,7 +632,7 @@ fn a_link_at_the_temp_name_of_the_previous_binary_is_refused_too() {
 
 #[test]
 fn an_equal_version_names_the_newest_in_its_row_and_downloads_nothing() {
-    // K98 (F22-4): the current row names the newest version it compared against, and only the tag is requested.
+    // The current row names the newest version it compared against, and only the tag is requested.
     let root = temp();
     let exe = installed(&root.path().join("usr/bin"), "old binary\n");
     let runner = Recorder::default();
@@ -650,7 +650,7 @@ fn an_equal_version_names_the_newest_in_its_row_and_downloads_nothing() {
 
 #[test]
 fn self_only_swaps_but_runs_no_tool_phase() {
-    // K101 (F22-2): `update --self` updates relaxkit itself only. After a successful swap, the new binary is not run
+    // `update --self` updates relaxkit itself only. After a successful swap, the new binary is not run
     // and no tool is touched.
     let root = temp();
     let exe = installed(&root.path().join("usr/bin"), "old binary\n");
@@ -676,7 +676,7 @@ fn self_only_swaps_but_runs_no_tool_phase() {
 
 #[test]
 fn a_child_that_exits_non_zero_is_a_result_and_the_tool_phase_is_not_repeated() {
-    // K102 (F22-1): the new binary ran its tool phase and a tool failed. That is a result, named, with exactly one
+    // The new binary ran its tool phase and a tool failed. That is a result, named, with exactly one
     // `update --tools` call and no second tool pass from this process.
     let root = temp();
     let exe = installed(&root.path().join("usr/bin"), "old binary\n");
@@ -706,7 +706,7 @@ fn a_child_that_exits_non_zero_is_a_result_and_the_tool_phase_is_not_repeated() 
 
 #[test]
 fn a_child_that_cannot_start_is_an_error_so_the_tool_phase_runs_here() {
-    // K102 (F22-1): only a spawn error is an Err, which lets this process run the tool phase (K92).
+    // Only a spawn error is an Err, which lets this process run the tool phase.
     let root = temp();
     let exe = installed(&root.path().join("usr/bin"), "old binary\n");
     let runner = Recorder {

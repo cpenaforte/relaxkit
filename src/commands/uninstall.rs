@@ -1,4 +1,4 @@
-//! `relaxkit uninstall` (spec 6, ruling K106). Removes only what relaxkit wrote: the pack's MCP entries, the config
+//! `relaxkit uninstall`. Removes only what relaxkit wrote: the pack's MCP entries, the config
 //! keys the pack wrote, the roles blocks, and the pack's binary copies under `dirs.bin`. Every
 //! other entry stays, including the user's own agents and the plugins the user installed. Every removal is journaled,
 //! so `relaxkit undo` reverts it. The binary itself, the Node link and the pack's plugins are left in place, and the
@@ -102,7 +102,7 @@ fn remove_claude(
     let path = host.config_file(ctx);
     let old = read_or_empty(&path)?;
     let rtk_command = format!("\"{}\" hook claude", ctx.dirs.bin.join("rtk").display());
-    // K117: the settings keys are edited only when an earlier run journaled this file, so there is something to revert.
+    // The settings keys are edited only when an earlier run journaled this file, so there is something to revert.
     let settings_done = match original_text(ctx, run, &path)? {
         OriginalText::NoEarlierRecord => false,
         OriginalText::Created => {
@@ -121,7 +121,7 @@ fn remove_claude(
     let old = read_or_empty(&instructions)?;
     let new = block_remove(&old, claude::ROLES_BLOCK);
     // relaxkit created the file and nothing else is in it: back it up, so undo restores it, then remove it. A file
-    // that is already gone has nothing to back up. A symlink is never removed: that would drop the owner's link.
+    // that is already gone has nothing to back up. A symlink is never removed: that would drop the user's link.
     let created_and_empty = instructions.exists()
         && !instructions.is_symlink()
         && new.trim().is_empty()
@@ -168,15 +168,15 @@ fn remove_claude(
 }
 
 /// The settings text with the keys relaxkit wrote taken out. `original` is the file before relaxkit first wrote it:
-/// a key or list entry that was there stays (F23-3), and a scalar key goes only while it holds the value relaxkit
-/// wrote (F23-8).
+/// a key or list entry that was there stays, and a scalar key goes only while it holds the value relaxkit
+/// wrote.
 fn strip_claude_keys(
     old: &str,
     original: Option<&str>,
     config: &KitConfig,
     rtk_command: &str,
 ) -> Result<String> {
-    // F23-8: a scalar key goes only while it still holds the value setup or privacy wrote.
+    // A scalar key goes only while it still holds the value setup or privacy wrote.
     let mut text = jsonc_restore_if(
         old,
         original,
@@ -205,7 +205,7 @@ fn strip_claude_keys(
     let excluded: Vec<&str> = excluded.iter().map(String::as_str).collect();
     let excluded = not_in_original(original, &["sandbox", "excludedCommands"], &excluded)?;
     text = remove_strings(&text, &["sandbox", "excludedCommands"], &excluded)?;
-    // K118: the window goes only while it holds the value compact-at wrote.
+    // The window goes only while it holds the value compact-at wrote.
     if let Some(compact_at) = config.compact_at {
         for model in claude::claude_models(&config.for_host(HostKind::Claude)) {
             text = jsonc_restore_if(
@@ -235,7 +235,7 @@ fn remove_opencode(
         &config.for_host(HostKind::Opencode),
         &available,
     )?;
-    // No compaction buffer is removed: relaxkit writes none on OpenCode (K114), so one present is the user's.
+    // No compaction buffer is removed: relaxkit writes none on OpenCode, so one present is the user's.
     lines.push(removal(
         ctx,
         "removed the OpenCode agents and routing block relaxkit wrote",
@@ -305,14 +305,14 @@ fn remove_bin_copies(ctx: &Ctx, run: &RunId, lines: &mut Vec<String>) -> Result<
     remove_bin_copies_except(ctx, run, running.as_deref(), lines)
 }
 
-/// Removes the pack's copies in `dirs.bin`, except the running binary `running` (K119).
+/// Removes the pack's copies in `dirs.bin`, except the running binary `running`.
 fn remove_bin_copies_except(
     ctx: &Ctx,
     run: &RunId,
     running: Option<&Path>,
     lines: &mut Vec<String>,
 ) -> Result<()> {
-    // F23-17: without the running path the binary cannot be told apart from a copy, so nothing is removed.
+    // Without the running path the binary cannot be told apart from a copy, so nothing is removed.
     let Some(running) = running else {
         lines.push(outcome(
             ctx.out.palette(),
@@ -326,7 +326,7 @@ fn remove_bin_copies_except(
     };
     for entry in entries {
         let path = entry?.path();
-        // K119: an entry that resolves to the running binary is never removed.
+        // An entry that resolves to the running binary is never removed.
         if fs::canonicalize(&path).is_ok_and(|target| target == running) {
             continue;
         }
@@ -352,7 +352,7 @@ fn remove_bin_copies_except(
 }
 
 /// Whether uninstall removes the lock: it exists and is not a link. A link is never removed, since that would delete
-/// the owner's file while undo restores only the bytes (as for CLAUDE.md, Task 8).
+/// the user's file while undo restores only the bytes.
 fn lock_is_removed(ctx: &Ctx) -> bool {
     let path = ctx.dirs.config.join("lock.toml");
     path.exists() && !path.is_symlink()
@@ -406,7 +406,7 @@ fn removal(ctx: &Ctx, done: &str, planned: &str) -> String {
 }
 
 /// What stays: relaxkit's own binary, its config and journal, the Node link, the pack's plugins, and any
-/// `DISABLE_TELEMETRY` the owner opted into. The lock is read here for the tool lines and removed after this list.
+/// `DISABLE_TELEMETRY` the user opted into. The lock is read here for the tool lines and removed after this list.
 fn leftovers(ctx: &Ctx, lines: &mut Vec<String>) -> Result<()> {
     let palette = ctx.out.palette();
     if let Ok(exe) = std::env::current_exe() {
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn a_hand_changed_sandbox_value_survives_uninstall() {
-        // F23-8: a key is removed only while it still holds the value setup wrote, so a value the owner changed stays.
+        // A key is removed only while it still holds the value setup wrote, so a value the user changed stays.
         let root = tempfile::tempdir().unwrap();
         let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
         let host = ClaudeHost::new(
@@ -683,7 +683,7 @@ mod tests {
         )
         .unwrap();
         safe_write(&ctx, &RunId::new(), &settings, &pack).unwrap();
-        // The owner changes one setup key by hand after setup.
+        // The user changes one setup key by hand after setup.
         let changed = jsonc_set(
             &fs::read_to_string(&settings).unwrap(),
             &["sandbox", "autoAllowBashIfSandboxed"],
@@ -706,7 +706,7 @@ mod tests {
         assert_eq!(
             get(&text, &["sandbox", "autoAllowBashIfSandboxed"]),
             Some(json!(false)),
-            "a value the owner changed stays: {text}"
+            "a value the user changed stays: {text}"
         );
         assert_eq!(get(&text, &["sandbox", "enabled"]), None, "{text}");
         assert_eq!(
@@ -728,7 +728,7 @@ mod tests {
 
     #[test]
     fn settings_keys_without_an_earlier_journal_record_are_left_alone() {
-        // K117 (c): nothing journaled by an earlier run is there to revert, so the settings keys are not touched.
+        // Nothing journaled by an earlier run is there to revert, so the settings keys are not touched.
         let root = tempfile::tempdir().unwrap();
         let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
         let host = ClaudeHost::new(
@@ -773,7 +773,7 @@ mod tests {
 
     #[test]
     fn the_running_binary_is_kept_even_inside_the_bin_directory() {
-        // F23-14 / K119: uninstall never removes the binary that runs it, even when it sits in dirs.bin.
+        // Uninstall never removes the binary that runs it, even when it sits in dirs.bin.
         let root = tempfile::tempdir().unwrap();
         let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
         fs::create_dir_all(&ctx.dirs.bin).unwrap();
@@ -794,7 +794,7 @@ mod tests {
 
     #[test]
     fn without_the_running_path_no_bin_copy_is_removed() {
-        // F23-17: when the running binary cannot be identified, nothing in dirs.bin is removed (fail closed).
+        // When the running binary cannot be identified, nothing in dirs.bin is removed (fail closed).
         let root = tempfile::tempdir().unwrap();
         let ctx = Ctx::for_test(root.path(), FakeRunner::new(), FakeNet::new());
         fs::create_dir_all(&ctx.dirs.bin).unwrap();

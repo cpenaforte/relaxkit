@@ -1,4 +1,4 @@
-//! `relaxkit privacy [--claude-code]` (spec 6.3). Without the flag, the telemetry switches of the pack's own tools
+//! `relaxkit privacy [--claude-code]`. Without the flag, the telemetry switches of the pack's own tools
 //! are turned off with each tool's own command (rtk, caveman) and the superpowers switch is set in Claude Code's
 //! settings. `--claude-code` also turns off Claude Code's own telemetry, after it prints what that switch costs.
 
@@ -27,7 +27,7 @@ pub fn run(ctx: &Ctx, claude_code: bool) -> Result<()> {
         {
             claude::apply_privacy_env(ctx, run, host.as_ref())?;
             if claude_code {
-                // The warning is shown before the switch is written, as the spec asks (6.3).
+                // The warning is shown before the switch is written.
                 ctx.out.warn(claude::CLAUDE_TELEMETRY_WARNING);
                 claude::disable_claude_code_telemetry(ctx, run, host.as_ref())?;
                 done(

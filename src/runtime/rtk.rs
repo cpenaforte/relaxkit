@@ -1,8 +1,8 @@
 //! rtk: adopted when it is on the PATH. Otherwise the latest release is installed into the pack bin directory. The
 //! release archive for this platform is downloaded, its SHA-256 is checked against the same release's
 //! `checksums.txt`, and only then is it unpacked. rtk's install script is never run, and Homebrew is never used.
-//! Documented limit (spec section 11): rtk's archives carry no attestation and no signature, so a compromised
-//! release would pass this check. The owner accepted that for rtk alone, because rtk is always the latest release.
+//! Documented limit: rtk's archives carry no attestation and no signature, so a compromised
+//! release would pass this check. The maintainer accepted that for rtk alone, because rtk is always the latest release.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,8 +26,8 @@ pub fn ensure_rtk(ctx: &Ctx, run: &RunId) -> Result<PathBuf> {
     ensure_rtk_for(ctx, run, current_os()?, current_arch()?)
 }
 
-/// The repair install (ruling R2-2): installs the latest release into the pack bin even when rtk is already on the
-/// PATH, because rtk is always the latest release (owner's exception). Returns the release tag installed.
+/// The repair install: installs the latest release into the pack bin even when rtk is already on the
+/// PATH, because rtk is always the latest release (a deliberate exception). Returns the release tag installed.
 pub fn reinstall_latest(ctx: &Ctx, run: &RunId) -> Result<String> {
     reinstall_latest_for(ctx, run, current_os()?, current_arch()?)
 }
@@ -36,7 +36,7 @@ fn reinstall_latest_for(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<St
     install_latest(ctx, run, os, arch)
 }
 
-/// The rtk every caller runs: the pack copy in relaxkit's bin directory first, then the PATH (ruling R3-2). A broken
+/// The rtk every caller runs: the pack copy in relaxkit's bin directory first, then the PATH. A broken
 /// rtk elsewhere on the PATH does not decide which one is used.
 pub fn resolve(ctx: &Ctx) -> Option<PathBuf> {
     let pack = ctx.dirs.bin.join("rtk");
@@ -116,7 +116,7 @@ fn install_latest(ctx: &Ctx, run: &RunId, os: Os, arch: Arch) -> Result<String> 
         .with_context(|| format!("cannot create {}", ctx.dirs.bin.display()))?;
     let bin = ctx.dirs.bin.join("rtk");
     // A link at the pack copy (an adopted Homebrew rtk, or a dangling one) is removed first, so the release is written
-    // as a regular file and never through the link into another install (ruling R4-1).
+    // as a regular file and never through the link into another install.
     if bin
         .symlink_metadata()
         .is_ok_and(|meta| meta.file_type().is_symlink())
@@ -167,7 +167,7 @@ fn find_binary(extract: &Path) -> Result<Option<PathBuf>> {
 }
 
 /// The release archive for this platform, as the release publishes it. Linux uses the static musl build on both
-/// architectures. The names are checked against the real release at Task 28.
+/// architectures. The names are checked against the real release.
 fn asset_name(os: Os, arch: Arch) -> &'static str {
     match (os, arch) {
         (Os::MacOs, Arch::Aarch64) => "rtk-aarch64-apple-darwin.tar.gz",
@@ -178,7 +178,7 @@ fn asset_name(os: Os, arch: Arch) -> &'static str {
 }
 
 /// Sets rtk's `[display] pro_hint = false`, which hides the one-line RTK Pro notice that `rtk gain` prints about
-/// once a day (spec section 6, item 20: a proposal the owner may veto). Comments and other keys are kept.
+/// once a day. Comments and other keys are kept.
 pub fn apply_defaults(ctx: &Ctx, run: &RunId) -> Result<()> {
     let path = rtk_config_file(&ctx.dirs.home)?;
     let old = match fs::read_to_string(&path) {
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn a_repair_installs_the_latest_release_even_when_rtk_is_on_the_path() {
-        // R2-2: rtk on the PATH is not enough for a repair; the latest release is installed and its tag returned.
+        // Rtk on the PATH is not enough for a repair; the latest release is installed and its tag returned.
         let root = tempfile::tempdir().unwrap();
         let (bytes, checksums) = release(root.path(), ARCHIVE, "rtk", None);
         let runner = Recorder::new(
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn a_repair_replaces_a_pack_link_without_writing_through_it() {
-        // R4-1: when the pack copy is a link to a Homebrew file, the repair removes the link and writes the release as a
+        // When the pack copy is a link to a Homebrew file, the repair removes the link and writes the release as a
         // regular file, so the Homebrew file keeps its bytes.
         let root = tempfile::tempdir().unwrap();
         let (bytes, checksums) = release(root.path(), ARCHIVE, "rtk", None);
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn a_repair_replaces_a_dangling_pack_link() {
-        // R4-1: a dangling link at the pack copy is removed too, so the repair writes a regular file.
+        // A dangling link at the pack copy is removed too, so the repair writes a regular file.
         let root = tempfile::tempdir().unwrap();
         let (bytes, checksums) = release(root.path(), ARCHIVE, "rtk", None);
         let pack = bin_rtk(root.path());
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn a_repair_with_a_broken_brew_rtk_records_the_pack_copy_as_script() {
-        // R3-2: a broken rtk on the PATH (Homebrew) does not win over the pack copy. The repair installs the latest
+        // A broken rtk on the PATH (Homebrew) does not win over the pack copy. The repair installs the latest
         // release, the re-check passes, the detected install is the pack copy, and the lock records route script
         // with the release tag.
         use crate::commands::doctor;

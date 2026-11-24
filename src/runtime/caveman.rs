@@ -1,4 +1,4 @@
-//! caveman's OpenCode source (owner decision, 2026-11-22; spec section 11, exception to O9). The repository is taken at
+//! caveman's OpenCode source. The repository is taken at
 //! its latest GitHub tag over HTTPS. Its npm package has no plugin files and its releases have no checksum, so the
 //! archive is checked entry by entry instead: no absolute names, no `..`, and no symbolic or hard links at all. A hard
 //! link is recognised by its `link to` marker in the listing, whatever its mode bits. Documented limit: no digest or

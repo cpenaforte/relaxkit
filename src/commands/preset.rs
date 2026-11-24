@@ -1,5 +1,5 @@
-//! `relaxkit preset lean|balanced|careful` (spec 6.2). The preset sets its tiers and its voice. Tiers set by hand are
-//! cleared so the preset's tiers apply, and pins stay (spec 6.1, rule 5). A preset is global; `--project` does not
+//! `relaxkit preset lean|balanced|careful`. The preset sets its tiers and its voice. Tiers set by hand are
+//! cleared so the preset's tiers apply, and pins stay. A preset is global; `--project` does not
 //! change it.
 
 use anyhow::Result;

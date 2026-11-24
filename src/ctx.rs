@@ -100,11 +100,11 @@ pub struct Ctx {
     pub out: Reporter,
     pub dry_run: bool,
     pub project: Option<PathBuf>,
-    /// Lets a step run its `sudo` plan (ruling K47). Without it, the plan is only printed.
+    /// Lets a step run its `sudo` plan. Without it, the plan is only printed.
     pub allow_sudo: bool,
     /// The run every journaled edit of this process belongs to, so `undo` reverts the whole process.
     pub run: RunId,
-    /// The run group this process belongs to when a parent process started it (K105). `None` for a top-level run.
+    /// The run group this process belongs to when a parent process started it. `None` for a top-level run.
     pub group: Option<RunId>,
 }
 
@@ -125,7 +125,7 @@ impl Ctx {
     }
 
     /// A context for the real machine: discovered directories, real processes and HTTP. The run group comes from
-    /// the environment when a parent process started this one (K105).
+    /// the environment when a parent process started this one.
     pub fn system(
         dry_run: bool,
         project: Option<PathBuf>,
@@ -145,7 +145,7 @@ impl Ctx {
     }
 }
 
-/// The environment variable a self step sets for the tool run it re-executes (K105).
+/// The environment variable a self step sets for the tool run it re-executes.
 pub const RUN_GROUP_ENV: &str = "RELAXKIT_RUN_GROUP";
 
 /// The run group named by the environment: `None` when unset or empty, else the id it holds. A value that is not a

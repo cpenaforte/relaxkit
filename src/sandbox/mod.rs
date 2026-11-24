@@ -1,4 +1,4 @@
-//! Sandbox configuration for Claude Code (spec section 7): settings, the self-test and the Linux prerequisites.
+//! Sandbox configuration for Claude Code: settings, the self-test and the Linux prerequisites.
 
 pub mod claude;
 pub mod health;
@@ -12,7 +12,7 @@ use crate::edit::{jsonc_append, jsonc_get, jsonc_set};
 use crate::exec::Cmd;
 use crate::platform::{Os, PrereqPlan, current_os, prerequisite_plan};
 
-/// The domains both hosts' sandboxes allow by default (spec 7). The user's own domains are kept beside these.
+/// The domains both hosts' sandboxes allow by default. The user's own domains are kept beside these.
 pub const ALLOWED_DOMAINS: [&str; 7] = [
     "github.com",
     "api.github.com",
@@ -23,16 +23,16 @@ pub const ALLOWED_DOMAINS: [&str; 7] = [
     "static.crates.io",
 ];
 
-/// How `gh` reaches GitHub from the Claude Code sandbox (spec 7, owner decision O5, spike B1).
+/// How `gh` reaches GitHub from the Claude Code sandbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GhPath {
-    /// `gh` runs inside the sandbox. On macOS that needs `enableWeakerNetworkIsolation` (spike B1).
+    /// `gh` runs inside the sandbox. On macOS that needs `enableWeakerNetworkIsolation`.
     Inside,
-    /// `gh` runs outside the sandbox, allowed through `sandbox.excludedCommands` (owner decision O5).
+    /// `gh` runs outside the sandbox, allowed through `sandbox.excludedCommands`.
     ExcludedFallback,
 }
 
-/// The Linux prerequisites of the sandbox, as a plan only (spec 7, ruling K36). Nothing is run here.
+/// The Linux prerequisites of the sandbox, as a plan only. Nothing is run here.
 pub fn linux_prerequisites(_ctx: &Ctx) -> Result<PrereqPlan> {
     let os = current_os()?;
     let release = match os {
@@ -43,7 +43,7 @@ pub fn linux_prerequisites(_ctx: &Ctx) -> Result<PrereqPlan> {
 }
 
 /// Runs the plan's one sudo invocation. It runs only when the calling flow passes `confirmed`, which it does after
-/// the user's explicit yes (spec 4 and 7). A dry run prints the invocation and runs nothing.
+/// the user's explicit yes. A dry run prints the invocation and runs nothing.
 pub fn run_prerequisites(ctx: &Ctx, plan: &PrereqPlan, confirmed: bool) -> Result<()> {
     let Some((program, args)) = plan.sudo.split_first() else {
         return Ok(());
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn union_appends_to_a_multi_line_array_and_keeps_its_comments_and_layout() {
-        // Spec 5: an edit that adds one item must not re-render the array around it.
+        // An edit that adds one item must not re-render the array around it.
         let text = "{\n  // keep me\n  \"network\": {\n    \"allowedDomains\": [\n      \"a.example\", // first\n      \"b.example\"\n    ]\n  }\n}\n";
 
         let out = union_strings(text, &["network", "allowedDomains"], &["c.example"]).unwrap();

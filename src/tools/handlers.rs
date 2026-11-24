@@ -79,7 +79,7 @@ fn caveman_cli(
     engine.run_checked(host, &cmd)
 }
 
-/// Fetches caveman's repository at its latest tag (owner decision, spec section 11), copies its OpenCode files, and
+/// Fetches caveman's repository at its latest tag, copies its OpenCode files, and
 /// writes the V2 `plugins` entry. It never runs caveman's `install.js`, which writes the V1 key. A dry run fetches nothing.
 fn caveman_opencode(
     engine: &Engine<'_>,
@@ -231,7 +231,7 @@ fn catalog_lists(config_dir: &Path, marketplace: &str, plugin: &str) -> Result<b
         }))
 }
 
-/// Writes rtk's `PreToolUse` hook into Claude Code's settings (spike A C6). `rtk init -g` does not write it when it
+/// Writes rtk's `PreToolUse` hook into Claude Code's settings. `rtk init -g` does not write it when it
 /// runs without a terminal, so relaxkit does, once, and keeps the other hooks.
 fn rtk_claude_hook(
     engine: &Engine<'_>,

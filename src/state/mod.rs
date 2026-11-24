@@ -19,13 +19,12 @@ use anyhow::{Context, Result, anyhow};
 use crate::ctx::Ctx;
 use crate::fsx::write_atomic;
 
-/// The run group a record belongs to: the record's group, or its own run for a record without one (K105).
+/// The run group a record belongs to: the record's group, or its own run for a record without one.
 pub fn group_of(record: &EditRecord) -> &RunId {
     record.group.as_ref().unwrap_or(&record.run)
 }
 
-/// The group a change made under `run` belongs to. A child process started by a self step has the parent's group
-/// (K105); any other process is its own group.
+/// The group a change made under `run` belongs to. A child process started by a self step has the parent's group. Any other process is its own group.
 pub fn group_for(ctx: &Ctx, run: &RunId) -> RunId {
     ctx.group.clone().unwrap_or_else(|| run.clone())
 }
@@ -196,7 +195,7 @@ fn resolve(path: &Path) -> Result<PathBuf> {
     }
 }
 
-/// What relaxkit has journaled for a file from an earlier run, which decides what uninstall may revert (K117).
+/// What relaxkit has journaled for a file from an earlier run, which decides what uninstall may revert.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OriginalText {
     /// relaxkit created the file, so it held no user text.
@@ -240,7 +239,7 @@ fn backup_path(ctx: &Ctx, run: &RunId, target: &Path) -> PathBuf {
 }
 
 /// Reverts a run group (the newest one when `run` is `None`), newest change first. Returns the touched paths.
-/// Every record of the group is reverted, including the records of the child runs that belong to it (K105).
+/// Every record of the group is reverted, including the records of the child runs that belong to it.
 /// The run lock is held for the whole undo, so no command that takes the run lock can write files
 /// while they are reverted.
 /// Inside it, the journal lock is held from the read to the rewrite, so an append from another
@@ -264,7 +263,7 @@ fn revert(ctx: &Ctx, run: Option<&RunId>) -> Result<Vec<PathBuf>> {
             None => return Ok(Vec::new()),
         },
     };
-    // K117: a later group's change to a file this group touched must be undone first, or its base would be lost.
+    // A later group's change to a file this group touched must be undone first, or its base would be lost.
     if let Some(file) = newer_change_to_touched_file(&records, &target) {
         return Err(anyhow!(
             "run {target} is not the newest change to {}; undo the later group first",

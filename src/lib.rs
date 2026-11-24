@@ -76,12 +76,12 @@ pub fn run(cli: Cli) -> Result<i32> {
             tool,
         } => {
             let mut ctx = Ctx::system(cli.dry_run, None, false)?;
-            // The self step runs first for a plain update and for `--self` (K92). Its text is held apart, so that
+            // The self step runs first for a plain update and for `--self`. Its text is held apart, so that
             // `--json` keeps stdout a JSON document.
             let self_step = self_only || (tool.is_none() && !tools_only);
             let mut self_lines = Vec::new();
             let mut self_failed = false;
-            // True when a swapped binary already ran the tool phase (K96), so this process must not run it again.
+            // True when a swapped binary already ran the tool phase, so this process must not run it again.
             let mut tools_done_by_new_binary = false;
             if self_step {
                 let spinner = (!cli.json).then(|| {
@@ -108,8 +108,8 @@ pub fn run(cli: Cli) -> Result<i32> {
                             mark,
                             &selfupdate::row(&result),
                         ));
-                        // A swapped binary that ran its tool phase is done here (K96). A failed tool in that phase
-                        // is named and the exit is 1 (K102).
+                        // A swapped binary that ran its tool phase is done here. A failed tool in that phase
+                        // is named and the exit is 1.
                         match result {
                             selfupdate::SelfUpdate::Updated { .. } => {
                                 tools_done_by_new_binary = true;
@@ -118,7 +118,7 @@ pub fn run(cli: Cli) -> Result<i32> {
                                 tools_done_by_new_binary = true;
                                 self_failed = true;
                             }
-                            // Brew's new binary ran the tool phase through the link (K103).
+                            // Brew's new binary ran the tool phase through the link.
                             selfupdate::SelfUpdate::DelegatedToBrew { .. } => {
                                 tools_done_by_new_binary = true;
                             }
@@ -144,14 +144,14 @@ pub fn run(cli: Cli) -> Result<i32> {
                 }
             }
             if self_only {
-                // K101: `--self` runs no tool phase, and the report says so.
+                // `--self` runs no tool phase, and the report says so.
                 ctx.out.plan("tools: not run (--self)");
                 return Ok(if self_failed { 1 } else { 0 });
             }
             if tools_done_by_new_binary {
                 return Ok(if self_failed { 1 } else { 0 });
             }
-            // A failed self step does not stop the tool phase, which runs with the current binary (K92).
+            // A failed self step does not stop the tool phase, which runs with the current binary.
             let args = commands::update::UpdateArgs { check, tool };
             let spinner = (!cli.json).then(|| {
                 let label = if check {
@@ -244,7 +244,7 @@ pub fn run(cli: Cli) -> Result<i32> {
     }
 }
 
-/// `preset`, `privacy` and `uninstall` are global by spec (K113, K115), so `--project` is refused rather than ignored.
+/// `preset`, `privacy` and `uninstall` are global by design, so `--project` is refused rather than ignored.
 fn refuse_project(cli: &Cli, command: &str) -> Result<()> {
     if cli.project {
         anyhow::bail!("--project does not apply to {command}; it is global");

@@ -1,7 +1,7 @@
-//! Release pipeline tests (Task 27 part A): the Homebrew formula renderer, its template and the release workflow.
+//! Release pipeline tests: the Homebrew formula renderer, its template and the release workflow.
 //!
 //! Nothing here reaches the network or runs a release. The renderer runs on fake checksums, and the workflow is
-//! parsed as YAML, never run. The repository name is the constant `cpenaforte/relaxkit` (ruling P-2).
+//! parsed as YAML, never run. The repository name is the constant `cpenaforte/relaxkit`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
