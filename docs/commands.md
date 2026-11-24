@@ -28,7 +28,7 @@ The synopses leave out the global flags, which apply to every command (see [Glob
 | [privacy](#relaxkit-privacy) | Show or change telemetry |
 | [login](#relaxkit-login) | Log in to a service |
 | [undo](#relaxkit-undo) | Revert the last change, or a named run group |
-| [uninstall](#relaxkit-uninstall) | Remove relaxkit and what it installed |
+| [uninstall](#relaxkit-uninstall) | Remove the pack's MCP entries, config keys and binary copies |
 | [usage](#relaxkit-usage) | Run the usage tool |
 
 ## Global flags
@@ -200,7 +200,7 @@ relaxkit undo --dry-run
 relaxkit uninstall
 ```
 
-Uninstall removes relaxkit and what it installed. It keeps the relaxkit binary, its config and journal (so `relaxkit undo` still works), and the Node link with the Node it points at. The dry run lists each of these, so you can see what stays. Uninstall refuses `--project`.
+Uninstall removes the MCP entries, config keys and roles blocks the pack wrote, and the pack's binary copies under `dirs.bin`. It keeps the relaxkit binary, its config and journal (so `relaxkit undo` still works), the Node link with the Node it points at, and the pack's plugins. The dry run lists each of these, so you can see what stays. Uninstall refuses `--project`.
 
 ```sh
 relaxkit uninstall --dry-run
