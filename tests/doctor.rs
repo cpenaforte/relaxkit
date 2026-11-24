@@ -710,7 +710,7 @@ fn doctor_dry_run_warns_that_the_selftests_did_not_run() {
 
 #[test]
 fn selftest_runs_its_runtime_on_the_engine_search_path() {
-    // The self-test's npx child gets the engine's search path, so the pinned runtime is found through the Node
+    // The self-test's npx child gets the engine's search path, so the runtime is found through the Node
     // link on a fresh machine. The runner refuses the runtime unless the child's PATH holds the link.
     let root = tempfile::tempdir().unwrap();
     let node_link = ctx(root.path(), FakeRunner::new(), FakeNet::new())
@@ -925,7 +925,19 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (year, month, day)
 }
 
-/// The network the plugin check reads. The bundled runtime 0.0.83 was released 200 days ago; when `newer` is given, 0.0.84
+/// Writes the plugin's OpenCode install under `root`, as OpenCode lays it out in its npm cache, with the sandbox runtime
+/// at `version`. The plugin check reads the installed runtime from here, never from the real home.
+fn write_installed_runtime(root: &Path, version: &str) {
+    let package = root.join(
+        ".cache/opencode/npm/git-relaxkit-test/1700000000000/node_modules/@anthropic-ai/sandbox-runtime/package.json",
+    );
+    write(
+        &package,
+        &format!(r#"{{"name": "@anthropic-ai/sandbox-runtime", "version": "{version}"}}"#),
+    );
+}
+
+/// The network the plugin check reads. The runtime 0.0.83 was released 200 days ago; when `newer` is given, 0.0.84
 /// was released that many days ago. relaxkit's newest release was `release_days` days ago.
 fn health_network(newer: Option<i64>, release_days: i64) -> FakeNet {
     let mut versions = vec![("0.0.83".to_string(), released_days_ago(200))];
@@ -978,6 +990,7 @@ fn doctor_shows_a_listed_plugin_with_its_runtime_lag_and_release_age_as_ok() {
         &config_file_in(&opencode_dir(root.path(), None)),
         RELAXKIT_OPENCODE_LISTED,
     );
+    write_installed_runtime(root.path(), "0.0.83");
     let context = ctx(root.path(), FakeRunner::new(), health_network(Some(10), 3));
 
     let checks = doctor::checks_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
@@ -987,7 +1000,7 @@ fn doctor_shows_a_listed_plugin_with_its_runtime_lag_and_release_age_as_ok() {
     assert!(
         check
             .message
-            .contains("sandbox-runtime 0.0.83 bundled, 1 release behind"),
+            .contains("sandbox-runtime 0.0.83 installed, 1 release behind"),
         "{check:?}"
     );
     assert!(
@@ -1025,6 +1038,7 @@ fn doctor_never_warns_on_a_runtime_lag_alone() {
         &config_file_in(&opencode_dir(root.path(), None)),
         RELAXKIT_OPENCODE_LISTED,
     );
+    write_installed_runtime(root.path(), "0.0.83");
     // The runtime has been out of date for 150 days, but relaxkit released three days ago.
     let context = ctx(root.path(), FakeRunner::new(), health_network(Some(150), 3));
 
@@ -1041,6 +1055,7 @@ fn doctor_treats_an_unreachable_registry_as_unknown_not_a_failure() {
         &config_file_in(&opencode_dir(root.path(), None)),
         RELAXKIT_OPENCODE_LISTED,
     );
+    write_installed_runtime(root.path(), "0.0.83");
     let context = ctx(root.path(), FakeRunner::new(), FakeNet::new());
 
     let checks = doctor::checks_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
@@ -1061,6 +1076,7 @@ fn status_shows_the_opencode_plugin_with_its_runtime_lag_and_release_age() {
         &config_file_in(&opencode_dir(root.path(), None)),
         RELAXKIT_OPENCODE_LISTED,
     );
+    write_installed_runtime(root.path(), "0.0.83");
     let context = ctx(root.path(), FakeRunner::new(), health_network(Some(10), 3));
 
     let report = status::report_for(&context, &[opencode(root.path(), OPENCODE_VERSION)]).unwrap();
@@ -1071,7 +1087,7 @@ fn status_shows_the_opencode_plugin_with_its_runtime_lag_and_release_age() {
         "{text}"
     );
     assert!(
-        text.contains("sandbox-runtime 0.0.83 bundled, 1 release behind"),
+        text.contains("sandbox-runtime 0.0.83 installed, 1 release behind"),
         "{text}"
     );
     assert!(

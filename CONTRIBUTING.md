@@ -69,7 +69,7 @@ Use `sh` fences for commands you can run. Use `text` fences for synopses and for
 
 This section is for maintainers. A release is a tag `vX.Y.Z` on `main`, where `X.Y.Z` is the version. Pushing the tag starts `.github/workflows/release.yml`.
 
-1. Set the new version in these files: `Cargo.toml`, the `relaxkit` entry in `Cargo.lock`, `adapters/claude-plugin/.claude-plugin/plugin.json`, `adapters/opencode-plugin/package.json`, and in `adapters/opencode-plugin/package-lock.json` both the top-level `version` and the `""` package entry.
+1. Set the new version in these files: `Cargo.toml`, the `relaxkit` entry in `Cargo.lock`, `adapters/claude-plugin/.claude-plugin/plugin.json`, `adapters/opencode-plugin/package.json`.
 2. Find any other references to the old version with `git grep -nF "<current version>" -- . ':!Cargo.lock' ':!*package-lock.json'`, where `<current version>` is the old version. At 0.1.3 the search also finds the user-agent assertion in `src/net.rs`. The user agent is built from the crate version (`src/net.rs`, the `user_agent` call), so update that assertion to the new version. Lines in `CHANGELOG.md` and in `docs/` that describe an earlier release stay as they are. Example output that shows the current version, such as `relaxkit 0.1.3` in `docs/getting-started.md`, changes to the new version.
 3. In `CHANGELOG.md`, move the entries under `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section directly below it, and leave `## [Unreleased]` empty. Then update the `[Unreleased]` and `[X.Y.Z]` compare links at the bottom of the file.
 4. Run the checks in [Checks](#checks), then commit the release on `main`.

@@ -14,7 +14,7 @@ relaxkit has no telemetry of its own. It has no background update checks: nothin
 | `update` | Looks up the newest version of each tool, then updates each tool that has a newer version. `update --check` and `update --dry-run` make the lookups and stop there. |
 | `update --self` | Downloads relaxkit's own release from GitHub, and checks it before it replaces the binary. |
 | `status` | Reads the sandbox runtime's npm entry and the date of relaxkit's latest release, but only when `relaxkit-opencode` is listed in OpenCode. |
-| `doctor` | Runs the sandbox self-test, which is not run in a dry run. The self-test runs the sandbox runtime, pinned at 0.0.83, through npx, which can fetch it from npm. It then makes two requests, to `api.github.com` (sent direct, bypassing the proxy) and to `example.com`, and the sandbox must refuse both. When `relaxkit-opencode` is listed in OpenCode, it also makes the two reads that `status` makes. |
+| `doctor` | Runs the sandbox self-test, which is not run in a dry run. The self-test runs the sandbox runtime, the newest version of the runtime in the range `>=0.0.83 <1.0.0`, through npx, which can fetch it from npm. It then makes two requests, to `api.github.com` (sent direct, bypassing the proxy) and to `example.com`, and the sandbox must refuse both. When `relaxkit-opencode` is listed in OpenCode, it also makes the two reads that `status` makes. |
 | `login github` | Runs `gh`, which talks to GitHub. If `gh` is missing, it is installed first. |
 | `usage` | Runs ccusage through npx and passes ccusage's `--offline` flag, unless you pass that flag yourself. npx can download ccusage from npm the first time it runs. |
 
