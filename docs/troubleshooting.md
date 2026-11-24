@@ -25,7 +25,7 @@ Claude Code: the sandbox did not refuse: <probe>: <detail>
 fix  if Claude Code is not logged in, run `claude` and then `/login`; then run `relaxkit setup` again. Until every probe passes, the sandbox is not enforcing
 ```
 
-The self-test runs Claude Code, and Claude Code does not answer until you have logged in. The fix line is the text from `src/commands/doctor.rs` line 248. The message reads `could not run` instead of `did not refuse` when a probe did not run at all (`src/commands/doctor.rs` lines 272 to 282).
+The self-test runs Claude Code, and Claude Code does not answer until you have logged in. The fix line is the text from `src/commands/doctor.rs` line 248. The message reads `could not run` instead of `did not refuse` when a probe did not run at all (`src/commands/doctor.rs` lines 272 to 282). The sandbox settings and what the probes check are in [sandbox.md](sandbox.md).
 
 Run `claude`, enter `/login` inside Claude Code, then run:
 
@@ -34,11 +34,11 @@ claude
 relaxkit setup
 ```
 
-To see the checks again without running setup, run `relaxkit doctor`.
+To see the checks again without running setup, run `relaxkit doctor`. The self-test makes network requests, which [privacy.md](privacy.md) lists.
 
 ## Linux packages are missing
 
-Setup prints this line when bubblewrap or socat is missing on Linux:
+Setup prints this line when bubblewrap or socat is missing on Linux. On Ubuntu 24.04 and later, it also prints this line when the AppArmor profile is missing, even if both packages are present (`src/commands/setup.rs` lines 315 to 319):
 
 ```text
 Linux packages are missing; run this once yourself, then run setup again: sudo sh -c '...'
@@ -51,7 +51,13 @@ the sandbox needs bwrap and socat on the PATH, and it is missing
 fix  run this once yourself (relaxkit does not run sudo without --allow-sudo): sudo sh -c '...'
 ```
 
-The sandbox needs both packages. Setup runs the sudo command only when you pass `--allow-sudo` (`src/commands/setup.rs` lines 320 to 327, and `src/commands/doctor.rs` lines 152 to 162). On Ubuntu 24.04 and later, the same sudo command also writes the AppArmor profile `/etc/apparmor.d/relaxkit-bwrap` and loads it, so that bubblewrap may create user namespaces. Doctor names that profile in its message when the profile is missing (`src/commands/doctor.rs` lines 141 to 143, and `src/platform.rs` lines 166 to 175).
+The sandbox needs both packages. Setup runs the sudo command only when you pass `--allow-sudo` (`src/commands/setup.rs` lines 320 to 327, and `src/commands/doctor.rs` lines 152 to 162). On Ubuntu 24.04 and later, that sudo command also writes the AppArmor profile `/etc/apparmor.d/relaxkit-bwrap` and loads it (`src/platform.rs` lines 166 to 175). When the profile is missing, doctor prints this message, whose phrase comes from `src/commands/doctor.rs` line 142:
+
+```text
+the sandbox needs the AppArmor profile /etc/apparmor.d/relaxkit-bwrap, and it is missing
+```
+
+The sandbox's Linux setup is described in [sandbox.md](sandbox.md).
 
 Run the sudo command that setup printed, once, yourself, then run setup again. Or let relaxkit run it:
 
@@ -70,7 +76,7 @@ finish the login yourself, then run setup again: <command>
 
 The first line comes from `login github` and the second from `setup`. The `<command>` is the gh login followed by `gh auth setup-git`, with the full path to gh (`src/github.rs` lines 73 to 79, and `src/commands/setup.rs` lines 363 to 365).
 
-Login needs a terminal for its browser flow. Without one, relaxkit prints the command and exits 3 (`src/github.rs` lines 34 to 38, and `src/commands/setup.rs` lines 194 to 198). Exit code 3 means a manual step remains; it is not a failure.
+Login needs a terminal for its browser flow. Without one, relaxkit prints the command and exits 3 (`src/github.rs` lines 34 to 38, and `src/commands/setup.rs` lines 194 to 198). The login talks to GitHub, which [privacy.md](privacy.md) lists. Exit code 3 means a manual step remains; it is not a failure.
 
 Run the login in a terminal, then run setup again:
 
@@ -87,7 +93,7 @@ install.sh: relaxkit setup failed; the binary is installed at $HOME/.local/bin/r
 
 This is a known outcome, not a download or checksum error. The installer has already written the binary when it runs setup. It then exits 1 whenever `relaxkit setup` exits with any non-zero code (`scripts/install.sh` lines 164 and 165, and the `die` function at lines 33 to 36).
 
-Setup exits non-zero in two cases. In the first, the GitHub login needs a terminal and setup exits 3 (see [exit code 3](#exit-code-3-the-github-login-needs-a-terminal)). In the second, a check in setup's final verify step fails and setup exits 1. A missing Linux package is one such failed check (see [Linux packages are missing](#linux-packages-are-missing)), so on a Linux machine without bubblewrap and socat, the installer exits 1 even when the login is done (`src/commands/setup.rs` lines 189 to 198, and `src/commands/doctor.rs` lines 123 to 163).
+Setup exits non-zero in two cases, and any other error that it returns also exits 1, such as neither host being found. In the first case, the GitHub login needs a terminal and setup exits 3 (see [exit code 3](#exit-code-3-the-github-login-needs-a-terminal)). In the second, a check in setup's final verify step fails and setup exits 1. A missing Linux package is one such failed check (see [Linux packages are missing](#linux-packages-are-missing)), so on a Linux machine without bubblewrap and socat, the installer exits 1 even when the login is done (`src/commands/setup.rs` lines 189 to 198, and `src/commands/doctor.rs` lines 123 to 163). Neither host being found is an error at `src/commands/setup.rs` lines 71 to 75, which `src/lib.rs` line 39 returns and `src/main.rs` lines 10 to 15 turn into exit 1. The exit codes are listed in [exit codes](commands.md#exit-codes).
 
 The installer does not run setup again on its own. Finish the step that setup named, then run:
 
@@ -95,7 +101,7 @@ The installer does not run setup again on its own. Finish the step that setup na
 relaxkit setup
 ```
 
-When the installer runs in a terminal, it gives setup the terminal as its input (`scripts/install.sh` lines 160 to 163), so the login can open its browser flow there. The installer's exit status above is the current behaviour of this repository, not a promise of a change.
+When the installer runs in a terminal, it gives setup the terminal as its input (`scripts/install.sh` lines 160 to 163), so the login can open its browser flow there. The installer's exit status above is the current behaviour of this repository, not a promise of a change. The installer downloads from GitHub and other hosts, which [privacy.md](privacy.md) lists.
 
 ## The rlx alias was not created
 

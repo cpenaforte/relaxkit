@@ -1,10 +1,10 @@
 # Getting started with relaxkit
 
-This guide installs relaxkit, sets up the tool pack for Claude Code or OpenCode, checks the result, changes one setting and reverts it. Each step shows the output the command printed. The [command reference](commands.md) has every option, and [troubleshooting](troubleshooting.md) has the messages you may see along the way.
+This guide installs relaxkit, sets up the tool pack for Claude Code or OpenCode, checks the result, changes one setting and reverts it. Where a step shows output, it is the output of a dry run or of a read-only command, and the output block says which. The output of a real setup run and of the installer is not shown. The [command reference](commands.md) has every option, and [troubleshooting](troubleshooting.md) has the messages you may see along the way.
 
 ## What is verified
 
-The commands below were checked with relaxkit's binary built from this repository, on macOS, in a disposable home directory. Each captured output is marked with the command that produced it. The installer script was not run for this guide: its behaviour is described from `scripts/install.sh` as it is in this repository. A full install on a fresh Linux or macOS machine has not been tested end to end.
+The captured outputs were taken with relaxkit's binary built from this repository, on macOS, in a disposable home directory, from dry runs and read-only commands only. The installer was not run for this guide, so its behaviour is described from `scripts/install.sh` as it is in this repository. Setup was only dry-run, so the output of a real setup is not shown. A full install on a fresh Linux or macOS machine has not been tested end to end.
 
 ## Before you start
 
@@ -16,7 +16,7 @@ The commands below were checked with relaxkit's binary built from this repositor
 
 ## 1. Install relaxkit
 
-Run the install line. It downloads the installer from the `main` branch, and the installer fetches the latest release.
+Run the install line. It downloads the installer from the `main` branch, and the installer fetches the latest release (`scripts/install.sh` lines 107 to 113). The installer was not run for this guide, so this step shows no output from a real install.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cpenaforte/relaxkit/main/scripts/install.sh | sh
@@ -30,7 +30,7 @@ To install without running setup, add `-s -- --no-setup` after `sh`:
 curl -fsSL https://raw.githubusercontent.com/cpenaforte/relaxkit/main/scripts/install.sh | sh -s -- --no-setup
 ```
 
-The installer does not change your `PATH`. If `$HOME/.local/bin` is not on your `PATH`, add it before you run the commands below.
+The installer does not change your `PATH`: no line in `scripts/install.sh` sets `PATH`. If `$HOME/.local/bin` is not on your `PATH`, add it before you run the commands below.
 
 ## 2. Check the version
 
@@ -70,7 +70,7 @@ Setup applies the balanced preset on a machine with no config yet, and keeps an 
 relaxkit setup
 ```
 
-Setup runs its steps in order and prints one line for each. It installs the pack's tools, writes the configuration, turns on the sandbox for Claude Code (see [sandbox.md](sandbox.md)), logs in to GitHub when gh is not logged in, and runs the checks of each locked tool. The full list of steps is in [relaxkit setup](commands.md#relaxkit-setup).
+Setup was only dry-run for this guide, so this step shows no output from a real setup. Setup runs its steps in order and prints one line for each. It installs the pack's tools, writes the configuration, turns on the sandbox for Claude Code (see [sandbox.md](sandbox.md)), logs in to GitHub when gh is not logged in, and runs the checks of each locked tool. The full list of steps is in [relaxkit setup](commands.md#relaxkit-setup).
 
 Setup may stop and ask you to do three things by hand. Each message and its fix is in [troubleshooting](troubleshooting.md):
 
@@ -151,12 +151,16 @@ OpenCode  1 failed, 1 warning, 1 ok
 
 ## 7. Change a setting
 
+`cheap` is a tier, and on Claude Code it maps to `haiku`. This step changes Claude Code only, so it works when OpenCode's model list cannot be read:
+
 ```sh
-relaxkit config set implementer cheap
+relaxkit config set implementer cheap --host claude
 relaxkit config show implementer
 ```
 
-`cheap` is a tier. On Claude Code it maps to `haiku`. A dry run of the change on Claude Code only:
+If OpenCode's model list cannot be read, a tier change that also covers OpenCode is refused before anything is written. Use `--host claude` as above, or pin an exact model for OpenCode. See [OpenCode's model list could not be read](troubleshooting.md#opencodes-model-list-could-not-be-read).
+
+A dry run of the same change:
 
 ```sh
 relaxkit config set implementer cheap --host claude --dry-run
@@ -169,7 +173,7 @@ relaxkit config set implementer cheap --host claude --dry-run
    Claude Code  haiku (advisory)
 ```
 
-Output from `relaxkit config show implementer` before setup has run:
+Output from `relaxkit config show implementer`, captured on a machine where OpenCode's model list could not be read, before setup has run:
 
 ```text
 ROLE         SETTING  CLAUDE CODE       OPENCODE
@@ -177,7 +181,7 @@ implementer  cheap    haiku (advisory)  inherits the host default (the model lis
 !  OpenCode's model list could not be read, so OpenCode models show as inherited
 ```
 
-If OpenCode's model list cannot be read, the change to OpenCode is refused. Use `--host claude` for Claude Code only, as above, or see [OpenCode's model list could not be read](troubleshooting.md#opencodes-model-list-could-not-be-read). The role names, tiers and exact-model form are in [configuration.md](configuration.md).
+The role names, tiers and exact-model form are in [configuration.md](configuration.md).
 
 ## 8. Revert the last change
 
