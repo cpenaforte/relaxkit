@@ -51,7 +51,7 @@ the sandbox needs bwrap and socat on the PATH, and it is missing
 fix  run this once yourself (relaxkit does not run sudo without --allow-sudo): sudo sh -c '...'
 ```
 
-The sandbox needs both packages. Setup runs the sudo command only when you pass `--allow-sudo` (`src/commands/setup.rs` lines 320 to 327, and `src/commands/doctor.rs` lines 152 to 162). On Ubuntu 24.04 and later, that sudo command also writes the AppArmor profile `/etc/apparmor.d/relaxkit-bwrap` and loads it (`src/platform.rs` lines 166 to 175). When the profile is missing, doctor prints this message, whose phrase comes from `src/commands/doctor.rs` line 142:
+The sandbox needs both packages. Setup runs the sudo command only when you pass `--allow-sudo` (`src/commands/setup.rs` lines 320 to 327, and `src/commands/doctor.rs` lines 152 to 162). On Ubuntu 24.04 and later, that sudo command also writes the AppArmor profile `/etc/apparmor.d/relaxkit-bwrap` and loads it (`src/platform.rs` lines 166 to 175). When only the profile is missing, doctor prints this message, whose phrase comes from `src/commands/doctor.rs` line 142:
 
 ```text
 the sandbox needs the AppArmor profile /etc/apparmor.d/relaxkit-bwrap, and it is missing
@@ -101,7 +101,7 @@ The installer does not run setup again on its own. Finish the step that setup na
 relaxkit setup
 ```
 
-When the installer runs in a terminal, it gives setup the terminal as its input (`scripts/install.sh` lines 160 to 163), so the login can open its browser flow there. The installer's exit status above is the current behaviour of this repository, not a promise of a change. The installer downloads from GitHub and other hosts, which [privacy.md](privacy.md) lists.
+When the installer runs in a terminal, it gives setup the terminal as its input (`scripts/install.sh` lines 160 to 163), so the login can open its browser flow there. The installer's exit status above is the current behaviour of this repository, not a promise of a change. The installer's own downloads go to GitHub by default: the latest-release lookup at `api.github.com` and the release archive and checksums at `github.com` (`scripts/install.sh` lines 21 to 22, 110 and 121 to 122). The other hosts, such as `nodejs.org`, `astral.sh`, `registry.npmjs.org` and `pypi.org`, are contacted by `relaxkit setup`, which the installer runs. [privacy.md](privacy.md) lists them.
 
 ## The rlx alias was not created
 

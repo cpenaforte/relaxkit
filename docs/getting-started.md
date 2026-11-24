@@ -1,6 +1,6 @@
 # Getting started with relaxkit
 
-This guide installs relaxkit, sets up the tool pack for Claude Code or OpenCode, checks the result, changes one setting and reverts it. Where a step shows output, it is the output of a dry run or of a read-only command, and the output block says which. The output of a real setup run and of the installer is not shown. The [command reference](commands.md) has every option, and [troubleshooting](troubleshooting.md) has the messages you may see along the way.
+This guide installs relaxkit, sets up the tool pack for Claude Code or OpenCode, checks the result, changes one setting and reverts it. Four output blocks are dry runs: `setup --dry-run`, `doctor --dry-run`, `config set --dry-run` and `undo --dry-run`. They change nothing. The other captures (`--version`, `status` and `config show`) are read-only commands. They show the state of the machine where this guide was written, in an empty home directory, and they are not dry runs. The output of a real setup run and of the installer is not shown. The [command reference](commands.md) has every option, and [troubleshooting](troubleshooting.md) has the messages you may see along the way.
 
 ## What is verified
 
