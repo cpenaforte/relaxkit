@@ -18,10 +18,6 @@ fn readme() -> String {
 /// The product description, used by later checks against the CLI, the manifests and the README.
 const DESCRIPTION: &str = "A curated pack of agent tools for Claude Code and OpenCode: install, configure, update and diagnose from one CLI.";
 
-/// Public files that still cite private working files. Each must keep citing one of the phrases the cite test
-/// checks; once a file is cleaned, the test fails until it leaves this list.
-const PENDING_PRIVATE_REFERENCES: &[&str] = &[];
-
 fn repo_path(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
 }
@@ -630,18 +626,53 @@ fn public_docs_cite_no_private_artifacts() {
             .find(|phrase| lower.contains(*phrase))
     };
     for file in public_markdown() {
-        if PENDING_PRIVATE_REFERENCES.contains(&file.as_str()) {
-            continue;
-        }
         if let Some(phrase) = cited(&read(&file)) {
             panic!("{file} cites the private artifact phrase `{phrase}`");
         }
     }
-    // A pending file that no longer cites anything must leave PENDING_PRIVATE_REFERENCES.
-    for file in PENDING_PRIVATE_REFERENCES {
+}
+
+#[test]
+fn docs_index_links_every_document() {
+    let index = read("docs/README.md");
+    let mut documents: Vec<String> = std::fs::read_dir(repo_path("docs"))
+        .expect("docs/ is readable")
+        .map(|entry| {
+            let name = entry.expect("docs/ entry is readable").file_name();
+            name.to_string_lossy().into_owned()
+        })
+        .filter(|name| name.ends_with(".md") && name != "README.md")
+        .collect();
+    documents.sort();
+    assert!(!documents.is_empty(), "docs/ holds no documents to index");
+    for name in &documents {
+        let link = format!("]({name})");
         assert!(
-            cited(&read(file)).is_some(),
-            "{file} no longer cites private artifacts: remove it from PENDING_PRIVATE_REFERENCES"
+            index.contains(&link),
+            "docs/README.md does not link to {name} as `{link}`"
+        );
+    }
+    let changelog = "../CHANGELOG.md";
+    assert!(
+        index.contains(&format!("]({changelog})")),
+        "docs/README.md does not link to the changelog as `]({changelog})`"
+    );
+    let expected: std::collections::BTreeSet<String> = documents
+        .into_iter()
+        .chain(std::iter::once(changelog.to_string()))
+        .collect();
+    let linked: std::collections::BTreeSet<String> = relative_links(&index)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    assert_eq!(
+        linked, expected,
+        "docs/README.md must link exactly the documents and the changelog"
+    );
+    for path in &linked {
+        assert!(
+            repo_path("docs").join(path).is_file(),
+            "docs/README.md links to {path}, which does not exist"
         );
     }
 }
