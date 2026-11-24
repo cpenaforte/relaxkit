@@ -6,6 +6,12 @@ All notable changes to relaxkit are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `relaxkit --help` ends with examples and a link to the documentation, and the help for `setup`, `update` and `config` ends with examples.
+- The description in `relaxkit --help` now reads "A curated pack of agent tools for Claude Code and OpenCode: install, configure, update and diagnose from one CLI." instead of "Set up and manage a curated set of agent tools".
+- A recipe that sets a workdir is refused with a message that names the recipe and says relaxkit cannot apply the workdir yet.
+
 ## [0.1.3] - 2026-11-23
 
 ### Changed
