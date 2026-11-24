@@ -75,8 +75,9 @@ All notable changes to relaxkit are recorded here. The format follows
 - Setup installs the pack's tools on each host. It detects each tool, adopts an existing install instead
   of reinstalling it, and records each install in `lock.toml`. A failed step stops that tool and leaves
   the lock unchanged.
-- On a fresh machine, `relaxkit setup` applies the balanced preset with the caveman voice, turns off
-  Superpowers telemetry, and sets no compact threshold. An existing config file is kept.
+- `relaxkit setup` turns off Superpowers telemetry on each Claude Code host on every setup run. With no
+  config file, it applies the balanced preset and its caveman voice. An existing config file is kept,
+  and its preset and voice are applied.
 - When it runs again, `relaxkit setup` repairs a failing probe or MCP command. It reinstalls the locked
   tool and checks again. A repair that still fails leaves the check failed, with its fix line, and setup
   exits 1.
