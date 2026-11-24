@@ -85,7 +85,7 @@ pub fn settings_text(old: &str, os: Os, gh: GhPath) -> Result<String> {
             &json!(true),
         )
     } else if jsonc_get(&text, &["sandbox", "enableWeakerNetworkIsolation"])? == Some(json!(true)) {
-        // K120: removed only while it is true, the value relaxkit writes; a user's own value stays.
+        // K120: relaxkit removes the key while its value is true, whoever set it; docs/sandbox.md describes the same.
         jsonc_remove(&text, &["sandbox", "enableWeakerNetworkIsolation"])
     } else {
         Ok(text)

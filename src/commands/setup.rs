@@ -199,8 +199,9 @@ fn execute(ctx: &Ctx, hosts: &[Box<dyn Host>]) -> Result<SetupReport> {
     Ok(report)
 }
 
-/// Applies the kit's configuration to each detected host. An existing `config.toml` keeps the owner's preset and
-/// settings; a fresh machine gets the balanced preset with telemetry off and no compact threshold (ruling K46).
+/// Applies the kit's configuration to each detected host. An existing `config.toml` keeps the user's preset and
+/// settings; a fresh machine gets the balanced preset with no compact threshold (ruling K46). The telemetry switch
+/// applies on every setup run, where relaxkit can set it.
 fn configure(
     ctx: &Ctx,
     run: &RunId,

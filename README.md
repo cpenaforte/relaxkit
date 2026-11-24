@@ -2,7 +2,7 @@
 
 A curated pack of agent tools for Claude Code and OpenCode: install, configure, update and diagnose from one CLI.
 
-[![CI](https://github.com/cpenaforte/relaxkit/actions/workflows/ci.yml/badge.svg)](https://github.com/cpenaforte/relaxkit/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/cpenaforte/relaxkit)](https://github.com/cpenaforte/relaxkit/releases) [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?link=https://github.com/cpenaforte/relaxkit/blob/main/LICENSE-MIT)](LICENSE-MIT)
+[![CI](https://github.com/cpenaforte/relaxkit/actions/workflows/ci.yml/badge.svg)](https://github.com/cpenaforte/relaxkit/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/cpenaforte/relaxkit)](https://github.com/cpenaforte/relaxkit/releases) [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?link=https://github.com/cpenaforte/relaxkit/blob/main/LICENSE-MIT)](#license)
 
 relaxkit is at 0.x, so the command line can change between minor versions. Versions follow [Semantic Versioning](https://semver.org/).
 
@@ -10,7 +10,7 @@ relaxkit is at 0.x, so the command line can change between minor versions. Versi
 
 - **One command sets up both hosts.** `relaxkit setup` detects Claude Code and OpenCode, installs the pack's tools for each, and writes their config.
 - **A model per role, from the CLI.** Each role (planner, implementer, reviewer, escalation, final-review) takes a tier or an exact model, for example `relaxkit config set implementer cheap`.
-- **Undo and uninstall.** `relaxkit undo` reverts the last change. `relaxkit uninstall` removes the pack's MCP entries, config keys, roles blocks and binary copies, and keeps the relaxkit binary, its config and journal, the Node link and the Node it points at, and the pack's plugins.
+- **Undo and uninstall.** `relaxkit undo` reverts the last change. `relaxkit uninstall` removes the pack's MCP entries, config keys, roles blocks and binary copies, and keeps the relaxkit binary, its config and journal, the Node link and the Node it points at, and the pack's plugins. It also removes the lock file, which `relaxkit undo` restores.
 - **Diagnostics with a sandbox self-test.** `relaxkit doctor` checks hooks, schemas and MCP reachability, and runs a sandbox self-test.
 - **Signed releases, no telemetry of its own.** Each release's checksums file is signed with minisign, and relaxkit sends no telemetry of its own.
 
@@ -88,7 +88,7 @@ On Linux, `setup` prints the sudo command for the system packages instead of run
 | [relaxkit privacy](docs/commands.md#relaxkit-privacy) | Shows or changes telemetry. |
 | [relaxkit login](docs/commands.md#relaxkit-login) | Logs in to a service, such as GitHub. |
 | [relaxkit undo](docs/commands.md#relaxkit-undo) | Reverts the last change, or a named run group. |
-| [relaxkit uninstall](docs/commands.md#relaxkit-uninstall) | Removes the pack's MCP entries, config keys, roles blocks and binary copies. The binary, config, journal, Node link (and its Node) and plugins stay. |
+| [relaxkit uninstall](docs/commands.md#relaxkit-uninstall) | Removes the pack's MCP entries, config keys, roles blocks and binary copies. The binary, config, journal, Node link (and its Node) and plugins stay. It also removes the lock file, which `relaxkit undo` restores. |
 | [relaxkit usage](docs/commands.md#relaxkit-usage) | Runs the usage tool with the arguments you give it. |
 
 The global flags and every option are in the [command reference](docs/commands.md). Model pinning, tiers and presets are in [configuration](docs/configuration.md).

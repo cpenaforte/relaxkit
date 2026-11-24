@@ -13,6 +13,8 @@ All notable changes to relaxkit are recorded here. The format follows
 - A recipe that sets a workdir is refused with a message that names the recipe and says relaxkit cannot apply the workdir yet.
 - The Claude Code plugin's description, shown in Claude Code's plugin list, now matches the product sentence.
 - The `/relaxkit:uninstall` command's description now says what uninstall removes and what it keeps.
+- The `relaxkit --help` entry for `uninstall` now names what it removes: the pack's MCP entries, config keys, roles blocks and binary copies.
+- The OpenCode plugin's description of the shell `gh` command now says that it cannot authenticate in the sandbox, instead of that it cannot reach GitHub.
 
 ## [0.1.3] - 2026-11-23
 

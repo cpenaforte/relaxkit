@@ -56,7 +56,7 @@ export const GH_BUILTIN_COMMANDS = [
 ];
 
 export const GH_DESCRIPTION =
-  "Run the GitHub CLI (gh) with the given arguments. Use this tool instead of gh in the shell: shell gh runs inside the sandbox and cannot reach GitHub.";
+  "Run the GitHub CLI (gh) with the given arguments. Use this tool instead of gh in the shell: shell gh runs inside the sandbox and cannot authenticate.";
 
 /**
  * Builds the gh tool. It runs gh outside the sandbox, with the project directory as cwd
