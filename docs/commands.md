@@ -117,17 +117,17 @@ relaxkit config unset KEY [--host claude|opencode]
 
 Options:
 
-- `set` takes a role (`planner`, `implementer`, `reviewer`, `escalation` or `final-review`) or another key, such as `voice` or `compact-at`. `VALUE` is a tier (`cheap`, `standard` or `smarter`) or an exact model.
+- `set` takes a role (`planner`, `implementer`, `reviewer`, `escalation` or `final-review`) or another key, such as `voice` or `compact-at`. For a role, `VALUE` is a tier (`cheap`, `standard` or `smarter`) or an exact model. For `voice`, `VALUE` is `caveman`, `ultracave`, `megacave` or `off`. For `compact-at`, `VALUE` is a token count such as `256k`, `1m` or `256000`.
 - `unset` removes a setting, so the preset's value applies again.
 - `show` prints all settings, or one key when you give `KEY`.
-- `--host claude` or `--host opencode` limits a `set` or `unset` to one host.
+- `--host claude` or `--host opencode` limits a role change to one host. `--host` applies to roles only: `voice` and `compact-at` refuse it, because they apply to both hosts.
 
-Each role takes either a tier or an exact model. The tiers map to `haiku`, `sonnet` and `opus` on Claude Code. An exact model is `provider/model`, with an optional `#variant`, and a bare `claude-*` id means Anthropic.
+Each role takes either a tier or an exact model. The tiers map to `haiku`, `sonnet` and `opus` on Claude Code. An exact model is `provider/model`, with an optional `#variant`, and a bare `claude-*` id, or the bare name `haiku`, `sonnet`, `opus` or `fable`, means Anthropic.
 
 - Without `--host`, a change covers both hosts.
 - On Claude Code the `#variant` is ignored. OpenCode gets the full `provider/model#variant`.
 - On OpenCode, an exact model must be in the list that `opencode models --standalone` prints, or the command refuses it. If that list cannot be read, the exact model is accepted with a warning.
-- A tier for OpenCode needs that same list. When it cannot be read, the command refuses the tier and asks for an exact model instead, so use `--host claude` or pin an exact model.
+- A tier for OpenCode needs that same list. When it cannot be read, `config set` and `config unset` refuse the tier and ask for an exact model instead, so use `--host claude` or pin an exact model.
 
 ```sh
 relaxkit config show
@@ -172,7 +172,7 @@ relaxkit privacy --dry-run
 relaxkit login github
 ```
 
-Login runs `gh auth login --web --clipboard` and then `gh auth setup-git`, unless `gh auth status` already passes. relaxkit never reads or writes a GitHub token. Without a terminal, when gh is not logged in, login prints the command that finishes the login by hand and exits 3.
+Login runs `gh auth login --web --clipboard` and then `gh auth setup-git`, unless `gh auth status` already passes. If gh is missing, login installs it first. relaxkit never reads or writes a GitHub token. Without a terminal, when gh is not logged in, login prints the command that finishes the login by hand and exits 3.
 
 ```sh
 relaxkit login github --dry-run
@@ -234,7 +234,7 @@ In `setup`, a failed check (1) takes precedence over a pending login (3).
 
 Every command marks its result lines the same way. A line starts with a mark: `✓` done, `!` done with something to check, `✗` failed, and `·` not done. A dry run prints its plans as `·` lines, because nothing is changed. A check that cannot run in a dry run, such as the sandbox self-test in `doctor`, shows `!`. Without a UTF-8 locale the marks are `ok`, `!!`, `xx` and `..`.
 
-Text output starts with a verdict line. `doctor` groups its failures and warnings by area and gives a `fix` line for each. `setup` prints one line per step. `update` lists the tools in a table.
+`doctor` and `status` start their text with a verdict line. `doctor` groups its failures and warnings by area and gives a `fix` line for each. `setup` prints one line per step. `update` lists the tools in a table.
 
 Colour appears only on a terminal, and a non-empty `NO_COLOR` turns it off. A pipe or a file gets plain text. On a terminal a long step (`setup`, `update`, `uninstall` and `doctor`) shows a spinner until it ends. With `--json`, `doctor`, `update` and `config show` print one JSON document on standard output and draw no spinner.
 
