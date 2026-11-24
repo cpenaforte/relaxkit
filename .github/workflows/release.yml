@@ -53,7 +53,7 @@ jobs:
       CC_aarch64_unknown_linux_musl: musl-gcc
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: dtolnay/rust-toolchain@1.120.0
         with:
           targets: ${{ matrix.target }}
       - name: Install musl tools
