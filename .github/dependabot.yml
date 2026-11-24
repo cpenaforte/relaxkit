@@ -1,0 +1,15 @@
+# Weekly version updates for the Rust crates, the OpenCode plugin's npm package and the GitHub Actions in .github/workflows.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /adapters/opencode-plugin
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
