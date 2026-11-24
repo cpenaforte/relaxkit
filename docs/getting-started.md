@@ -39,7 +39,7 @@ relaxkit --version
 ```
 
 ```text
-relaxkit 0.1.3
+relaxkit 0.1.4
 ```
 
 ## 3. Preview setup
@@ -89,7 +89,7 @@ relaxkit status
 Output from `relaxkit status` before setup has run:
 
 ```text
-relaxkit 0.1.3 · preset balanced
+relaxkit 0.1.4 · preset balanced
 ·  nothing is locked yet; run relaxkit setup
 
 Hosts
