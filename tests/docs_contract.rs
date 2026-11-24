@@ -589,7 +589,7 @@ fn unreleased_problem(body: &[&str]) -> Option<String> {
                 ));
             }
             in_entry = true;
-        } else if line.starts_with([' ', '\t']) && line.trim_start().starts_with('#') {
+        } else if line.starts_with([' ', '\t']) && is_atx_heading(line.trim_start()) {
             return Some(format!(
                 "has the indented heading `{line}`, which is not allowed under `## [Unreleased]`"
             ));
@@ -606,6 +606,13 @@ fn unreleased_problem(body: &[&str]) -> Option<String> {
         }
     }
     None
+}
+
+/// True when `text` is an ATX heading: one to six `#` followed by a space or the end of the line.
+fn is_atx_heading(text: &str) -> bool {
+    let rest = text.trim_start_matches('#');
+    let hashes = text.len() - rest.len();
+    (1..=6).contains(&hashes) && (rest.is_empty() || rest.starts_with(' '))
 }
 
 #[test]
@@ -661,6 +668,20 @@ fn unreleased_rejects_an_indented_heading() {
     assert!(
         unreleased_problem(&["### Fixed", "- a", "\t### Bogus"]).is_some(),
         "a tab-indented heading must fail the same way"
+    );
+}
+
+#[test]
+fn unreleased_accepts_a_wrapped_line_that_starts_with_a_hash() {
+    assert_eq!(
+        unreleased_problem(&["### Fixed", "- a", "  #42 was fixed"]),
+        None,
+        "an indented `#42` is a wrapped line, not an ATX heading"
+    );
+    assert_eq!(
+        unreleased_problem(&["### Fixed", "- a", "\t#42 was fixed"]),
+        None,
+        "a tab-indented `#42` is a wrapped line too"
     );
 }
 
