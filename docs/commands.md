@@ -28,7 +28,7 @@ The synopses leave out the global flags, which apply to every command (see [Glob
 | [privacy](#relaxkit-privacy) | Show or change telemetry |
 | [login](#relaxkit-login) | Log in to a service |
 | [undo](#relaxkit-undo) | Revert the last change, or a named run group |
-| [uninstall](#relaxkit-uninstall) | Remove the pack's MCP entries, config keys and binary copies |
+| [uninstall](#relaxkit-uninstall) | Remove the pack's MCP entries, config keys, roles blocks and binary copies. |
 | [usage](#relaxkit-usage) | Run the usage tool |
 
 ## Global flags

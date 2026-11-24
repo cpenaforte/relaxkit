@@ -1,9 +1,9 @@
 ---
-description: Remove relaxkit and what it installed
+description: Remove the pack's MCP entries, config keys, roles blocks and binary copies
 allowed-tools: Bash(relaxkit:*)
 ---
 
-Remove relaxkit and what it installed.
+Remove the pack's MCP entries, config keys, roles blocks and binary copies. The binary, config, journal, Node link (and its Node) and plugins stay.
 
 !`relaxkit uninstall $ARGUMENTS`
 
