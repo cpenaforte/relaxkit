@@ -55,9 +55,7 @@ tests/      integration tests, fixtures and test support
 
 ## Commits and pull requests
 
-- Make changes on a branch and open a pull request. Do not push to main.
-- Commit with the maintainer's public GitHub noreply identity, never with a personal email address.
-- A commit that an agent wrote ends with a `Co-Authored-By:` trailer that names the model. Do not add session links or session identifiers to commit messages or pull request descriptions.
+- Make changes on a branch and open a pull request. The release procedure, which commits on main, is in [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 - For each change that a user can see, add a line under `## [Unreleased]` in `CHANGELOG.md`, in one of the Keep a Changelog sections: Added, Changed, Deprecated, Removed, Fixed or Security.
 - Update the documentation, and `tests/docs_contract.rs`, when a change affects behaviour that a document describes.
 - Run the three checks above before you open the pull request. The pull request template asks for them.

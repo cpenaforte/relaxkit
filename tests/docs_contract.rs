@@ -562,12 +562,16 @@ const SECTIONS: [&str; 6] = [
     "Security",
 ];
 
-/// The first line under `## [Unreleased]` that breaks the rule, or `None`. A `### ` heading must name a section, and
-/// every bullet must sit under one.
+/// The first line under `## [Unreleased]` that breaks the rule, or `None`. A `### ` heading must name a section. A
+/// bullet, and an indented line that directly follows a bullet or another such line (a wrapped bullet), must sit under
+/// one.
 fn unreleased_problem(body: &[&str]) -> Option<String> {
     let mut in_section = false;
+    // True right after a bullet or a wrapped line, so an indented line may continue it.
+    let mut in_entry = false;
     for line in body {
         if line.trim().is_empty() {
+            in_entry = false;
             continue;
         }
         if let Some(name) = line.strip_prefix("### ") {
@@ -577,10 +581,18 @@ fn unreleased_problem(body: &[&str]) -> Option<String> {
                 ));
             }
             in_section = true;
+            in_entry = false;
         } else if line.starts_with("- ") {
             if !in_section {
                 return Some(format!(
                     "has the bullet `{line}` outside a Keep a Changelog section"
+                ));
+            }
+            in_entry = true;
+        } else if in_entry && line.starts_with([' ', '\t']) {
+            if !in_section {
+                return Some(format!(
+                    "has the wrapped line `{line}` outside a Keep a Changelog section"
                 ));
             }
         } else {
@@ -602,6 +614,37 @@ fn unreleased_bullet_outside_a_section_fails() {
         unreleased_problem(&["", "### Fixed", "", "- Fixed a thing."]),
         None,
         "a bullet under a section heading must pass"
+    );
+}
+
+#[test]
+fn unreleased_wrapped_bullet_follows_the_section_rule() {
+    assert_eq!(
+        unreleased_problem(&[
+            "### Fixed",
+            "",
+            "- Fixed a thing that",
+            "  wraps onto a second line."
+        ]),
+        None,
+        "a wrapped bullet under a section heading must pass"
+    );
+    assert_eq!(
+        unreleased_problem(&["### Fixed", "- one", "  two", "    three"]),
+        None,
+        "a continuation of a continuation under a section must pass"
+    );
+    assert!(
+        unreleased_problem(&["- Fixed a thing that", "  wraps onto a second line."]).is_some(),
+        "a wrapped bullet with no section heading above it must fail"
+    );
+    assert!(
+        unreleased_problem(&["### Fixed", "", "  indented with no bullet above it"]).is_some(),
+        "an indented line that does not follow a bullet must fail"
+    );
+    assert!(
+        unreleased_problem(&["### Fixed", "- a", "", "  b"]).is_some(),
+        "a continuation after a blank line must fail"
     );
 }
 
