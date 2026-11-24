@@ -4,7 +4,7 @@ This page explains the sandbox that `relaxkit setup` turns on for Claude Code an
 
 ## Claude Code
 
-`relaxkit setup` turns on Claude Code's sandbox for shell commands. It sets these keys in Claude Code's settings file, `~/.claude/settings.json`, and keeps every other key:
+`relaxkit setup` turns on Claude Code's sandbox for shell commands. It sets these keys in Claude Code's settings file, `~/.claude/settings.json`, and keeps every other key, except `sandbox.enableWeakerNetworkIsolation` when its value is `true` (see [macOS](#macos) below):
 
 - `sandbox.enabled` is `true`.
 - `sandbox.autoAllowBashIfSandboxed` is `true`, so sandboxed commands run without asking.
@@ -24,15 +24,15 @@ Network access is limited to a short list. relaxkit adds these domains to `sandb
 
 The commands that change the machine run outside the sandbox, because they change the machine. They are listed in `sandbox.excludedCommands`: `setup`, `update`, `config`, `preset`, `privacy`, `login`, `undo`, `uninstall` and `doctor`. Each one is excluded under both `relaxkit` and `rlx`. The `rlx` alias is added by the installer when that name is free. `status` and `usage` stay inside the sandbox.
 
-`gh` also runs outside the sandbox, as a single plain invocation: relaxkit adds `gh *` to `sandbox.excludedCommands`. A `gh` call inside a pipe, a chain or after a `cd` stays sandboxed and cannot authenticate.
+`gh` also runs outside the sandbox, as a single plain invocation: relaxkit adds `gh *` to `sandbox.excludedCommands`. The v0.1.3 README documents that a `gh` call inside a pipe, a chain or after a `cd` stays sandboxed and cannot authenticate. That is Claude Code's sandbox behaviour; this repository does not test it.
 
 ### macOS
 
-On macOS, a route that runs `gh` inside the sandbox needs `sandbox.enableWeakerNetworkIsolation`. That setting opens a possible data path through the macOS trust service. This version does not use that route, so `relaxkit setup` does not set the key.
+On macOS, a route that runs `gh` inside the sandbox needs `sandbox.enableWeakerNetworkIsolation`. That setting opens a possible data path through the macOS trust service. This version does not use that route, so `relaxkit setup` does not set the key. `relaxkit setup` removes `sandbox.enableWeakerNetworkIsolation` whenever it is `true`, including a value you set yourself.
 
 ### Linux
 
-On Linux, the sandbox needs bubblewrap and socat. When either is missing, `relaxkit setup` prints the command that installs both and asks you to run it once. It does not run that command unless you pass `--allow-sudo`:
+On Linux, the sandbox needs bubblewrap and socat. When either package is missing, or the AppArmor profile is missing on Ubuntu 24.04 and later, `relaxkit setup` prints the one sudo command that does the missing work and asks you to run it once. It does not run that command unless you pass `--allow-sudo`:
 
 ```sh
 relaxkit setup --allow-sudo
@@ -53,7 +53,7 @@ The plugin is a fork of `opencode-sandbox` 0.7.0, which is MIT licensed, built o
 - Writes are denied to `.opencode`, `opencode.json`, `opencode.jsonc` and the OpenCode config directory, which is `~/.config/opencode` by default.
 - Network access is limited to the same seven domains as Claude Code. Local binding is off.
 
-On OpenCode, `gh` runs only through a `gh` tool that the plugin provides. The tool accepts only the built-in `gh` command names that the plugin lists. Any other first argument is refused, which covers the aliases and extensions you installed in `gh`, and also `alias`, `auth`, `config`, `extension` and `help`. Each call also passes OpenCode's permission check. A `gh` command typed into OpenCode's shell tool runs inside the sandbox and cannot reach GitHub, so use the `gh` tool instead.
+On OpenCode, `gh` runs only through a `gh` tool that the plugin provides. The tool accepts only the built-in `gh` command names that the plugin lists. Any other first argument is refused, which covers the aliases and extensions you installed in `gh`, and also `alias`, `auth`, `config`, `extension` and `help`. Each call also passes OpenCode's permission check. The plugin's tool description says that a `gh` command typed into OpenCode's shell tool runs inside the sandbox and cannot reach GitHub, and tells you to use the `gh` tool instead. This repository does not test that claim.
 
 The plugin's rules are in `adapters/opencode-plugin/src/config.js` and `adapters/opencode-plugin/src/gh-tool.js`.
 

@@ -14,11 +14,16 @@ relaxkit has no telemetry of its own. It has no background update checks: nothin
 | `update` | Looks up the newest version of each tool, then updates each tool that has a newer version. `update --check` and `update --dry-run` make the lookups and stop there. |
 | `update --self` | Downloads relaxkit's own release from GitHub, and checks it before it replaces the binary. |
 | `status` | Reads the sandbox runtime's npm entry and the date of relaxkit's latest release, but only when `relaxkit-opencode` is listed in OpenCode. |
-| `doctor` | Runs the sandbox self-test, which is not run in a dry run. When `relaxkit-opencode` is listed in OpenCode, it also makes the two reads that `status` makes. |
+| `doctor` | Runs the sandbox self-test, which is not run in a dry run. The self-test runs the sandbox runtime, pinned at 0.0.83, through npx, which can fetch it from npm. It then makes two requests, to `api.github.com` (sent direct, bypassing the proxy) and to `example.com`, and the sandbox must refuse both. When `relaxkit-opencode` is listed in OpenCode, it also makes the two reads that `status` makes. |
 | `login github` | Runs `gh`, which talks to GitHub. If `gh` is missing, it is installed first. |
-| `usage` | Runs ccusage through npx with `--offline` added, so ccusage does not fetch its pricing data. npx can download ccusage from npm the first time it runs. |
+| `usage` | Runs ccusage through npx and passes ccusage's `--offline` flag, unless you pass that flag yourself. npx can download ccusage from npm the first time it runs. |
 
-`privacy`, `config`, `preset`, `undo` and `uninstall` make no request of their own. `config set` with an exact model runs `opencode models --standalone` to check the model name. That is OpenCode's own process, so its network use is OpenCode's.
+`privacy` and `undo` make no request of their own. When OpenCode is installed, some other commands run `opencode models --standalone` to read OpenCode's model list. That is OpenCode's own process, so any network use is OpenCode's:
+
+- `config set` with an exact model, to check the name against the list.
+- `config set`, `config unset` and `config show`, which read the list for the role table and when they apply the roles.
+- `preset`, which reads the list when it applies the roles.
+- `setup`, `status` and `uninstall`, which read the list for the OpenCode roles.
 
 The probes that `setup` and `doctor` run for each tool are commands of the tool. For an npm tool, a probe runs npx, which can download the package from npm when it is not in npm's cache.
 
@@ -43,11 +48,13 @@ relaxkit turns off the telemetry of the pack's own tools and of Claude Code's su
 - rtk: `rtk telemetry disable`. `relaxkit privacy` runs it, and `setup` runs it when it installs rtk.
 - caveman: `caveman telemetry off`. `relaxkit privacy` runs it, and `setup` runs it when it installs caveman.
 - superpowers: `env.SUPERPOWERS_DISABLE_TELEMETRY = "1"` in Claude Code's settings file, `~/.claude/settings.json`. `setup` writes it on each run for each Claude Code host it finds, and `relaxkit privacy` writes it too.
-- Serena: `SERENA_USAGE_REPORTING=false` in the environment of its MCP entry, for Claude Code and for OpenCode. `setup` writes it when it installs Serena.
-- chrome-devtools-mcp: `CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1` in the environment of its MCP entry. This turns off the server's update checks, not a telemetry feature.
 - Claude Code: `env.DISABLE_TELEMETRY = "1"`. Only `relaxkit privacy --claude-code` writes it.
 
 The `DISABLE_TELEMETRY` switch also stops feature-flag fetching. That removes synced claude.ai skills and plugins and `/skill-doctor`, and it may break Remote Control. `relaxkit privacy --claude-code` shows this warning before it writes the switch. Claude Code's separate `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` switch also turns off auto-updates, and relaxkit does not set it. relaxkit never sets `DO_NOT_TRACK`, because Claude Code also reads that variable and it turns off the feature flags too.
+
+### Other variables relaxkit sets in MCP entries
+
+relaxkit writes two variables into the environment of the MCP entries for Serena and for chrome-devtools-mcp, in Claude Code and in OpenCode: `SERENA_USAGE_REPORTING=false` for Serena, and `CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1` for chrome-devtools-mcp. This repository sets them. What the servers do with them is not verified in this repository.
 
 ## relaxkit privacy
 
