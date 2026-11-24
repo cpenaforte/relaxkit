@@ -20,7 +20,7 @@ const DESCRIPTION: &str = "A curated pack of agent tools for Claude Code and Ope
 
 /// Public files that still cite private working files. Each must keep citing one of the phrases the cite test
 /// checks; once a file is cleaned, the test fails until it leaves this list.
-const PENDING_PRIVATE_REFERENCES: &[&str] = &["README.md"];
+const PENDING_PRIVATE_REFERENCES: &[&str] = &[];
 
 fn repo_path(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
@@ -411,6 +411,119 @@ fn readme_states_the_platform_scope_and_the_windows_future_note() {
         readme.contains("depending on demand"),
         "README.md does not say the Windows addition depends on demand"
     );
+}
+
+#[test]
+fn readme_is_a_front_door() {
+    let readme = readme();
+    let lines = unfenced_lines(&readme);
+    let headings = [
+        "# relaxkit",
+        "## Highlights",
+        "## Install",
+        "## Quickstart",
+        "## Documentation",
+        "## Getting help",
+        "## Contributing",
+        "## License",
+    ];
+    let mut from = 0;
+    for heading in headings {
+        let at = lines[from..]
+            .iter()
+            .position(|line| *line == heading)
+            .map(|offset| from + offset)
+            .unwrap_or_else(|| {
+                panic!("README.md has no heading `{heading}` after the one before it")
+            });
+        from = at + 1;
+    }
+    assert!(
+        readme.contains(DESCRIPTION),
+        "README.md does not contain the product description"
+    );
+}
+
+#[test]
+fn readme_links_the_documents() {
+    let readme = readme();
+    let mut required = vec![
+        "](docs/getting-started.md)",
+        "](docs/commands.md)",
+        "](docs/configuration.md)",
+        "](docs/tools.md)",
+        "](docs/privacy.md)",
+        "](docs/sandbox.md)",
+        "](docs/troubleshooting.md)",
+        "](docs/verification.md)",
+        "](CONTRIBUTING.md)",
+        "](SECURITY.md)",
+        "](CHANGELOG.md)",
+        "](LICENSE-MIT)",
+        "](LICENSE-APACHE)",
+    ];
+    if exists("CODE_OF_CONDUCT.md") {
+        required.push("](CODE_OF_CONDUCT.md)");
+    }
+    for link in required {
+        assert!(readme.contains(link), "README.md does not contain `{link}`");
+    }
+    assert_eq!(
+        readme.contains("](CODE_OF_CONDUCT.md)"),
+        exists("CODE_OF_CONDUCT.md"),
+        "README.md links CODE_OF_CONDUCT.md if and only if the file exists"
+    );
+}
+
+/// The URL of every image link (`![alt](url)`) in `markdown`.
+fn image_urls(markdown: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    for line in unfenced_lines(markdown) {
+        let mut rest = line;
+        while let Some(at) = rest.find("![") {
+            let after = &rest[at..];
+            let Some(open) = after.find("](") else {
+                break;
+            };
+            let target = &after[open + 2..];
+            let Some(close) = target.find(')') else {
+                break;
+            };
+            urls.push(target[..close].to_string());
+            rest = &target[close + 1..];
+        }
+    }
+    urls
+}
+
+#[test]
+fn readme_badges_point_at_this_repository() {
+    let badges: Vec<String> = image_urls(&readme())
+        .into_iter()
+        .filter(|url| url.contains("badge") || url.contains("shields.io"))
+        .collect();
+    assert!(
+        (1..=4).contains(&badges.len()),
+        "README.md has {} badges, expected 1 to 4",
+        badges.len()
+    );
+    for badge in badges {
+        assert!(
+            badge.contains("cpenaforte/relaxkit"),
+            "badge `{badge}` does not point at this repository"
+        );
+    }
+}
+
+#[test]
+fn readme_makes_no_claim_about_unpublished_channels() {
+    let readme = readme();
+    for form in ["brew install", "cargo install relaxkit"] {
+        assert!(
+            !readme.contains(form),
+            "README.md mentions `{form}`, which is not published yet"
+        );
+    }
 }
 
 #[test]
