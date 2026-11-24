@@ -24,7 +24,7 @@ Network access is limited to a short list. relaxkit adds these domains to `sandb
 
 The commands that change the machine run outside the sandbox, because they change the machine. They are listed in `sandbox.excludedCommands`: `setup`, `update`, `config`, `preset`, `privacy`, `login`, `undo`, `uninstall` and `doctor`. Each one is excluded under both `relaxkit` and `rlx`. The `rlx` alias is added by the installer when that name is free. `status` and `usage` stay inside the sandbox.
 
-`gh` also runs outside the sandbox, as a single plain invocation: relaxkit adds `gh *` to `sandbox.excludedCommands`. The v0.1.3 README documents that a `gh` call inside a pipe, a chain or after a `cd` stays sandboxed and cannot authenticate. That is Claude Code's sandbox behaviour; this repository does not test it.
+`gh` also runs outside the sandbox, as a single plain invocation: relaxkit adds `gh *` to `sandbox.excludedCommands`. The v0.1.3 README documents that a `gh` call inside a pipe, a chain or after a `cd` stays sandboxed and cannot authenticate. The v0.1.3 README says that is Claude Code's behaviour; this repository does not test it.
 
 ### macOS
 
