@@ -6,7 +6,7 @@
 //! 24.04 and later an AppArmor profile: the stub bin holds `bwrap` and `socat`, and every scratch points
 //! `RELAXKIT_APPARMOR_PROFILE` at a file that stands in for the profile. The prerequisite rules themselves are unit-tested in
 //! `src/platform.rs`. The OpenCode side is not in CI: its stub writes no plugin config, and caveman's OpenCode step reads the
-//! network, so the owner's live run covers it (docs/acceptance.md).
+//! network, so a live run on a machine with the real hosts covers it (docs/verification.md).
 
 mod support;
 

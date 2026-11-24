@@ -44,6 +44,8 @@ With `--allow-sudo`, the one sudo run installs both packages with `apt-get`. On 
 
 `relaxkit setup` installs relaxkit's own sandbox plugin, `relaxkit-opencode`, into OpenCode. The plugin comes from relaxkit's GitHub repository at the release tag that matches the binary, so `setup` needs access to GitHub on an OpenCode host. If the plugin cannot be installed, `setup` stops.
 
+The sandbox was checked live against OpenCode 2.2.6 on 2026-11-22. That statement is quoted from the 0.1.3 README and was not re-run; the [verification record](verification.md) lists it with the other checks.
+
 The plugin is a fork of `opencode-sandbox` 0.7.0, which is MIT licensed, built on `@anthropic-ai/sandbox-runtime` 0.0.83. Its settings are fixed:
 
 - It runs in enforce mode. When the sandbox cannot wrap a command, the command is blocked with the message `Sandbox unavailable in enforce mode; command blocked`.

@@ -20,7 +20,7 @@ const DESCRIPTION: &str = "A curated pack of agent tools for Claude Code and Ope
 
 /// Public files that still cite private working files. Each must keep citing one of the phrases the cite test
 /// checks; once a file is cleaned, the test fails until it leaves this list.
-const PENDING_PRIVATE_REFERENCES: &[&str] = &["README.md", "docs/acceptance.md"];
+const PENDING_PRIVATE_REFERENCES: &[&str] = &["README.md"];
 
 fn repo_path(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
@@ -680,4 +680,73 @@ fn troubleshooting_names_each_known_failure() {
             "docs/troubleshooting.md does not name `{form}`"
         );
     }
+}
+
+fn verification() -> String {
+    read("docs/verification.md")
+}
+
+/// The table rows of `doc` as cells, with the header and the separator row left out.
+fn table_rows(doc: &str) -> Vec<Vec<String>> {
+    unfenced_lines(doc)
+        .into_iter()
+        .map(str::trim)
+        .filter(|line| line.starts_with('|'))
+        .map(|line| {
+            line.trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .filter(|cells| {
+            let separator = cells
+                .iter()
+                .all(|cell| cell.chars().all(|c| c == '-' || c == ':'));
+            !separator && cells[0] != "#"
+        })
+        .collect()
+}
+
+#[test]
+fn verification_rows_use_the_result_vocabulary_and_cite_evidence() {
+    let doc = verification();
+    assert!(
+        unfenced_lines(&doc)
+            .contains(&"| # | Criterion | How to check | Result | Date | Evidence |"),
+        "docs/verification.md has no table with the columns # | Criterion | How to check | Result | Date | Evidence"
+    );
+    let rows = table_rows(&doc);
+    assert!(!rows.is_empty(), "docs/verification.md has no result rows");
+    for row in rows {
+        assert_eq!(row.len(), 6, "row `{}` does not have six cells", row[0]);
+        let result = row[3].as_str();
+        assert!(
+            matches!(result, "pass" | "fail" | "not verified"),
+            "row `{}` has the Result `{result}`, which is not pass, fail or not verified",
+            row[0]
+        );
+        if result == "pass" {
+            let date = row[4].as_str();
+            let date_ok = date.len() == 10
+                && date.char_indices().all(|(i, c)| match i {
+                    4 | 7 => c == '-',
+                    _ => c.is_ascii_digit(),
+                });
+            assert!(date_ok, "pass row `{}` has no YYYY-MM-DD date", row[0]);
+            assert!(!row[5].is_empty(), "pass row `{}` has no Evidence", row[0]);
+        }
+    }
+}
+
+#[test]
+fn sandbox_doc_dates_the_opencode_live_check_and_links_the_verification_record() {
+    let doc = sandbox_reference();
+    assert!(
+        doc.contains("checked live against OpenCode 2.2.6 on 2026-11-22"),
+        "docs/sandbox.md does not date the OpenCode live check"
+    );
+    assert!(
+        doc.contains("](verification.md)"),
+        "docs/sandbox.md does not link to docs/verification.md"
+    );
 }
