@@ -6,6 +6,8 @@ All notable changes to relaxkit are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-24
+
 ### Changed
 
 - The OpenCode plugin takes the newest sandbox runtime 0.x when it is installed, instead of 0.0.83. `relaxkit doctor` reports the installed runtime.
@@ -146,7 +148,8 @@ All notable changes to relaxkit are recorded here. The format follows
 - Each release attaches `relaxkit.rb`, the Homebrew formula, which installs `rlx` as a symlink to
   `relaxkit`.
 
-[Unreleased]: https://github.com/cpenaforte/relaxkit/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/cpenaforte/relaxkit/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/cpenaforte/relaxkit/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/cpenaforte/relaxkit/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/cpenaforte/relaxkit/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/cpenaforte/relaxkit/compare/v0.1.1...v0.1.2
