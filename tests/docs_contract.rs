@@ -533,6 +533,63 @@ fn public_docs_cite_no_private_artifacts() {
     }
 }
 
+/// The public files that are not Markdown: the recipes, the scripts, the Homebrew templates and the GitHub workflows.
+fn non_markdown_public_files() -> Vec<String> {
+    let mut files = Vec::new();
+    for (dir, ext) in [
+        ("recipes", "toml"),
+        ("scripts", "sh"),
+        ("packaging/homebrew", "tmpl"),
+        (".github/workflows", "yml"),
+    ] {
+        let entries = std::fs::read_dir(repo_path(dir))
+            .unwrap_or_else(|err| panic!("{dir}/ is readable: {err}"));
+        for entry in entries {
+            let entry = entry.expect("directory entry is readable");
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some(ext) {
+                files.push(format!("{dir}/{}", entry.file_name().to_string_lossy()));
+            }
+        }
+    }
+    files.sort();
+    assert!(!files.is_empty(), "no non-Markdown public files found");
+    files
+}
+
+#[test]
+fn non_markdown_public_files_cite_no_private_artifacts() {
+    const PHRASES: [&str; 6] = [
+        "spec §",
+        "spec commit",
+        "ruling ",
+        "the owner",
+        "owner decision",
+        "spec section",
+    ];
+    // "Task 27" or "spec 5.1": a word followed directly by a digit cites a numbered item of a private file.
+    let numbered = |lower: &str, word: &str| {
+        lower
+            .match_indices(word)
+            .any(|(at, _)| lower[at + word.len()..].starts_with(|c: char| c.is_ascii_digit()))
+    };
+    let cited = |text: &str| {
+        let lower = text.to_lowercase();
+        if let Some(phrase) = PHRASES.iter().find(|phrase| lower.contains(*phrase)) {
+            return Some(phrase.to_string());
+        }
+        ["task ", "spec "]
+            .into_iter()
+            .find(|word| numbered(&lower, word))
+            .map(|word| format!("{word}<number>"))
+    };
+    for file in non_markdown_public_files() {
+        if let Some(phrase) = cited(&read(&file)) {
+            panic!("{file} cites the private artifact phrase `{phrase}`");
+        }
+    }
+}
+
 /// Splits a `## [x.y.z] - YYYY-MM-DD` heading into its version and date, or `None` when it has another shape.
 fn release_heading(line: &str) -> Option<((u64, u64, u64), &str)> {
     let rest = line.strip_prefix("## [")?;

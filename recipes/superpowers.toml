@@ -1,4 +1,3 @@
-# Status: provisional until Task 28 confirms it (spec section 11, O7).
 # Claude Code installs from the built-in anthropic-plugin-directory marketplace.
 # OpenCode installs a git tag under the V2 `plugins` key.
 # The OpenCode probe only checks that the host runs. The adapter reads plugin state from the config file.

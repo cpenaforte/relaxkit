@@ -4,7 +4,7 @@ name: release
 # relaxkit-<version>-<target>.tar.gz, writes the checksums file, signs it with minisign, verifies the signature against
 # the public key committed in release/minisign.pub, and only then publishes the GitHub release.
 #
-# Secret: MINISIGN_KEY, the minisign secret key. The owner generates it once with `minisign -G -W` (no password, since
+# Secret: MINISIGN_KEY, the minisign secret key. A maintainer generates it once with `minisign -G -W` (no password, since
 # this job cannot prompt) and stores it in the repository settings. It is never printed and never written to the repo.
 
 on:

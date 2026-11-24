@@ -758,12 +758,12 @@ impl<'a> Engine<'a> {
     }
 }
 
-/// A recipe that sets a workdir cannot be applied through the Host API (SA-1). Until the owner decides how it is
-/// applied, the install is refused before any step, so the process never starts without it.
+/// A recipe that sets a workdir cannot be applied through the Host API. Until it can be, the install is refused
+/// before any step, so the process never starts without it.
 pub(crate) fn refuse_workdir(recipe: &Recipe) -> Result<()> {
     if recipe.workdir.is_some() {
         bail!(
-            "workdir not applied (SA-1, owner decision pending): {}",
+            "workdir not applied: recipe `{}` sets a workdir, which relaxkit cannot apply yet",
             recipe.id
         );
     }
@@ -1658,8 +1658,9 @@ handler = "caveman_opencode"
         let err = eng.install(&recipe).unwrap_err();
 
         assert!(
-            format!("{err:#}")
-                .contains("workdir not applied (SA-1, owner decision pending): fixture"),
+            format!("{err:#}").contains(
+                "workdir not applied: recipe `fixture` sets a workdir, which relaxkit cannot apply yet"
+            ),
             "{err:#}"
         );
         assert!(runner.lines().is_empty(), "{:?}", runner.lines());
