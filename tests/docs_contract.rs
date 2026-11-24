@@ -552,6 +552,59 @@ fn release_heading(line: &str) -> Option<((u64, u64, u64), &str)> {
     date_ok.then_some(((major, minor, patch), date))
 }
 
+/// The Keep a Changelog section headings that an entry may sit under.
+const SECTIONS: [&str; 6] = [
+    "Added",
+    "Changed",
+    "Deprecated",
+    "Removed",
+    "Fixed",
+    "Security",
+];
+
+/// The first line under `## [Unreleased]` that breaks the rule, or `None`. A `### ` heading must name a section, and
+/// every bullet must sit under one.
+fn unreleased_problem(body: &[&str]) -> Option<String> {
+    let mut in_section = false;
+    for line in body {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix("### ") {
+            if !SECTIONS.contains(&name.trim()) {
+                return Some(format!(
+                    "has the heading `{line}`, which is not a Keep a Changelog section"
+                ));
+            }
+            in_section = true;
+        } else if line.starts_with("- ") {
+            if !in_section {
+                return Some(format!(
+                    "has the bullet `{line}` outside a Keep a Changelog section"
+                ));
+            }
+        } else {
+            return Some(format!(
+                "has the line `{line}`, which is neither a section heading nor a bullet"
+            ));
+        }
+    }
+    None
+}
+
+#[test]
+fn unreleased_bullet_outside_a_section_fails() {
+    assert!(
+        unreleased_problem(&["", "- Fixed a thing."]).is_some(),
+        "a bullet with no section heading above it must fail"
+    );
+    assert_eq!(
+        unreleased_problem(&["", "### Fixed", "", "- Fixed a thing."]),
+        None,
+        "a bullet under a section heading must pass"
+    );
+}
+
 #[test]
 fn changelog_follows_keep_a_changelog() {
     let text = read("CHANGELOG.md");
@@ -571,11 +624,8 @@ fn changelog_follows_keep_a_changelog() {
     );
     let (unreleased_at, _) = headings[0];
     let unreleased_end = headings.get(1).map_or(lines.len(), |(at, _)| *at);
-    for line in &lines[unreleased_at + 1..unreleased_end] {
-        assert!(
-            line.trim().is_empty(),
-            "`## [Unreleased]` must stay empty, found `{line}`"
-        );
+    if let Some(problem) = unreleased_problem(&lines[unreleased_at + 1..unreleased_end]) {
+        panic!("`## [Unreleased]` {problem}");
     }
 
     let mut versions = Vec::new();
@@ -595,14 +645,6 @@ fn changelog_follows_keep_a_changelog() {
         "the first release section must be the crate version"
     );
 
-    const SECTIONS: [&str; 6] = [
-        "Added",
-        "Changed",
-        "Deprecated",
-        "Removed",
-        "Fixed",
-        "Security",
-    ];
     for line in &lines {
         if let Some(section) = line.strip_prefix("### ") {
             assert!(
