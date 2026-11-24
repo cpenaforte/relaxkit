@@ -200,7 +200,7 @@ relaxkit undo --dry-run
 relaxkit uninstall
 ```
 
-Uninstall removes the MCP entries, config keys and roles blocks the pack wrote, and the pack's binary copies under `dirs.bin`. It keeps the relaxkit binary, its config and journal (so `relaxkit undo` still works), the Node link with the Node it points at, and the pack's plugins. The dry run lists each of these, so you can see what stays. Uninstall refuses `--project`.
+Uninstall removes the MCP entries, config keys and roles blocks the pack wrote, and the pack's binary copies under `dirs.bin`. It keeps the relaxkit binary, its config and journal (so `relaxkit undo` still works), the Node link with the Node it points at, and the pack's plugins. Uninstall also removes the lock file, which `relaxkit undo` restores. The dry run lists each of these, so you can see what stays. Uninstall refuses `--project`.
 
 ```sh
 relaxkit uninstall --dry-run

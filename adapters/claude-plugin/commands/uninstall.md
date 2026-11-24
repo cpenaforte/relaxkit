@@ -1,5 +1,5 @@
 ---
-description: Remove the pack's MCP entries, config keys, roles blocks and binary copies
+description: Remove the MCP entries, config keys, roles blocks and binary copies the pack wrote, and the lock file; keep the relaxkit binary, its config and journal, the Node link and the pack's plugins
 allowed-tools: Bash(relaxkit:*)
 ---
 
