@@ -1,0 +1,61 @@
+name: Bug report
+description: Report something relaxkit does wrong
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: relaxkit --version
+      description: The output of `relaxkit --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system and CPU
+      options:
+        - macOS Apple silicon
+        - macOS Intel
+        - Linux x86_64
+        - Linux arm64
+    validations:
+      required: true
+  - type: checkboxes
+    id: hosts
+    attributes:
+      label: Hosts
+      description: Which hosts does the problem involve?
+      options:
+        - label: Claude Code
+        - label: OpenCode
+  - type: input
+    id: host-versions
+    attributes:
+      label: Host versions
+      description: The versions of the hosts you checked above.
+  - type: input
+    id: command
+    attributes:
+      label: The command you ran
+      description: The exact command, with its arguments.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Paste the exact output. Replace your home directory path with `~` before you paste.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `relaxkit doctor --all`
+      description: Optional. Paste the output, with your home directory path replaced by `~`.

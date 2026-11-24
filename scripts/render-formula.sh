@@ -1,5 +1,5 @@
 #!/bin/sh
-# Renders the Homebrew formula for one release (Task 27 part A).
+# Renders the Homebrew formula for one release.
 #
 # Usage: render-formula.sh VERSION CHECKSUMS_FILE > relaxkit.rb
 #
