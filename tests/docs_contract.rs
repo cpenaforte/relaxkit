@@ -267,6 +267,88 @@ fn commands_reference_documents_the_slash_commands() {
     }
 }
 
+fn configuration_reference() -> String {
+    read("docs/configuration.md")
+}
+
+fn tools_reference() -> String {
+    read("docs/tools.md")
+}
+
+#[test]
+fn configuration_documents_model_pinning() {
+    let doc = configuration_reference();
+    for form in [
+        "config set implementer",
+        "provider/model#variant",
+        "--host",
+        "--project",
+    ] {
+        assert!(
+            doc.contains(form),
+            "docs/configuration.md does not show `{form}`"
+        );
+    }
+    assert!(
+        doc.lines()
+            .any(|line| line.contains("config set") && line.contains('/') && line.contains('#')),
+        "docs/configuration.md has no exact-model example in provider/model#variant form"
+    );
+}
+
+#[test]
+fn configuration_lists_every_role_tier_and_preset() {
+    let doc = configuration_reference();
+    for word in [
+        "planner",
+        "implementer",
+        "reviewer",
+        "escalation",
+        "final-review",
+        "cheap",
+        "standard",
+        "smarter",
+        "lean",
+        "balanced",
+        "careful",
+        "voice",
+        "compact-at",
+    ] {
+        assert!(
+            doc.contains(word),
+            "docs/configuration.md does not mention `{word}`"
+        );
+    }
+}
+
+#[test]
+fn tools_reference_lists_every_recipe() {
+    let doc = tools_reference();
+    let entries = std::fs::read_dir(repo_path("recipes")).expect("recipes/ is readable");
+    let mut count = 0;
+    for entry in entries {
+        let path = entry.expect("recipes/ entry is readable").path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+            continue;
+        }
+        count += 1;
+        let text = std::fs::read_to_string(&path).expect("recipe is readable");
+        let id = text
+            .lines()
+            .find_map(|line| {
+                let rest = line.strip_prefix("id = \"")?;
+                rest.strip_suffix('"')
+            })
+            .unwrap_or_else(|| panic!("{} has no `id = \"...\"` line", path.display()));
+        let code = format!("`{id}`");
+        assert!(
+            doc.contains(&code),
+            "docs/tools.md does not list the recipe `{id}`"
+        );
+    }
+    assert!(count > 0, "recipes/ has no recipe files");
+}
+
 #[test]
 fn readme_states_the_platform_scope_and_the_windows_future_note() {
     let readme = readme();
@@ -285,33 +367,6 @@ fn readme_states_the_platform_scope_and_the_windows_future_note() {
     assert!(
         readme.contains("depending on demand"),
         "README.md does not say the Windows addition depends on demand"
-    );
-}
-
-#[test]
-fn readme_documents_model_pinning_from_the_cli() {
-    let readme = readme();
-    assert!(
-        readme.contains("config set implementer"),
-        "README.md does not show `config set implementer`"
-    );
-    assert!(
-        readme.contains("provider/model#variant"),
-        "README.md does not name the exact-model form provider/model#variant"
-    );
-    assert!(
-        readme
-            .lines()
-            .any(|line| line.contains("config set") && line.contains('/') && line.contains('#')),
-        "README.md has no exact-model example in provider/model#variant form"
-    );
-    assert!(
-        readme.contains("--host"),
-        "README.md does not document --host"
-    );
-    assert!(
-        readme.contains("--project"),
-        "README.md does not document --project"
     );
 }
 
