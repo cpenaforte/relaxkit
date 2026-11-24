@@ -750,3 +750,156 @@ fn sandbox_doc_dates_the_opencode_live_check_and_links_the_verification_record()
         "docs/sandbox.md does not link to docs/verification.md"
     );
 }
+
+/// The three commands CI runs, in the order of `.github/workflows/ci.yml`.
+const CI_COMMANDS: [&str; 3] = [
+    "cargo fmt --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test --no-fail-fast",
+];
+
+/// The lines of `doc` under `heading`, up to the next `## ` heading. Fenced code is kept.
+fn section(doc: &str, heading: &str) -> String {
+    let mut lines = Vec::new();
+    let mut inside = false;
+    for line in doc.lines() {
+        if line == heading {
+            inside = true;
+            continue;
+        }
+        if inside && line.starts_with("## ") {
+            break;
+        }
+        if inside {
+            lines.push(line);
+        }
+    }
+    assert!(inside, "no heading `{heading}`");
+    lines.join("\n")
+}
+
+#[test]
+fn contributing_commands_match_ci() {
+    let contributing = read("CONTRIBUTING.md");
+    let ci = read(".github/workflows/ci.yml");
+    for command in CI_COMMANDS {
+        assert!(
+            contributing.contains(command),
+            "CONTRIBUTING.md does not name `{command}`"
+        );
+        assert!(
+            ci.contains(command),
+            ".github/workflows/ci.yml does not run `{command}`"
+        );
+    }
+}
+
+#[test]
+fn release_checklist_files_agree_on_the_version() {
+    let version = env!("CARGO_PKG_VERSION");
+    for file in [
+        "adapters/claude-plugin/.claude-plugin/plugin.json",
+        "adapters/opencode-plugin/package.json",
+    ] {
+        let json: serde_json::Value = serde_json::from_str(&read(file))
+            .unwrap_or_else(|err| panic!("{file} is not JSON: {err}"));
+        assert_eq!(
+            json["version"].as_str(),
+            Some(version),
+            "{file} does not carry the Cargo.toml version {version}"
+        );
+    }
+    let releasing = section(&read("CONTRIBUTING.md"), "## Releasing");
+    for file in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "adapters/claude-plugin/.claude-plugin/plugin.json",
+        "adapters/opencode-plugin/package.json",
+        "adapters/opencode-plugin/package-lock.json",
+    ] {
+        assert!(
+            releasing.contains(file),
+            "CONTRIBUTING.md `## Releasing` does not name `{file}`"
+        );
+    }
+}
+
+#[test]
+fn security_policy_has_a_private_channel_and_a_scope() {
+    let doc = read("SECURITY.md");
+    for heading in [
+        "## Supported versions",
+        "## Reporting a vulnerability",
+        "## Scope",
+        "## Verifying a release",
+    ] {
+        assert!(
+            doc.lines().any(|line| line == heading),
+            "SECURITY.md has no heading `{heading}`"
+        );
+    }
+    for form in [
+        "## Supported versions",
+        "security/advisories/new",
+        "14 days",
+        "minisign",
+        "release/minisign.pub",
+    ] {
+        assert!(doc.contains(form), "SECURITY.md does not contain `{form}`");
+    }
+}
+
+#[test]
+fn issue_forms_have_the_keys_github_requires() {
+    let mut forms = 0;
+    let entries = std::fs::read_dir(repo_path(".github/ISSUE_TEMPLATE"))
+        .expect(".github/ISSUE_TEMPLATE is readable");
+    for entry in entries {
+        let name = entry
+            .expect(".github/ISSUE_TEMPLATE entry is readable")
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        if name == "config.yml" || !name.ends_with(".yml") {
+            continue;
+        }
+        forms += 1;
+        let text = read(&format!(".github/ISSUE_TEMPLATE/{name}"));
+        for key in ["name:", "description:", "body:"] {
+            assert!(
+                text.lines().any(|line| line.starts_with(key)),
+                ".github/ISSUE_TEMPLATE/{name} has no top-level `{key}` key"
+            );
+        }
+    }
+    assert!(forms > 0, ".github/ISSUE_TEMPLATE has no issue forms");
+
+    let config = read(".github/ISSUE_TEMPLATE/config.yml");
+    assert!(
+        config
+            .lines()
+            .any(|line| line == "blank_issues_enabled: false"),
+        "config.yml does not set `blank_issues_enabled: false`"
+    );
+    assert!(
+        config.contains("security/advisories/new"),
+        "config.yml has no contact link to private security reporting"
+    );
+}
+
+#[test]
+fn pull_request_template_asks_for_the_checks_and_a_changelog_entry() {
+    let doc = read(".github/pull_request_template.md");
+    for command in CI_COMMANDS {
+        assert!(
+            doc.contains(command),
+            ".github/pull_request_template.md does not ask for `{command}`"
+        );
+    }
+    for word in ["CHANGELOG", "docs"] {
+        assert!(
+            doc.contains(word),
+            ".github/pull_request_template.md does not mention `{word}`"
+        );
+    }
+}
