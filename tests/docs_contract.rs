@@ -162,28 +162,107 @@ fn readme_mentions_every_subcommand() {
     }
 }
 
+fn commands_reference() -> String {
+    read("docs/commands.md")
+}
+
+/// The text between the heading `## relaxkit --help` and the next fenced block's closing fence.
+fn help_block_under(doc: &str, heading: &str) -> String {
+    let (_, after) = doc
+        .split_once(heading)
+        .unwrap_or_else(|| panic!("docs/commands.md has no heading `{heading}`"));
+    let mut in_block = false;
+    let mut block = Vec::new();
+    for line in after.lines() {
+        if !in_block {
+            in_block = line.starts_with("```");
+            continue;
+        }
+        if line.starts_with("```") {
+            break;
+        }
+        block.push(line);
+    }
+    block.join("\n")
+}
+
+/// The lines with trailing whitespace removed, and no trailing blank lines.
+fn trim_lines(text: &str) -> String {
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
+/// Every long flag of `cmd` and of its nested subcommands, such as `config set --host`.
+fn long_flags(cmd: &clap::Command) -> Vec<String> {
+    let mut flags: Vec<String> = cmd
+        .get_arguments()
+        .filter_map(|arg| arg.get_long().map(|long| format!("--{long}")))
+        .collect();
+    for sub in cmd.get_subcommands() {
+        flags.extend(long_flags(sub));
+    }
+    flags
+}
+
 #[test]
-fn readme_documents_the_slash_commands() {
-    let readme = readme();
+fn commands_reference_covers_every_subcommand_flag_and_slash_command() {
+    let doc = commands_reference();
+    let cli = Cli::command();
+    for sub in cli.get_subcommands().filter(|cmd| cmd.get_name() != "help") {
+        let name = sub.get_name();
+        let heading = format!("## relaxkit {name}");
+        assert!(
+            doc.lines().any(|line| line == heading),
+            "docs/commands.md has no heading `{heading}`"
+        );
+        let slash = format!("/relaxkit:{name}");
+        assert!(
+            doc.contains(&slash),
+            "docs/commands.md does not mention `{slash}`"
+        );
+        for flag in long_flags(sub) {
+            assert!(
+                doc.contains(&flag),
+                "docs/commands.md does not document `{flag}` of `relaxkit {name}`"
+            );
+        }
+    }
+    for flag in long_flags(&cli) {
+        assert!(
+            doc.contains(&flag),
+            "docs/commands.md does not document the global `{flag}`"
+        );
+    }
+}
+
+#[test]
+fn commands_reference_help_block_matches_the_binary() {
+    let doc = commands_reference();
+    let block = trim_lines(&help_block_under(&doc, "## relaxkit --help"));
+    let expected = trim_lines(&Cli::command().render_help().to_string());
+    assert_eq!(
+        block, expected,
+        "the `## relaxkit --help` block differs from the binary's help text"
+    );
+}
+
+#[test]
+fn commands_reference_documents_the_slash_commands() {
+    let doc = commands_reference();
     for form in [
         "/relaxkit:config set implementer cheap",
         "#high",
         "--host",
         "--project",
+        "not yet confirmed in a live Claude Code session",
     ] {
-        assert!(readme.contains(form), "README.md does not show `{form}`");
-    }
-    let names: Vec<String> = Cli::command()
-        .get_subcommands()
-        .map(|cmd| cmd.get_name().to_string())
-        .filter(|name| name != "help")
-        .collect();
-    assert!(!names.is_empty(), "the Cli has no subcommands");
-    for name in names {
-        let form = format!("/relaxkit:{name}");
         assert!(
-            readme.contains(&form),
-            "README.md does not mention the slash command `{form}`"
+            doc.contains(form),
+            "docs/commands.md does not show `{form}`"
         );
     }
 }
