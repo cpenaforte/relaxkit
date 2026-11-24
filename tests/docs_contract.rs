@@ -632,3 +632,52 @@ fn changelog_follows_keep_a_changelog() {
         );
     }
 }
+
+fn getting_started() -> String {
+    read("docs/getting-started.md")
+}
+
+fn troubleshooting() -> String {
+    read("docs/troubleshooting.md")
+}
+
+#[test]
+fn getting_started_walks_the_first_run_in_order() {
+    let doc = getting_started();
+    let steps = [
+        "relaxkit --version",
+        "relaxkit setup",
+        "relaxkit status",
+        "relaxkit doctor",
+        "relaxkit config set implementer cheap",
+        "relaxkit undo",
+    ];
+    let mut from = 0;
+    for step in steps {
+        let at = doc[from..]
+            .find(step)
+            .map(|offset| from + offset)
+            .unwrap_or_else(|| {
+                panic!("docs/getting-started.md has no `{step}` after the step before it")
+            });
+        from = at + 1;
+    }
+}
+
+#[test]
+fn troubleshooting_names_each_known_failure() {
+    let doc = troubleshooting();
+    for form in [
+        "/login",
+        "bubblewrap",
+        "socat",
+        "relaxkit login github",
+        "no known executable path",
+        "rlx",
+    ] {
+        assert!(
+            doc.contains(form),
+            "docs/troubleshooting.md does not name `{form}`"
+        );
+    }
+}
