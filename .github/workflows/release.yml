@@ -72,7 +72,7 @@ jobs:
           mkdir -p dist
           # The archive holds the binary at its root, as the self-update step expects.
           tar -C "target/$TARGET/release" -czf "dist/relaxkit-$version-$TARGET.tar.gz" relaxkit
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: relaxkit-${{ matrix.target }}
           path: dist/*.tar.gz
